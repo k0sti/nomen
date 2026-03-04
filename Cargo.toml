@@ -7,7 +7,7 @@ description = "Nostr-native memory system CLI"
 
 [dependencies]
 # Nostr
-nostr-sdk = "0.39"
+nostr-sdk = { version = "0.39", features = ["nip44"] }
 
 # CLI
 clap = { version = "4", features = ["derive"] }
@@ -34,3 +34,7 @@ chrono = "0.4"
 
 # Terminal output
 colored = "2"
+
+# Config
+toml = "0.8"
+dirs = "5"
