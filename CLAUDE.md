@@ -1,14 +1,16 @@
-# CLAUDE.md — Nomen CLI Implementation Guide
+# CLAUDE.md — Nomen Implementation Guide
 
 ## Project
 
-**Nomen** is a Rust CLI tool for managing Nostr-native memory events. This is the first prototype — it connects to a Nostr relay and lists all memory events for given nsec keys.
+**Nomen** is a Rust CLI and library for managing agent memory. Backed by Nostr events (NIP-78) for sync/persistence and SurrealDB (embedded) for local indexing, vector search, graph relationships, and full-text search.
 
 ## Architecture
 
-Read these docs thoroughly before implementing:
-- `docs/nostr-memory-spec.md` — Full Nostr event schema for memory
-- `docs/memory-tiers.md` — Three-tier visibility system + ranking
+Read these docs before implementing:
+- `docs/architecture.md` — Full system design, SurrealDB schema, data flow
+- `docs/nostr-memory-spec.md` — NIP-78 event format for memory
+
+Working documents (research, specs) are in Obsidian: `~/Obsidian/vault/Clarity/Nomen/`
 
 ## First Prototype Scope
 
