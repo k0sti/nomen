@@ -172,11 +172,17 @@ enum Command {
         #[arg(long)]
         channel: Option<String>,
     },
-    /// Start MCP server (JSON-RPC over stdio)
+    /// Start MCP server (JSON-RPC over stdio) or HTTP server
     Serve {
-        /// Use stdio transport
-        #[arg(long, default_value = "true")]
+        /// Use stdio transport (MCP mode)
+        #[arg(long)]
         stdio: bool,
+        /// Start HTTP server on address (e.g. ":3000" or "127.0.0.1:3000")
+        #[arg(long)]
+        http: Option<String>,
+        /// Directory for static web UI files (default: web/dist relative to binary)
+        #[arg(long)]
+        static_dir: Option<PathBuf>,
         /// Also start Context-VM (Nostr-native request/response listener)
         #[arg(long)]
         context_vm: bool,
@@ -365,8 +371,8 @@ async fn main() -> Result<()> {
             }
             cmd_send(&resolved.relay, &resolved.nsecs, &to, &content, channel.as_deref(), &cli).await?;
         }
-        Command::Serve { stdio: _, context_vm, ref allowed_npubs } => {
-            cmd_serve(&cli, context_vm, allowed_npubs.clone()).await?;
+        Command::Serve { stdio, http: ref http_addr, ref static_dir, context_vm, ref allowed_npubs } => {
+            cmd_serve(&cli, stdio, http_addr.clone(), static_dir.clone(), context_vm, allowed_npubs.clone()).await?;
         }
     }
 
@@ -1108,7 +1114,14 @@ async fn cmd_send(
 
 // ── Command: serve (MCP server) ─────────────────────────────────────
 
-async fn cmd_serve(cli: &Cli, context_vm: bool, allowed_npubs: Vec<String>) -> Result<()> {
+async fn cmd_serve(
+    cli: &Cli,
+    stdio: bool,
+    http_addr: Option<String>,
+    static_dir: Option<PathBuf>,
+    context_vm: bool,
+    allowed_npubs: Vec<String>,
+) -> Result<()> {
     let config = load_config(cli)?;
     let db = db::init_db().await?;
 
@@ -1130,6 +1143,43 @@ async fn cmd_serve(cli: &Cli, context_vm: bool, allowed_npubs: Vec<String>) -> R
     } else {
         None
     };
+
+    // HTTP server mode
+    if let Some(ref addr) = http_addr {
+        // Normalize address: ":3000" → "0.0.0.0:3000"
+        let bind_addr = if addr.starts_with(':') {
+            format!("0.0.0.0{addr}")
+        } else {
+            addr.clone()
+        };
+
+        // Resolve static dir: explicit flag > web/dist relative to binary > web/dist relative to cwd
+        let resolved_static = static_dir.or_else(|| {
+            // Try relative to binary
+            if let Ok(exe) = std::env::current_exe() {
+                let dir = exe.parent()?.join("web/dist");
+                if dir.is_dir() {
+                    return Some(dir);
+                }
+            }
+            // Try relative to cwd
+            let cwd = PathBuf::from("web/dist");
+            if cwd.is_dir() { Some(cwd) } else { None }
+        });
+
+        let http_state = nomen::http::AppState {
+            db,
+            embedder: config.build_embedder(),
+            relay: relay_manager,
+            groups: group_store,
+            default_channel,
+        };
+
+        return nomen::http::serve(&bind_addr, http_state, resolved_static).await;
+    }
+
+    // Default: stdio MCP mode (for backwards compat when neither --stdio nor --http given)
+    let _ = stdio; // accept --stdio flag but it's the default
 
     if context_vm {
         // Need relay + keys for Context-VM

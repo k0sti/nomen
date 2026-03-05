@@ -58,6 +58,10 @@ surrealdb = { version = "2", features = ["kv-surrealkv"] }
 # HTTP client (for embedding API)
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 
+# HTTP server
+axum = "0.8"
+tower-http = { version = "0.6", features = ["fs", "cors"] }
+
 # Async trait support
 async-trait = "0.1"
 

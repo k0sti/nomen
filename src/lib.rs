@@ -30,6 +30,8 @@ pub mod display;
 pub mod mcp;
 #[doc(hidden)]
 pub mod contextvm;
+#[doc(hidden)]
+pub mod http;
 
 use anyhow::Result;
 use surrealdb::engine::local::Db;
