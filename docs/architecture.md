@@ -1,539 +1,128 @@
 # Nomen Architecture
 
-**Version:** v0.2
-**Date:** 2026-03-04
-**Status:** Design
+**Version:** v0.3
+**Date:** 2026-03-05
 
 ## Overview
 
-Nomen is a Rust CLI and library for managing agent memory backed by Nostr events (NIP-78) and SurrealDB. It provides unified storage, semantic search, graph-based entity linking, memory consolidation, and tier-based privacy scoping.
+Nomen is a Rust CLI and library for Nostr-native agent memory. Memories are NIP-78 events (kind 30078) on Nostr relays, cached locally in SurrealDB with hybrid vector + BM25 search.
 
 ## Data Flow
 
 ```
-                    ┌─────────────────┐
-                    │   Nostr Relay    │
-                    │  (NIP-78 k:30078)│
-                    └────────┬────────┘
-                             │ sync (bidirectional)
-                             │
-                    ┌────────▼────────┐
-                    │    Ingestor     │
-                    │  parse events   │
-                    │  generate embeds│
-                    └────────┬────────┘
-                             │
-                    ┌────────▼────────┐
-                    │   SurrealDB     │
-                    │   (embedded)    │
-                    │                 │
-                    │  documents      │
-                    │  vectors (HNSW) │
-                    │  graph edges    │
-                    │  full-text      │
-                    └────────┬────────┘
-                             │
-              ┌──────────────┼──────────────┐
-              │              │              │
-        ┌─────▼─────┐ ┌─────▼─────┐ ┌─────▼─────┐
-        │  CLI       │ │  Library  │ │  Snowclaw  │
-        │  nomen     │ │  crate    │ │  bridge    │
-        └───────────┘ └───────────┘ └───────────┘
+Nostr Relay (source of truth)
+    │ sync (bidirectional)
+    ▼
+SurrealDB (embedded, local cache)
+    │ search / store / ingest
+    ▼
+┌────────┬──────────┬──────────┐
+│  CLI   │  MCP     │  HTTP    │
+│ nomen  │  stdio   │  server  │
+└────────┴──────────┴──────────┘
 ```
+
+## Module Map
+
+```
+src/
+├── main.rs          (1224)  CLI entry, clap commands
+├── lib.rs            (284)  Nomen struct, public API
+├── db.rs             (918)  SurrealDB schema, queries, CRUD
+├── search.rs         (154)  Hybrid vector + BM25 search
+├── relay.rs          (223)  Nostr relay sync (NIP-78)
+├── memory.rs         (141)  Memory parsing from Nostr events
+├── send.rs           (249)  Send messages (DM, group, public)
+├── session.rs        (232)  Session ID resolution → tier/scope
+├── mcp.rs            (796)  MCP server (JSON-RPC stdio)
+├── http.rs           (376)  HTTP server
+├── contextvm.rs      (601)  Nostr-native request/response (NIP-44)
+├── ingest.rs          (63)  Raw message ingestion
+├── consolidate.rs    (354)  Raw messages → named memories
+├── embed.rs          (188)  Embedding generation (OpenAI API)
+├── entities.rs       (212)  Entity extraction + graph edges
+├── groups.rs         (373)  Group management
+├── config.rs         (197)  TOML config (~/.config/nomen/config.toml)
+├── access.rs         (132)  Access control
+├── display.rs         (77)  Formatted output
+├── migrate.rs        (136)  SQLite → SurrealDB migration
+└── snowclaw_adapter.rs (456) Snowclaw integration bridge
+```
+
+Total: ~7400 LOC Rust.
 
 ## Storage: SurrealDB (Embedded)
 
-Single database engine replaces the need for separate SQLite + vector DB + graph DB.
+Single embedded database. Multi-model: documents, vectors (HNSW), full-text (BM25), graph edges.
 
-### Why SurrealDB
+**Path:** `~/.nomen/db/`
+**Engine:** SurrealKV (pure Rust, no C deps)
 
-- **Multi-model:** Documents + graphs + vectors + full-text in one engine
-- **Rust-native:** Embeds directly in process via `surrealdb` crate
-- **ACID:** Full transactions, no consistency issues
-- **Graph first-class:** `RELATE` edges with data, bidirectional traversal
-- **Vector search:** HNSW indexes, cosine/euclidean similarity
-- **Full-text:** BM25 with analyzers, combinable with vector search
-- **Persistent:** SurrealKV (pure Rust) or RocksDB backends
-- **Schemaful or schemaless:** Can enforce types or stay flexible
+### Core Tables
 
-### Crate Configuration
-
-```toml
-[dependencies]
-surrealdb = { version = "2", features = ["kv-surrealkv"] }
-```
-
-Use `kv-surrealkv` for pure-Rust persistent storage (no C deps). Alternative: `kv-rocksdb` for proven performance, but adds C compilation requirement.
-
-### Storage Path
-
-```
-~/.nomen/db/          # SurrealDB data directory
-~/.config/nomen/config.toml  # Nomen configuration (XDG standard)
-```
-
-## Schema Design
-
-### Tables
-
-```surql
--- Core memory record
-DEFINE TABLE memory SCHEMAFULL;
-DEFINE FIELD content    ON memory TYPE string;          -- the memory text
-DEFINE FIELD summary    ON memory TYPE option<string>;  -- L0 abstract
-DEFINE FIELD embedding  ON memory TYPE option<array<float>>;
-DEFINE FIELD tier       ON memory TYPE string;          -- public | group | private
-DEFINE FIELD scope      ON memory TYPE string;          -- "" | group_id | npub
-DEFINE FIELD topic      ON memory TYPE string;          -- namespace/category
-DEFINE FIELD confidence ON memory TYPE option<float>;
-DEFINE FIELD source     ON memory TYPE string;          -- agent npub that created it
-DEFINE FIELD model      ON memory TYPE option<string>;  -- LLM model used
-DEFINE FIELD version    ON memory TYPE int DEFAULT 1;
-DEFINE FIELD nostr_id   ON memory TYPE option<string>;  -- relay event id
-DEFINE FIELD d_tag      ON memory TYPE option<string>;  -- NIP-78 d-tag (replaceable)
-DEFINE FIELD created_at ON memory TYPE datetime;
-DEFINE FIELD updated_at ON memory TYPE datetime;
-DEFINE FIELD ephemeral  ON memory TYPE bool DEFAULT false;  -- pre-consolidation
-
--- Entity extracted from memories
-DEFINE TABLE entity SCHEMAFULL;
-DEFINE FIELD name       ON entity TYPE string;
-DEFINE FIELD kind       ON entity TYPE string;  -- person | project | concept | place
-DEFINE FIELD attributes ON entity TYPE option<object>;
-DEFINE FIELD created_at ON entity TYPE datetime;
-
--- Group/scope hierarchy
-DEFINE TABLE scope SCHEMAFULL;
-DEFINE FIELD name       ON scope TYPE string;
-DEFINE FIELD parent     ON scope TYPE option<record<scope>>;
-DEFINE FIELD tier       ON scope TYPE string;   -- group | private
-DEFINE FIELD created_at ON scope TYPE datetime;
-```
+- `memory` — memories with content, tier, scope, topic, embedding, confidence
+- `raw_message` — ingested messages before consolidation
+- `entity` — extracted entities (person, project, concept)
+- `session` — active session tracking
+- `group` — group definitions and membership
 
 ### Indexes
 
-```surql
--- Vector similarity search (HNSW)
-DEFINE INDEX memory_embedding ON memory FIELDS embedding
-  HNSW DIMENSION 1536 DIST COSINE EFC 150 M 12;
-
--- Full-text search
-DEFINE ANALYZER memory_analyzer TOKENIZERS class FILTERS ascii, lowercase, snowball(english);
-DEFINE INDEX memory_fulltext ON memory FIELDS content
-  FULLTEXT ANALYZER memory_analyzer BM25;
-
--- Lookups
-DEFINE INDEX memory_tier   ON memory FIELDS tier;
-DEFINE INDEX memory_scope  ON memory FIELDS scope;
-DEFINE INDEX memory_topic  ON memory FIELDS topic;
-DEFINE INDEX memory_d_tag  ON memory FIELDS d_tag UNIQUE;
-DEFINE INDEX entity_name   ON entity FIELDS name UNIQUE;
-```
+- HNSW vector index on `memory.embedding` (1536 dims, cosine)
+- BM25 full-text on `memory.content`
+- Unique index on `memory.d_tag` (NIP-78 replaceable key)
 
 ### Graph Edges
 
-```surql
--- Memory mentions an entity
-DEFINE TABLE mentions SCHEMAFULL;
-DEFINE FIELD in  ON mentions TYPE record<memory>;
-DEFINE FIELD out ON mentions TYPE record<entity>;
-DEFINE FIELD relevance ON mentions TYPE option<float>;
-
--- Memory references another memory
-DEFINE TABLE references SCHEMAFULL;
-DEFINE FIELD in  ON references TYPE record<memory>;
-DEFINE FIELD out ON references TYPE record<memory>;
-DEFINE FIELD relation ON references TYPE string;  -- supports | contradicts | supersedes | elaborates
-
--- Memory was consolidated from other memories
-DEFINE TABLE consolidated_from SCHEMAFULL;
-DEFINE FIELD in  ON consolidated_from TYPE record<memory>;   -- new consolidated memory
-DEFINE FIELD out ON consolidated_from TYPE record<memory>;   -- original ephemeral memory
-
--- Entity relates to entity
-DEFINE TABLE related_to SCHEMAFULL;
-DEFINE FIELD in  ON related_to TYPE record<entity>;
-DEFINE FIELD out ON related_to TYPE record<entity>;
-DEFINE FIELD relation ON related_to TYPE string;  -- works_on | knows | located_in | part_of
-```
-
-### Example Queries
-
-```surql
--- Semantic search with tier filtering
-SELECT *, vector::similarity::cosine(embedding, $query_vec) AS score
-  FROM memory
-  WHERE tier IN ['public', 'group']
-    AND scope IN ['', 'techteam']
-  ORDER BY score DESC
-  LIMIT 10;
-
--- Hybrid search (vector + full-text)
-SELECT *, 
-  vector::similarity::cosine(embedding, $query_vec) AS vec_score,
-  search::score(1) AS text_score
-  FROM memory
-  WHERE content @1@ $query_text
-  ORDER BY (vec_score * 0.7 + text_score * 0.3) DESC
-  LIMIT 10;
-
--- Graph: find all entities related to a memory
-SELECT ->mentions->entity FROM memory:abc123;
-
--- Graph: find memories about a specific entity
-SELECT <-mentions<-memory FROM entity:alhovuori;
-
--- Graph: what was this memory consolidated from?
-SELECT ->consolidated_from->memory FROM memory:consolidated_xyz;
-
--- Scope hierarchy: get all ancestor scopes
-SELECT parent.* FROM scope:techteam;
-
--- Multi-hop: entities connected to entities I know about
-SELECT ->related_to->entity FROM entity:k0;
-```
-
-## Nostr Relay Sync
-
-The relay is the **source of truth** and **sync mechanism**. SurrealDB is the local index.
-
-### Ingest (relay → local)
-
-1. Subscribe to `kinds: [30078]` for configured npubs
-2. Parse event content, d-tag, custom tags
-3. Upsert into SurrealDB `memory` table (d-tag as unique key)
-4. Generate embedding via configured provider (OpenAI, local model, etc.)
-5. Run entity extraction (LLM-powered or regex for known patterns)
-6. Create `mentions` edges for extracted entities
-7. Check similarity against existing memories for dedup alerts
-
-### Publish (local → relay)
-
-1. Create/update memory in SurrealDB
-2. Build NIP-78 event (kind 30078, d-tag, custom tags)
-3. Encrypt if private tier (NIP-44 self-to-self)
-4. Sign with configured nsec
-5. Publish to relay
-6. Store relay event ID back in SurrealDB record
-
-### Conflict Resolution
-
-- NIP-78 replaceable events: latest timestamp wins on relay
-- Local: compare `updated_at`, keep newest
-- Contradictions: mark with `references` edge (relation: "contradicts"), let consolidation resolve
-
-## Group Hierarchy & Scopes
-
-Scopes use dot-separated hierarchical identifiers, enabling natural subgroup nesting:
-
-```
-""                              → public (no scope)
-"atlantislabs"                  → top-level group
-"atlantislabs.engineering"      → subgroup
-"atlantislabs.engineering.infra" → sub-subgroup
-"npub1abc..."                   → private (single agent)
-```
-
-### Rules
-
-- Dot (`.`) is the hierarchy separator
-- A search for scope `atlantislabs` includes `atlantislabs.engineering` and deeper
-- A search for `atlantislabs.engineering` includes its children but NOT `atlantislabs` root
-- Private scopes (npub) are flat — no hierarchy
-- Group membership is explicit per level — being in `atlantislabs` does NOT grant access to `atlantislabs.engineering`
-
-### Group Configuration
-
-Groups can be defined in config or managed via CLI/API:
-
-```toml
-[[groups]]
-id = "atlantislabs"
-name = "Atlantis Labs"
-members = ["npub1abc...", "npub1def...", "npub1xyz..."]
-
-[[groups]]
-id = "atlantislabs.engineering"
-name = "Engineering"
-members = ["npub1abc...", "npub1def..."]
-nostr_group = "techteam"   # maps to NIP-29 h-tag on relay
-```
-
-The `nostr_group` field maps a hierarchical scope to a NIP-29 relay group. When publishing, the `h` tag uses the NIP-29 id; when reading, the `h` tag is resolved back to the hierarchical scope.
-
-### D-Tag Format
-
-```
-snow:memory:group:atlantislabs.engineering:topic-name
-```
+- `mentions` — memory → entity
+- `references` — memory → memory (supports, contradicts, supersedes)
+- `consolidated_from` — consolidated memory → source messages
+- `related_to` — entity → entity
 
 ## Memory Tiers
 
-| Tier | Scope | Encryption | Visibility |
-|------|-------|-----------|------------|
-| Public | `""` (empty) | None | All agents on relay |
-| Group | `group:<hierarchy>` | None (relay auth gates access) | Group members |
-| Private | `npub:<hex>` | NIP-44 | Only the owning agent |
+| Tier | Scope | Encryption | Access |
+|------|-------|-----------|--------|
+| Public | `""` | None | All agents on relay |
+| Group | `group:<id>` | None (relay auth) | Group members |
+| Private | `npub:<hex>` | NIP-44 | Owning agent only |
 
-Scope prefix in d-tag determines tier:
-- `snow:memory:core:*` → Public
-- `snow:memory:group:<hierarchy>:*` → Group  
-- `snow:memory:npub:<hex>:*` → Private
-- `snow:memory:lesson:*` → Public
+## Interfaces
 
-## Message Ingestion Pipeline
-
-Raw messages from all sources (Telegram, Nostr, webhooks, etc.) are stored first, processed later.
-
-### Flow
+### CLI
 
 ```
-sources (Telegram, Nostr, IRC, …)
-    │
-    ▼
-raw_messages table (append-only, no embedding, no indexing)
-    │
-    ▼ (periodic consolidation job)
-    │
-memory table (indexed, embedded, searchable, recall-eligible)
-    │
-    ▼ (retention policy)
-    │
-prune raw_messages older than N days
+nomen list / store / delete / search / sync
+nomen send --to <recipient>
+nomen ingest / consolidate / prune
+nomen messages / entities / group
+nomen embed
+nomen serve --stdio | --http <addr>
 ```
 
-### Raw Messages Table
+### MCP Server (`nomen serve --stdio`)
 
-```surql
-DEFINE TABLE raw_message SCHEMAFULL;
-DEFINE FIELD source     ON raw_message TYPE string;          -- telegram | nostr | webhook | …
-DEFINE FIELD source_id  ON raw_message TYPE option<string>;  -- platform-specific message id
-DEFINE FIELD sender     ON raw_message TYPE string;          -- npub, telegram user id, etc.
-DEFINE FIELD channel    ON raw_message TYPE option<string>;  -- group id, chat id, channel name
-DEFINE FIELD content    ON raw_message TYPE string;
-DEFINE FIELD metadata   ON raw_message TYPE option<object>;  -- platform-specific extras
-DEFINE FIELD created_at ON raw_message TYPE datetime;
-DEFINE FIELD consolidated ON raw_message TYPE bool DEFAULT false;
+Tools: `nomen_search`, `nomen_store`, `nomen_messages`, `nomen_entities`, `nomen_consolidate`, `nomen_ingest`. All tools accept optional `session_id` for automatic tier/scope resolution.
 
-DEFINE INDEX raw_msg_source ON raw_message FIELDS source, source_id UNIQUE;
-DEFINE INDEX raw_msg_time   ON raw_message FIELDS created_at;
-DEFINE INDEX raw_msg_sender ON raw_message FIELDS sender;
-DEFINE INDEX raw_msg_channel ON raw_message FIELDS channel;
-```
+### HTTP Server (`nomen serve --http :3000`)
 
-### Design Rationale
+REST API for remote agents and web UIs.
 
-- **No embedding on ingest** — raw messages are high-volume, low-signal. Embedding them wastes compute and pollutes semantic search with noise ("ok", "lol", "👍").
-- **Not indexed for recall** — the agent's context window already contains recent messages during a session. Recall only matters after session reset, and by then consolidated memories are more useful than raw chat logs.
-- **Explicit retrieval only** — `nomen messages [--source telegram] [--channel techteam] [--since 1h] [--limit 50]` for debugging, context recovery, and as consolidation input.
-- **Session buffer** — a lightweight ring buffer (last ~50 messages per active conversation) can be held in memory for continuity across session resets, separate from the DB index.
+### Context-VM (Nostr-native)
 
-### Consolidation Integration
+NIP-44 encrypted request/response events for pure-Nostr agents. No MCP/HTTP dependency.
 
-The consolidation job reads unconsolidated raw messages in batches:
+## Relay Sync
 
-1. Group by channel/sender/time window
-2. LLM extracts significant facts, decisions, and context
-3. Creates proper `memory` records (embedded, indexed, with entities)
-4. Marks raw messages as `consolidated = true`
-5. Retention policy prunes consolidated raw messages after N days
-
-### Retrieval API
-
-```
-nomen messages                          # recent messages (default 50)
-nomen messages --source nostr           # filter by source
-nomen messages --channel techteam       # filter by channel
-nomen messages --sender <id>            # filter by sender
-nomen messages --since 2h               # time window
-nomen messages --around <source_id>     # context around a specific message
-```
-
-This is explicitly *not* part of `nomen search` — raw messages are data, not memory.
-
-## Memory Consolidation
-
-Ephemeral memories (raw autosaves) get consolidated into durable named memories:
-
-1. **Group by topic/scope** — cluster ephemeral memories by semantic similarity + shared scope
-2. **Summarize** — LLM generates consolidated summary from cluster
-3. **Create new memory** — named, with proper topic, higher confidence
-4. **Link provenance** — `consolidated_from` edges to originals
-5. **Clean up** — mark originals as consolidated (or delete via NIP-09)
-
-Consolidation can run:
-- On-demand via CLI (`nomen consolidate`)
-- Periodically via cron/heartbeat
-- Triggered when ephemeral count exceeds threshold
-
-## Embedding Strategy
-
-- **Default model:** OpenAI `text-embedding-3-small` (1536 dims, cheap)
-- **Alternative:** Local model via vLLM/Ollama (for privacy)
-- **Dimension:** 1536 (configurable, must match HNSW index)
-- Embeddings generated at ingest time, stored alongside content
-
-## CLI Commands (Planned)
-
-```
-nomen list                    # list memories (current: implemented)
-nomen search <query>          # hybrid semantic + full-text search
-nomen store <text>            # store a new memory
-nomen consolidate             # run consolidation pass
-nomen sync                    # force relay sync
-nomen entities                # list extracted entities
-nomen graph <entity>          # show entity relationships
-nomen delete <id>             # delete memory (+ NIP-09)
-nomen import                  # import from external sources
-nomen config                  # show/edit configuration
-```
-
-## Crate Structure (Future)
-
-```
-nomen/
-├── src/
-│   ├── main.rs              # CLI entry point
-│   ├── db.rs                # SurrealDB connection & schema
-│   ├── sync.rs              # Nostr relay sync
-│   ├── ingest.rs            # Event parsing, embedding, entity extraction
-│   ├── search.rs            # Hybrid search (vector + FTS + graph)
-│   ├── consolidate.rs       # Memory consolidation pipeline
-│   ├── entities.rs          # Entity extraction & graph management
-│   └── config.rs            # Configuration
-├── docs/
-│   ├── architecture.md      # This file
-│   └── nostr-memory-spec.md # NIP-78 event format
-└── Cargo.toml
-```
+- **Source of truth:** Nostr relay (NIP-78, kind 30078)
+- **Sync:** `nomen sync` fetches events, upserts into SurrealDB by d-tag
+- **Publish:** `nomen store` creates local record + publishes to relay
+- **Dedup:** d-tag uniqueness, latest timestamp wins
 
 ## Dependencies
 
-```toml
-[dependencies]
-surrealdb = { version = "2", features = ["kv-surrealkv"] }
-nostr-sdk = "0.37"
-clap = { version = "4", features = ["derive"] }
-tokio = { version = "1", features = ["full"] }
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
-anyhow = "1"
-tracing = "0.1"
-tracing-subscriber = "0.3"
-chrono = { version = "0.4", features = ["serde"] }
 ```
-
-## Integration Interfaces
-
-Nomen exposes multiple interfaces to support different agent ecosystems. Priority order: MCP first (widest reach), then Nostr-native (context-vm), then direct library embedding.
-
-### 1. MCP Server (Primary)
-
-`nomen serve` runs an MCP-compatible server (stdio or HTTP transport). Any MCP client — OpenClaw, Claude Desktop, custom agents — gets memory tools without custom integration code.
-
-**Tools exposed:**
-
-| Tool | Description |
-|------|-------------|
-| `nomen_search` | Hybrid semantic + full-text search with tier/scope filtering |
-| `nomen_store` | Store a new memory with topic, tier, scope |
-| `nomen_messages` | Retrieve raw messages (explicit, not in recall) |
-| `nomen_entities` | List/query extracted entities and relationships |
-| `nomen_consolidate` | Trigger consolidation pass |
-| `nomen_ingest` | Ingest a raw message (source, sender, channel, content) |
-
-**Transport options:**
-- **stdio** — for local agents (OpenClaw plugin spawns `nomen serve --stdio`)
-- **HTTP** — for remote agents or multi-agent setups (`nomen serve --http :3848`)
-
-**OpenClaw integration** via plugin (based on `openclaw-nostr` structure):
-- Plugin hooks all inbound messages across channels → calls `nomen_ingest`
-- Registers Nomen MCP tools so the agent can search/store naturally
-- Consolidation triggered via agent heartbeat or plugin timer
-
-### 2. Context-VM / Nostr-Native Interface
-
-For Nostr-native agents that don't use MCP — pure Nostr protocol interaction with Nomen.
-
-**Concept:** Nomen publishes a "context VM" — a set of Nostr events that define available memory operations. Agents interact by publishing request events and subscribing to response events on the relay.
-
-**Event kinds:**
-
+nostr-sdk 0.39, surrealdb 2 (kv-surrealkv), clap 4, tokio 1,
+reqwest 0.12 (embeddings API), serde/serde_json, anyhow, tracing
+Optional: rusqlite (migration), snow-memory (Snowclaw adapter)
 ```
-kind 5900: memory request  (agent → nomen)
-kind 5901: memory response (nomen → agent)
-```
-
-**Request format (kind 5900):**
-```json
-{
-  "content": "{\"action\": \"search\", \"query\": \"alhovuori plans\", \"limit\": 10}",
-  "tags": [
-    ["p", "<nomen-service-npub>"],
-    ["t", "nomen-request"],
-    ["expiration", "<unix+60>"]
-  ]
-}
-```
-
-**Response format (kind 5901):**
-```json
-{
-  "content": "{\"results\": [...], \"request_id\": \"<event-id>\"}",
-  "tags": [
-    ["p", "<requesting-agent-npub>"],
-    ["e", "<request-event-id>"],
-    ["t", "nomen-response"]
-  ]
-}
-```
-
-**Supported actions:** `search`, `store`, `ingest`, `entities`, `consolidate`
-
-**How it works:**
-- Nomen daemon subscribes to kind 5900 events tagged with its npub
-- Processes the request against local SurrealDB
-- Publishes kind 5901 response event
-- Ephemeral events (NIP-16) so they don't persist on relay
-- NIP-44 encrypted content between agent and Nomen for private queries
-- Auth via NIP-42 — only authorized npubs can query
-
-**Advantages for Nostr agents:**
-- No MCP dependency, no HTTP, no sidecar process to manage
-- Works over any relay — agents can use Nomen remotely
-- Natural fit for agents already on Nostr (Snowclaw, custom bots)
-- Multi-agent memory sharing via relay subscriptions
-
-### 3. Rust Library (Direct Embedding)
-
-For Rust agents like Snowclaw — import as a crate dependency:
-
-```toml
-nomen = { path = "../nomen" }
-```
-
-- `nomen::search(query, tier, scope)` replaces `CollectiveMemory::recall()`
-- `nomen::store(content, tier, scope, topic)` replaces direct relay publish
-- `nomen::ingest_message(source, sender, channel, content)` in channel handlers
-- Shared SurrealDB data dir, no IPC overhead
-- Migration path: import existing `memories.db` SQLite data into SurrealDB
-
-This decouples memory from Snowclaw's upstream, so memory evolution doesn't require zeroclaw rebases.
-
-### Interface Priority
-
-1. **MCP server** — build first, widest compatibility, immediate value for OpenClaw + any MCP client
-2. **Context-VM (Nostr)** — build second, enables pure-Nostr agent ecosystem
-3. **Library crate** — build alongside, used by Snowclaw directly
-
-All three share the same core — SurrealDB storage, consolidation engine, embedding pipeline. The interfaces are thin wrappers.
-
-## Open Questions
-
-1. **Embedding provider config** — use OpenRouter? Local model? Configurable per-instance?
-2. **Entity extraction** — LLM-powered (expensive) vs regex/heuristic (cheap, limited)?
-3. **SurrealKV vs RocksDB** — SurrealKV is pure Rust (simpler build), RocksDB is battle-tested. Start with SurrealKV?
-4. **Multi-agent** — if multiple agents share a relay, do they share a local DB or each maintain their own?
-5. **Consolidation trigger** — time-based, count-based, or both?
-6. **Context-VM event kinds** — use ephemeral (20000-29999 range) or regular events? Ephemeral avoids relay bloat but may not be supported everywhere.
-7. **Context-VM auth** — NIP-42 relay auth sufficient, or add NIP-44 encryption for all requests?
