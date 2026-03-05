@@ -70,6 +70,7 @@ mod tests {
             d_tag: None,
             created_at: String::new(),
             updated_at: String::new(),
+            ephemeral: false,
         }
     }
 

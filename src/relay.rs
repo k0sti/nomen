@@ -181,6 +181,41 @@ impl RelayManager {
         &self.client
     }
 
+    /// Subscribe to kind 30078 events for the given pubkeys and return new events
+    /// via a tokio broadcast channel. Used for daemon/incremental sync.
+    pub async fn subscribe(
+        &self,
+        pubkeys: &[PublicKey],
+    ) -> Result<tokio::sync::mpsc::Receiver<Event>> {
+        let filter = Filter::new()
+            .kinds(vec![Kind::Custom(30078), Kind::Custom(4129)])
+            .authors(pubkeys.to_vec());
+
+        self.client.subscribe(filter, None).await?;
+        info!("Live subscription started for {} pubkeys", pubkeys.len());
+
+        let (tx, rx) = tokio::sync::mpsc::channel::<Event>(256);
+        let client = self.client.clone();
+
+        tokio::spawn(async move {
+            let _ = client
+                .handle_notifications(|notification| {
+                    let tx = tx.clone();
+                    async move {
+                        if let RelayPoolNotification::Event { event, .. } = notification {
+                            if tx.send((*event).clone()).await.is_err() {
+                                return Ok(true); // receiver dropped, stop
+                            }
+                        }
+                        Ok(false)
+                    }
+                })
+                .await;
+        });
+
+        Ok(rx)
+    }
+
     /// Disconnect from the relay.
     pub async fn disconnect(&self) {
         self.client.disconnect().await;

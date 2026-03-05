@@ -66,3 +66,6 @@ rusqlite = { version = "0.37", features = ["bundled"], optional = true }
 
 # Snowclaw collective memory types (optional)
 snow-memory = { path = "../snowclaw/crates/snow-memory", optional = true }
+
+[dev-dependencies]
+tempfile = "3"

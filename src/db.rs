@@ -97,6 +97,8 @@ pub struct MemoryRecord {
     pub d_tag: Option<String>,
     pub created_at: String,
     pub updated_at: String,
+    #[serde(default)]
+    pub ephemeral: bool,
 }
 
 /// Version check result
@@ -161,7 +163,7 @@ fn db_path() -> std::path::PathBuf {
         .join("db")
 }
 
-const SCHEMA: &str = r#"
+pub const SCHEMA: &str = r#"
 DEFINE TABLE IF NOT EXISTS memory SCHEMAFULL;
 DEFINE FIELD IF NOT EXISTS content    ON memory TYPE string;
 DEFINE FIELD IF NOT EXISTS summary    ON memory TYPE option<string>;
@@ -177,6 +179,7 @@ DEFINE FIELD IF NOT EXISTS nostr_id   ON memory TYPE option<string>;
 DEFINE FIELD IF NOT EXISTS d_tag      ON memory TYPE option<string>;
 DEFINE FIELD IF NOT EXISTS created_at ON memory TYPE string;
 DEFINE FIELD IF NOT EXISTS updated_at ON memory TYPE string;
+DEFINE FIELD IF NOT EXISTS ephemeral  ON memory TYPE bool DEFAULT false;
 
 DEFINE ANALYZER IF NOT EXISTS memory_analyzer TOKENIZERS class FILTERS ascii, lowercase, snowball(english);
 DEFINE INDEX IF NOT EXISTS memory_fulltext ON memory FIELDS content SEARCH ANALYZER memory_analyzer BM25;
@@ -186,11 +189,10 @@ DEFINE INDEX IF NOT EXISTS memory_scope  ON memory FIELDS scope;
 DEFINE INDEX IF NOT EXISTS memory_topic  ON memory FIELDS topic;
 DEFINE INDEX IF NOT EXISTS memory_embedding ON memory FIELDS embedding HNSW DIMENSION 1536 DIST COSINE EFC 150 M 12;
 
-DEFINE TABLE IF NOT EXISTS nomen_group SCHEMAFULL;
-DEFINE FIELD IF NOT EXISTS id         ON nomen_group TYPE string;
+DEFINE TABLE IF NOT EXISTS nomen_group SCHEMALESS;
 DEFINE FIELD IF NOT EXISTS name       ON nomen_group TYPE string;
 DEFINE FIELD IF NOT EXISTS parent     ON nomen_group TYPE option<string>;
-DEFINE FIELD IF NOT EXISTS members    ON nomen_group TYPE array;
+DEFINE FIELD IF NOT EXISTS members    ON nomen_group TYPE option<array>;
 DEFINE FIELD IF NOT EXISTS relay      ON nomen_group TYPE option<string>;
 DEFINE FIELD IF NOT EXISTS nostr_group ON nomen_group TYPE option<string>;
 DEFINE FIELD IF NOT EXISTS created_at ON nomen_group TYPE string;
@@ -271,6 +273,7 @@ fn build_record(parsed: &ParsedMemory, nostr_id: &str) -> MemoryRecord {
         d_tag: Some(parsed.d_tag.clone()),
         created_at: created,
         updated_at: now,
+        ephemeral: false,
     }
 }
 
@@ -431,7 +434,7 @@ pub async fn hybrid_search(
         conditions.push("tier = $tier".to_string());
     }
     if allowed_scopes.is_some() {
-        conditions.push("scope IN $scopes".to_string());
+        conditions.push("(scope IN $scopes OR array::any($scopes, |$s| string::starts_with(scope, string::concat($s, '.'))))".to_string());
     }
     if min_confidence.is_some() {
         conditions.push("(confidence IS NONE OR confidence >= $min_conf)".to_string());
@@ -619,6 +622,31 @@ pub async fn get_unconsolidated_messages(
     );
     let results: Vec<RawMessageRecord> = db.query(&sql).await?.check()?.take(0)?;
     Ok(results)
+}
+
+/// Count consolidated raw messages older than the given cutoff date (RFC3339).
+pub async fn count_old_messages(db: &Surreal<Db>, before: &str) -> Result<usize> {
+    #[derive(Deserialize)]
+    struct CountResult { count: usize }
+    let result: Option<CountResult> = db
+        .query("SELECT count() AS count FROM raw_message WHERE consolidated = true AND created_at < $before GROUP ALL")
+        .bind(("before", before.to_string()))
+        .await?
+        .check()?
+        .take(0)?;
+    Ok(result.map(|r| r.count).unwrap_or(0))
+}
+
+/// Prune (delete) consolidated raw messages older than the given cutoff date (RFC3339).
+pub async fn prune_old_messages(db: &Surreal<Db>, before: &str) -> Result<usize> {
+    let count = count_old_messages(db, before).await?;
+    if count > 0 {
+        db.query("DELETE FROM raw_message WHERE consolidated = true AND created_at < $before")
+            .bind(("before", before.to_string()))
+            .await?
+            .check()?;
+    }
+    Ok(count)
 }
 
 // ── Entity CRUD ─────────────────────────────────────────────────────

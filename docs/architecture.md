@@ -69,7 +69,7 @@ Use `kv-surrealkv` for pure-Rust persistent storage (no C deps). Alternative: `k
 
 ```
 ~/.nomen/db/          # SurrealDB data directory
-~/.nomen/config.toml  # Nomen configuration
+~/.config/nomen/config.toml  # Nomen configuration (XDG standard)
 ```
 
 ## Schema Design

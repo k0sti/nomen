@@ -36,6 +36,37 @@ pub struct Config {
     /// Group definitions
     #[serde(default)]
     pub groups: Vec<GroupConfig>,
+    /// Consolidation LLM configuration
+    #[serde(default)]
+    pub consolidation: Option<ConsolidationLlmConfig>,
+}
+
+#[derive(Deserialize, Clone)]
+pub struct ConsolidationLlmConfig {
+    /// Provider: "openrouter", "openai", or "none"
+    #[serde(default = "default_consolidation_provider")]
+    pub provider: String,
+    /// Model name (e.g. "anthropic/claude-sonnet-4-6")
+    #[serde(default = "default_consolidation_model")]
+    pub model: String,
+    /// Environment variable name containing the API key
+    #[serde(default = "default_consolidation_api_key_env")]
+    pub api_key_env: String,
+    /// Base URL override
+    #[serde(default)]
+    pub base_url: Option<String>,
+}
+
+fn default_consolidation_provider() -> String {
+    "openrouter".to_string()
+}
+
+fn default_consolidation_model() -> String {
+    "anthropic/claude-sonnet-4-6".to_string()
+}
+
+fn default_consolidation_api_key_env() -> String {
+    "OPENROUTER_API_KEY".to_string()
 }
 
 #[derive(Deserialize, Clone)]

@@ -15,6 +15,7 @@ use crate::consolidate;
 use crate::db;
 use crate::embed::Embedder;
 use crate::entities;
+use crate::groups;
 use crate::ingest;
 use crate::relay::RelayManager;
 use crate::search;
@@ -189,6 +190,23 @@ fn tools_list() -> Value {
                         "id": { "type": "string", "description": "Event ID to delete" }
                     }
                 }
+            },
+            {
+                "name": "nomen_groups",
+                "description": "Manage groups: list, members, create, add_member, remove_member",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "action": { "type": "string", "description": "Action: list, members, create, add_member, remove_member" },
+                        "id": { "type": "string", "description": "Group id (required for all except list)" },
+                        "name": { "type": "string", "description": "Group name (required for create)" },
+                        "members": { "type": "array", "items": { "type": "string" }, "description": "Initial members (for create)" },
+                        "npub": { "type": "string", "description": "Member npub (for add_member/remove_member)" },
+                        "nostr_group": { "type": "string", "description": "NIP-29 group id (for create)" },
+                        "relay": { "type": "string", "description": "Relay URL (for create)" }
+                    },
+                    "required": ["action"]
+                }
             }
         ]
     })
@@ -238,6 +256,7 @@ impl McpServer {
             "nomen_entities" => self.tool_entities(&arguments).await,
             "nomen_consolidate" => self.tool_consolidate(&arguments).await,
             "nomen_delete" => self.tool_delete(&arguments).await,
+            "nomen_groups" => self.tool_groups(&arguments).await,
             _ => Err(anyhow::anyhow!("Unknown tool: {tool_name}")),
         };
 
@@ -534,6 +553,88 @@ impl McpServer {
                     report.channels.join(", ")
                 }
             ))
+        }
+    }
+
+    async fn tool_groups(&self, args: &Value) -> Result<String> {
+        let action = args
+            .get("action")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+
+        match action {
+            "list" => {
+                let group_list = groups::list_groups(&self.db).await?;
+                if group_list.is_empty() {
+                    return Ok("No groups found.".to_string());
+                }
+                let mut output = Vec::new();
+                for g in &group_list {
+                    let members_str = if g.members.is_empty() {
+                        "(no members)".to_string()
+                    } else {
+                        format!("{} member(s)", g.members.len())
+                    };
+                    output.push(format!("{} — {} [{}]", g.id, g.name, members_str));
+                }
+                Ok(format!("{} groups:\n{}", group_list.len(), output.join("\n")))
+            }
+            "members" => {
+                let id = args.get("id").and_then(|v| v.as_str()).unwrap_or("");
+                if id.is_empty() {
+                    anyhow::bail!("id is required for members action");
+                }
+                let members = groups::get_members(&self.db, id).await?;
+                if members.is_empty() {
+                    Ok(format!("Group {id} has no members."))
+                } else {
+                    Ok(format!(
+                        "{} members of {id}:\n{}",
+                        members.len(),
+                        members.join("\n")
+                    ))
+                }
+            }
+            "create" => {
+                let id = args.get("id").and_then(|v| v.as_str()).unwrap_or("");
+                let name = args.get("name").and_then(|v| v.as_str()).unwrap_or("");
+                if id.is_empty() || name.is_empty() {
+                    anyhow::bail!("id and name are required for create action");
+                }
+                let members: Vec<String> = args
+                    .get("members")
+                    .and_then(|v| v.as_array())
+                    .map(|arr| {
+                        arr.iter()
+                            .filter_map(|v| v.as_str().map(String::from))
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                let nostr_group = args.get("nostr_group").and_then(|v| v.as_str());
+                let relay = args.get("relay").and_then(|v| v.as_str());
+
+                groups::create_group(&self.db, id, name, &members, nostr_group, relay).await?;
+                Ok(format!("Created group: {id} ({name})"))
+            }
+            "add_member" => {
+                let id = args.get("id").and_then(|v| v.as_str()).unwrap_or("");
+                let npub = args.get("npub").and_then(|v| v.as_str()).unwrap_or("");
+                if id.is_empty() || npub.is_empty() {
+                    anyhow::bail!("id and npub are required for add_member action");
+                }
+                groups::add_member(&self.db, id, npub).await?;
+                Ok(format!("Added {npub} to group {id}"))
+            }
+            "remove_member" => {
+                let id = args.get("id").and_then(|v| v.as_str()).unwrap_or("");
+                let npub = args.get("npub").and_then(|v| v.as_str()).unwrap_or("");
+                if id.is_empty() || npub.is_empty() {
+                    anyhow::bail!("id and npub are required for remove_member action");
+                }
+                groups::remove_member(&self.db, id, npub).await?;
+                Ok(format!("Removed {npub} from group {id}"))
+            }
+            _ => anyhow::bail!("Unknown action: {action}. Valid: list, members, create, add_member, remove_member"),
         }
     }
 

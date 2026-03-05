@@ -148,6 +148,12 @@ enum Command {
         #[arg(long)]
         kind: Option<String>,
     },
+    /// Prune old consolidated raw messages
+    Prune {
+        /// Delete consolidated messages older than N days
+        #[arg(long, default_value = "30")]
+        days: u64,
+    },
     /// Start MCP server (JSON-RPC over stdio)
     Serve {
         /// Use stdio transport
@@ -332,6 +338,9 @@ async fn main() -> Result<()> {
         Command::Entities { kind } => {
             cmd_entities(kind.as_deref()).await?;
         }
+        Command::Prune { days } => {
+            cmd_prune(days).await?;
+        }
         Command::Serve { stdio: _, context_vm, ref allowed_npubs } => {
             cmd_serve(&cli, context_vm, allowed_npubs.clone()).await?;
         }
@@ -469,6 +478,17 @@ async fn cmd_store(
     // Build d-tag
     let d_tag = format!("snow:memory:{topic}");
 
+    // Check for existing event with this d-tag (for snow:supersedes)
+    let previous_event_id = {
+        let events = mgr.fetch_memories(&_pubkeys).await?;
+        events.into_iter().find(|e| {
+            get_tag_value(&e.tags, "d").as_deref() == Some(&d_tag)
+        }).map(|e| e.id)
+    };
+
+    // Build version based on previous event
+    let version = if previous_event_id.is_some() { "2" } else { "1" };
+
     // Build tags
     let mut tags = vec![
         Tag::custom(TagKind::Custom("d".into()), vec![d_tag.clone()]),
@@ -476,8 +496,16 @@ async fn cmd_store(
         Tag::custom(TagKind::Custom("snow:model".into()), vec!["human/manual".to_string()]),
         Tag::custom(TagKind::Custom("snow:confidence".into()), vec![format!("{confidence:.2}")]),
         Tag::custom(TagKind::Custom("snow:source".into()), vec![keys.public_key().to_hex()]),
-        Tag::custom(TagKind::Custom("snow:version".into()), vec!["1".to_string()]),
+        Tag::custom(TagKind::Custom("snow:version".into()), vec![version.to_string()]),
     ];
+
+    // Add snow:supersedes tag if updating an existing memory
+    if let Some(prev_id) = previous_event_id {
+        tags.push(Tag::custom(
+            TagKind::Custom("snow:supersedes".into()),
+            vec![prev_id.to_hex()],
+        ));
+    }
 
     // Add topic tags for relay-side filtering (NIP-78 spec)
     for part in topic.split('/') {
@@ -504,7 +532,7 @@ async fn cmd_store(
     let parsed = nomen::memory::ParsedMemory {
         tier: tier.to_string(),
         topic: topic.to_string(),
-        version: "1".to_string(),
+        version: version.to_string(),
         confidence: format!("{confidence:.2}"),
         model: "human/manual".to_string(),
         summary: summary.to_string(),
@@ -751,16 +779,16 @@ async fn cmd_group(action: GroupAction) -> Result<()> {
             );
 
             for group in all {
-                let parent_display = group
-                    .parent
-                    .as_deref()
-                    .map(|p| format!(" (parent: {p})"))
-                    .unwrap_or_default();
-                let nostr_display = group
-                    .nostr_group
-                    .as_deref()
-                    .map(|n| format!(" [NIP-29: {n}]"))
-                    .unwrap_or_default();
+                let parent_display = if group.parent.is_empty() {
+                    String::new()
+                } else {
+                    format!(" (parent: {})", group.parent)
+                };
+                let nostr_display = if group.nostr_group.is_empty() {
+                    String::new()
+                } else {
+                    format!(" [NIP-29: {}]", group.nostr_group)
+                };
 
                 println!(
                     "\n  {} — {}{}{}",
@@ -980,6 +1008,31 @@ async fn cmd_entities(kind_filter: Option<&str>) -> Result<()> {
     }
 
     println!("\n{}: {} entities\n", "Total".bold(), entity_list.len());
+    Ok(())
+}
+
+// ── Command: prune ──────────────────────────────────────────────────
+
+async fn cmd_prune(days: u64) -> Result<()> {
+    let db = db::init_db().await?;
+
+    let cutoff = chrono::Utc::now() - chrono::Duration::days(days as i64);
+    let cutoff_str = cutoff.to_rfc3339();
+
+    println!("Pruning consolidated raw messages older than {} days...", days);
+    let count = db::prune_old_messages(&db, &cutoff_str).await?;
+
+    if count == 0 {
+        println!("No messages to prune.");
+    } else {
+        println!(
+            "{}: {} consolidated messages deleted (older than {})",
+            "Pruned".green().bold(),
+            count,
+            cutoff.format("%Y-%m-%d")
+        );
+    }
+
     Ok(())
 }
 

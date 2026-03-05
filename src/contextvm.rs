@@ -97,7 +97,7 @@ impl ContextVmServer {
 
         let filter = Filter::new()
             .kind(Kind::Custom(REQUEST_KIND))
-            .pubkey(our_pubkey)
+            .custom_tag(SingleLetterTag::lowercase(Alphabet::P), our_pubkey.to_hex())
             .custom_tag(SingleLetterTag::lowercase(Alphabet::T), "nomen-request");
 
         self.relay.client().subscribe(filter, None).await?;
@@ -194,6 +194,7 @@ impl ContextVmServer {
         )
         .map_err(|e| anyhow::anyhow!("NIP-44 encryption failed: {e}"))?;
 
+        let expiration = Timestamp::from(Timestamp::now().as_u64() + 60);
         let tags = vec![
             Tag::public_key(request_event.pubkey),
             Tag::event(request_event.id),
@@ -201,6 +202,7 @@ impl ContextVmServer {
                 TagKind::Custom("t".into()),
                 vec!["nomen-response".to_string()],
             ),
+            Tag::expiration(expiration),
         ];
 
         let builder = EventBuilder::new(Kind::Custom(RESPONSE_KIND), encrypted).tags(tags);

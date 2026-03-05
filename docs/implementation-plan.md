@@ -69,7 +69,7 @@ nomen group members atlantislabs.engineering
 nomen group add-member atlantislabs.engineering npub1xyz
 ```
 
-**Config file alternative** (`~/.nomen/config.toml`):
+**Config file alternative** (`~/.config/nomen/config.toml`):
 ```toml
 [[groups]]
 id = "atlantislabs"

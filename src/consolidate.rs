@@ -2,9 +2,10 @@ use std::collections::HashMap;
 
 use anyhow::Result;
 use async_trait::async_trait;
+use serde::Deserialize;
 use surrealdb::Surreal;
 use surrealdb::engine::local::Db;
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 
 use crate::embed::Embedder;
 use crate::ingest::RawMessageRecord;
@@ -71,6 +72,151 @@ impl LlmProvider for NoopLlmProvider {
         }
 
         Ok(extracted)
+    }
+}
+
+/// OpenAI/OpenRouter-compatible LLM provider for real consolidation.
+pub struct OpenAiLlmProvider {
+    client: reqwest::Client,
+    base_url: String,
+    api_key: String,
+    model: String,
+}
+
+impl OpenAiLlmProvider {
+    pub fn new(base_url: &str, api_key: &str, model: &str) -> Self {
+        Self {
+            client: reqwest::Client::new(),
+            base_url: base_url.trim_end_matches('/').to_string(),
+            api_key: api_key.to_string(),
+            model: model.to_string(),
+        }
+    }
+
+    /// Create from config, returning None if API key is missing.
+    pub fn from_config(config: &crate::config::ConsolidationLlmConfig) -> Option<Self> {
+        let api_key = std::env::var(&config.api_key_env).unwrap_or_default();
+        if api_key.is_empty() {
+            warn!(
+                "Consolidation API key env {} not set, will use NoopLlmProvider",
+                config.api_key_env
+            );
+            return None;
+        }
+
+        let base_url = config.base_url.clone().unwrap_or_else(|| {
+            match config.provider.as_str() {
+                "openai" => "https://api.openai.com/v1".to_string(),
+                "openrouter" => "https://openrouter.ai/api/v1".to_string(),
+                _ => "https://openrouter.ai/api/v1".to_string(),
+            }
+        });
+
+        Some(Self::new(&base_url, &api_key, &config.model))
+    }
+}
+
+#[derive(Deserialize)]
+struct ChatResponse {
+    choices: Vec<ChatChoice>,
+}
+
+#[derive(Deserialize)]
+struct ChatChoice {
+    message: ChatMessage,
+}
+
+#[derive(Deserialize)]
+struct ChatMessage {
+    content: String,
+}
+
+#[derive(Deserialize)]
+struct LlmExtracted {
+    memories: Vec<LlmMemory>,
+}
+
+#[derive(Deserialize)]
+struct LlmMemory {
+    topic: String,
+    summary: String,
+    detail: String,
+    confidence: f64,
+}
+
+#[async_trait]
+impl LlmProvider for OpenAiLlmProvider {
+    async fn consolidate(&self, messages: &[RawMessageRecord]) -> Result<Vec<ExtractedMemory>> {
+        if messages.is_empty() {
+            return Ok(vec![]);
+        }
+
+        // Build message transcript
+        let mut transcript = String::new();
+        for msg in messages {
+            let channel = if msg.channel.is_empty() { "general" } else { &msg.channel };
+            transcript.push_str(&format!(
+                "[{}] #{} {}: {}\n",
+                msg.created_at, channel, msg.sender, msg.content
+            ));
+        }
+
+        let system_prompt = "You are a memory consolidation agent. Given a batch of raw messages, \
+extract significant facts, decisions, and context into structured memories. \
+Return JSON with this exact structure: {\"memories\": [{\"topic\": \"category/subcategory\", \
+\"summary\": \"one-line summary\", \"detail\": \"full detail\", \"confidence\": 0.8}]}. \
+Only extract genuinely significant information. Set confidence 0.5-1.0 based on how certain the information is. \
+Return an empty memories array if nothing significant is found.";
+
+        let body = serde_json::json!({
+            "model": self.model,
+            "messages": [
+                { "role": "system", "content": system_prompt },
+                { "role": "user", "content": format!("Extract memories from these messages:\n\n{transcript}") }
+            ],
+            "temperature": 0.3,
+            "response_format": { "type": "json_object" }
+        });
+
+        let url = format!("{}/chat/completions", self.base_url);
+        let resp = self
+            .client
+            .post(&url)
+            .header("Authorization", format!("Bearer {}", self.api_key))
+            .header("Content-Type", "application/json")
+            .json(&body)
+            .send()
+            .await?;
+
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let text = resp.text().await.unwrap_or_default();
+            anyhow::bail!("LLM API error {status}: {text}");
+        }
+
+        let chat_resp: ChatResponse = resp.json().await?;
+        let content = chat_resp
+            .choices
+            .first()
+            .map(|c| c.message.content.as_str())
+            .unwrap_or("{}");
+
+        let extracted: LlmExtracted = serde_json::from_str(content)
+            .unwrap_or_else(|e| {
+                warn!("Failed to parse LLM response as JSON: {e}");
+                LlmExtracted { memories: vec![] }
+            });
+
+        Ok(extracted
+            .memories
+            .into_iter()
+            .map(|m| ExtractedMemory {
+                summary: m.summary,
+                detail: m.detail,
+                topic: m.topic,
+                confidence: m.confidence.clamp(0.0, 1.0),
+            })
+            .collect())
     }
 }
 

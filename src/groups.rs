@@ -7,14 +7,22 @@ use tracing::debug;
 use crate::config::GroupConfig;
 
 /// A group record as stored in SurrealDB.
+///
+/// Note: The `id` field doubles as both our custom group identifier and SurrealDB's
+/// record ID. We use `meta::id(id)` in SELECT queries to extract it as a plain string.
+/// All optional fields use String (not Option<String>) to avoid SurrealDB NONE
+/// serialization issues.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Group {
     pub id: String,
     pub name: String,
-    pub parent: Option<String>,
+    #[serde(default)]
+    pub parent: String,
     pub members: Vec<String>,
-    pub relay: Option<String>,
-    pub nostr_group: Option<String>,
+    #[serde(default)]
+    pub relay: String,
+    #[serde(default)]
+    pub nostr_group: String,
     pub created_at: String,
 }
 
@@ -30,21 +38,21 @@ impl GroupStore {
 
         // Load from config
         for cg in config_groups {
-            let parent = derive_parent(&cg.id);
+            let parent = derive_parent(&cg.id).unwrap_or_default();
             groups.push(Group {
                 id: cg.id.clone(),
                 name: cg.name.clone(),
                 parent,
                 members: cg.members.clone(),
-                relay: cg.relay.clone(),
-                nostr_group: cg.nostr_group.clone(),
+                relay: cg.relay.clone().unwrap_or_default(),
+                nostr_group: cg.nostr_group.clone().unwrap_or_default(),
                 created_at: chrono::Utc::now().to_rfc3339(),
             });
         }
 
         // Load from DB (these may overlap with config; DB wins for members)
         let db_groups: Vec<Group> = db
-            .query("SELECT * FROM nomen_group")
+            .query("SELECT meta::id(id) AS id, name, parent, members, relay, nostr_group, created_at FROM nomen_group")
             .await?
             .take(0)?;
 
@@ -52,10 +60,10 @@ impl GroupStore {
             if let Some(existing) = groups.iter_mut().find(|g| g.id == dbg.id) {
                 // DB overrides config for mutable fields
                 existing.members = dbg.members;
-                if dbg.nostr_group.is_some() {
+                if !dbg.nostr_group.is_empty() {
                     existing.nostr_group = dbg.nostr_group;
                 }
-                if dbg.relay.is_some() {
+                if !dbg.relay.is_empty() {
                     existing.relay = dbg.relay;
                 }
             } else {
@@ -74,10 +82,10 @@ impl GroupStore {
             .map(|cg| Group {
                 id: cg.id.clone(),
                 name: cg.name.clone(),
-                parent: derive_parent(&cg.id),
+                parent: derive_parent(&cg.id).unwrap_or_default(),
                 members: cg.members.clone(),
-                relay: cg.relay.clone(),
-                nostr_group: cg.nostr_group.clone(),
+                relay: cg.relay.clone().unwrap_or_default(),
+                nostr_group: cg.nostr_group.clone().unwrap_or_default(),
                 created_at: chrono::Utc::now().to_rfc3339(),
             })
             .collect();
@@ -121,7 +129,7 @@ impl GroupStore {
     pub fn resolve_nostr_group(&self, nostr_group: &str) -> Option<&str> {
         self.groups
             .iter()
-            .find(|g| g.nostr_group.as_deref() == Some(nostr_group))
+            .find(|g| !g.nostr_group.is_empty() && g.nostr_group == nostr_group)
             .map(|g| g.id.as_str())
     }
 
@@ -129,8 +137,8 @@ impl GroupStore {
     pub fn resolve_scope_to_nostr_group(&self, scope: &str) -> Option<&str> {
         self.groups
             .iter()
-            .find(|g| g.id == scope)
-            .and_then(|g| g.nostr_group.as_deref())
+            .find(|g| g.id == scope && !g.nostr_group.is_empty())
+            .map(|g| g.nostr_group.as_str())
     }
 }
 
@@ -150,7 +158,7 @@ pub async fn create_group(
         bail!("Group id must be alphanumeric with dots/hyphens/underscores: {id}");
     }
 
-    let parent = derive_parent(id);
+    let parent = derive_parent(id).unwrap_or_default();
     let now = chrono::Utc::now().to_rfc3339();
 
     let group = Group {
@@ -158,14 +166,14 @@ pub async fn create_group(
         name: name.to_string(),
         parent,
         members: members.to_vec(),
-        relay: relay.map(|s| s.to_string()),
-        nostr_group: nostr_group.map(|s| s.to_string()),
+        relay: relay.unwrap_or("").to_string(),
+        nostr_group: nostr_group.unwrap_or("").to_string(),
         created_at: now,
     };
 
     // Check if exists
     let existing: Option<Group> = db
-        .query("SELECT * FROM nomen_group WHERE id = $id LIMIT 1")
+        .query("SELECT meta::id(id) AS id, name, parent, members, relay, nostr_group, created_at FROM nomen_group WHERE meta::id(id) = $id LIMIT 1")
         .bind(("id", id.to_string()))
         .await?
         .take(0)?;
@@ -174,8 +182,16 @@ pub async fn create_group(
         bail!("Group already exists: {id}");
     }
 
-    db.query("CREATE nomen_group CONTENT $group")
-        .bind(("group", group))
+    // Serialize members as JSON array string for SurrealDB
+        let members_json = serde_json::to_string(&group.members)?;
+        let record_id = format!("nomen_group:`{}`", group.id);
+        let sql = format!("CREATE {record_id} SET name = $name, parent = $parent, members = {members_json}, relay = $relay, nostr_group = $nostr_group, created_at = $created_at");
+        db.query(&sql)
+        .bind(("name", group.name))
+        .bind(("parent", group.parent))
+        .bind(("relay", group.relay))
+        .bind(("nostr_group", group.nostr_group))
+        .bind(("created_at", group.created_at))
         .await?
         .check()?;
 
@@ -185,14 +201,14 @@ pub async fn create_group(
 
 /// List all groups from SurrealDB.
 pub async fn list_groups(db: &Surreal<Db>) -> Result<Vec<Group>> {
-    let groups: Vec<Group> = db.query("SELECT * FROM nomen_group ORDER BY id").await?.take(0)?;
+    let groups: Vec<Group> = db.query("SELECT meta::id(id) AS id, name, parent, members, relay, nostr_group, created_at FROM nomen_group ORDER BY id").await?.check()?.take(0)?;
     Ok(groups)
 }
 
 /// Get members of a group.
 pub async fn get_members(db: &Surreal<Db>, group_id: &str) -> Result<Vec<String>> {
     let group: Option<Group> = db
-        .query("SELECT * FROM nomen_group WHERE id = $id LIMIT 1")
+        .query("SELECT meta::id(id) AS id, name, parent, members, relay, nostr_group, created_at FROM nomen_group WHERE meta::id(id) = $id LIMIT 1")
         .bind(("id", group_id.to_string()))
         .await?
         .take(0)?;
@@ -206,7 +222,7 @@ pub async fn get_members(db: &Surreal<Db>, group_id: &str) -> Result<Vec<String>
 /// Add a member to a group.
 pub async fn add_member(db: &Surreal<Db>, group_id: &str, npub: &str) -> Result<()> {
     let group: Option<Group> = db
-        .query("SELECT * FROM nomen_group WHERE id = $id LIMIT 1")
+        .query("SELECT meta::id(id) AS id, name, parent, members, relay, nostr_group, created_at FROM nomen_group WHERE meta::id(id) = $id LIMIT 1")
         .bind(("id", group_id.to_string()))
         .await?
         .take(0)?;
@@ -216,7 +232,7 @@ pub async fn add_member(db: &Surreal<Db>, group_id: &str, npub: &str) -> Result<
             if g.members.contains(&npub.to_string()) {
                 bail!("{npub} is already a member of {group_id}");
             }
-            db.query("UPDATE nomen_group SET members = array::push(members, $npub) WHERE id = $id")
+            db.query("UPDATE nomen_group SET members = array::push(members, $npub) WHERE meta::id(id) = $id")
                 .bind(("id", group_id.to_string()))
                 .bind(("npub", npub.to_string()))
                 .await?
@@ -230,7 +246,7 @@ pub async fn add_member(db: &Surreal<Db>, group_id: &str, npub: &str) -> Result<
 /// Remove a member from a group.
 pub async fn remove_member(db: &Surreal<Db>, group_id: &str, npub: &str) -> Result<()> {
     let group: Option<Group> = db
-        .query("SELECT * FROM nomen_group WHERE id = $id LIMIT 1")
+        .query("SELECT meta::id(id) AS id, name, parent, members, relay, nostr_group, created_at FROM nomen_group WHERE meta::id(id) = $id LIMIT 1")
         .bind(("id", group_id.to_string()))
         .await?
         .take(0)?;
@@ -240,7 +256,7 @@ pub async fn remove_member(db: &Surreal<Db>, group_id: &str, npub: &str) -> Resu
             if !g.members.contains(&npub.to_string()) {
                 bail!("{npub} is not a member of {group_id}");
             }
-            db.query("UPDATE nomen_group SET members = array::remove(members, array::find_index(members, $npub)) WHERE id = $id")
+            db.query("UPDATE nomen_group SET members = array::remove(members, array::find_index(members, $npub)) WHERE meta::id(id) = $id")
                 .bind(("id", group_id.to_string()))
                 .bind(("npub", npub.to_string()))
                 .await?
