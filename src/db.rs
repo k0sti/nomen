@@ -180,6 +180,9 @@ DEFINE FIELD IF NOT EXISTS d_tag      ON memory TYPE option<string>;
 DEFINE FIELD IF NOT EXISTS created_at ON memory TYPE string;
 DEFINE FIELD IF NOT EXISTS updated_at ON memory TYPE string;
 DEFINE FIELD IF NOT EXISTS ephemeral  ON memory TYPE bool DEFAULT false;
+-- Note: created_at/updated_at remain TYPE string (not datetime) because SurrealDB
+-- datetime serialization requires special handling in Rust serde. RFC3339 strings
+-- still support lexicographic ordering which is sufficient for our queries.
 
 DEFINE ANALYZER IF NOT EXISTS memory_analyzer TOKENIZERS class FILTERS ascii, lowercase, snowball(english);
 DEFINE INDEX IF NOT EXISTS memory_fulltext ON memory FIELDS content SEARCH ANALYZER memory_analyzer BM25;
@@ -313,7 +316,7 @@ pub async fn store_memory(
     Ok(true)
 }
 
-/// Store a memory directly (not from a relay event). Returns the SurrealDB record ID.
+/// Store a memory directly (not from a relay event). Returns the d_tag.
 pub async fn store_memory_direct(
     db: &Surreal<Db>,
     parsed: &ParsedMemory,
@@ -322,26 +325,13 @@ pub async fn store_memory_direct(
     let record = build_record(parsed, event_id);
     let d_tag_owned = record.d_tag.clone().unwrap_or_default();
 
-    #[derive(Deserialize)]
-    struct Created {
-        #[serde(deserialize_with = "deserialize_thing_as_string")]
-        id: String,
-    }
-
-    let mut result = db.query("DELETE FROM memory WHERE d_tag = $d_tag; CREATE memory CONTENT $record")
-        .bind(("d_tag", d_tag_owned))
+    db.query("DELETE FROM memory WHERE d_tag = $d_tag; CREATE memory CONTENT $record")
+        .bind(("d_tag", d_tag_owned.clone()))
         .bind(("record", record))
-        .await?;
-    result.check()?;
+        .await?
+        .check()?;
 
-    // The CREATE is statement index 1 (after DELETE at index 0)
-    let created: Vec<Created> = result.take(1)?;
-    let id = created
-        .first()
-        .map(|c| c.id.clone())
-        .unwrap_or_default();
-
-    Ok(id)
+    Ok(d_tag_owned)
 }
 
 /// Full-text search for memories.
@@ -635,6 +625,55 @@ pub async fn get_unconsolidated_messages(
     );
     let results: Vec<RawMessageRecord> = db.query(&sql).await?.check()?.take(0)?;
     Ok(results)
+}
+
+/// Query messages around a specific source_id: N messages before and after.
+pub async fn query_messages_around(
+    db: &Surreal<Db>,
+    source_id: &str,
+    context_count: usize,
+) -> Result<Vec<RawMessageRecord>> {
+    // First, find the target message's created_at
+    #[derive(Deserialize)]
+    struct TimeRow { created_at: String }
+
+    let target: Option<TimeRow> = db
+        .query("SELECT created_at FROM raw_message WHERE source_id = $source_id LIMIT 1")
+        .bind(("source_id", source_id.to_string()))
+        .await?
+        .check()?
+        .take(0)?;
+
+    let pivot_time = match target {
+        Some(t) => t.created_at,
+        None => anyhow::bail!("Message with source_id '{source_id}' not found"),
+    };
+
+    // Fetch N messages before (inclusive of target) + N messages after
+    let before_sql = format!(
+        "SELECT meta::id(id) AS id, source, source_id ?? '' AS source_id, sender, channel ?? '' AS channel, content, created_at, consolidated \
+         FROM raw_message WHERE created_at <= $pivot ORDER BY created_at DESC LIMIT {}",
+        context_count + 1
+    );
+    let after_sql = format!(
+        "SELECT meta::id(id) AS id, source, source_id ?? '' AS source_id, sender, channel ?? '' AS channel, content, created_at, consolidated \
+         FROM raw_message WHERE created_at > $pivot ORDER BY created_at ASC LIMIT {context_count}"
+    );
+
+    let mut result = db
+        .query(&before_sql)
+        .query(&after_sql)
+        .bind(("pivot", pivot_time))
+        .await?
+        .check()?;
+
+    let mut before: Vec<RawMessageRecord> = result.take(0)?;
+    let after: Vec<RawMessageRecord> = result.take(1)?;
+
+    // Before is in DESC order, reverse it
+    before.reverse();
+    before.extend(after);
+    Ok(before)
 }
 
 /// Count consolidated raw messages older than the given cutoff date (RFC3339).

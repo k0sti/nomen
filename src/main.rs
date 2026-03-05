@@ -132,6 +132,12 @@ enum Command {
         /// Max results
         #[arg(long, default_value = "50")]
         limit: usize,
+        /// Show N messages around a specific source_id
+        #[arg(long)]
+        around: Option<String>,
+        /// Number of context messages before/after --around target
+        #[arg(long, default_value = "5")]
+        context: usize,
     },
     /// Consolidate raw messages into memories
     Consolidate {
@@ -329,8 +335,8 @@ async fn main() -> Result<()> {
         Command::Ingest { content, source, sender, channel } => {
             cmd_ingest(&content, &source, &sender, channel.as_deref()).await?;
         }
-        Command::Messages { source, channel, sender, since, limit } => {
-            cmd_messages(source.as_deref(), channel.as_deref(), sender.as_deref(), since.as_deref(), limit).await?;
+        Command::Messages { source, channel, sender, since, limit, around, context } => {
+            cmd_messages(source.as_deref(), channel.as_deref(), sender.as_deref(), since.as_deref(), limit, around.as_deref(), context).await?;
         }
         Command::Consolidate { min_messages, batch_size } => {
             cmd_consolidate(&cli, min_messages, batch_size).await?;
@@ -886,19 +892,24 @@ async fn cmd_messages(
     sender: Option<&str>,
     since: Option<&str>,
     limit: usize,
+    around: Option<&str>,
+    context_count: usize,
 ) -> Result<()> {
     let db = db::init_db().await?;
 
-    let opts = ingest::MessageQuery {
-        source: source.map(|s| s.to_string()),
-        channel: channel.map(|c| c.to_string()),
-        sender: sender.map(|s| s.to_string()),
-        since: since.map(|s| s.to_string()),
-        limit: Some(limit),
-        consolidated_only: false,
+    let messages = if let Some(source_id) = around {
+        db::query_messages_around(&db, source_id, context_count).await?
+    } else {
+        let opts = ingest::MessageQuery {
+            source: source.map(|s| s.to_string()),
+            channel: channel.map(|c| c.to_string()),
+            sender: sender.map(|s| s.to_string()),
+            since: since.map(|s| s.to_string()),
+            limit: Some(limit),
+            consolidated_only: false,
+        };
+        ingest::get_messages(&db, &opts).await?
     };
-
-    let messages = ingest::get_messages(&db, &opts).await?;
 
     if messages.is_empty() {
         println!("No messages found.");
