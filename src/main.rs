@@ -1,17 +1,3 @@
-mod access;
-mod config;
-mod consolidate;
-mod db;
-mod display;
-mod embed;
-mod entities;
-mod groups;
-mod ingest;
-mod mcp;
-mod memory;
-mod relay;
-mod search;
-
 use std::path::PathBuf;
 
 use anyhow::{Context, Result, bail};
@@ -20,10 +6,18 @@ use colored::Colorize;
 use nostr_sdk::prelude::*;
 use tracing::debug;
 
-use crate::config::Config;
-use crate::display::{display_memories, format_timestamp};
-use crate::memory::{get_tag_value, parse_event};
-use crate::relay::{RelayConfig, RelayManager};
+use nomen::config::Config;
+use nomen::consolidate;
+use nomen::contextvm;
+use nomen::db;
+use nomen::display::{display_memories, format_timestamp};
+use nomen::entities;
+use nomen::groups;
+use nomen::ingest;
+use nomen::mcp;
+use nomen::memory::{get_tag_value, parse_event};
+use nomen::relay::{RelayConfig, RelayManager};
+use nomen::search;
 
 // ── CLI ─────────────────────────────────────────────────────────────
 
@@ -159,6 +153,12 @@ enum Command {
         /// Use stdio transport
         #[arg(long, default_value = "true")]
         stdio: bool,
+        /// Also start Context-VM (Nostr-native request/response listener)
+        #[arg(long)]
+        context_vm: bool,
+        /// Allowed npubs for Context-VM requests (comma-separated hex or bech32)
+        #[arg(long, value_delimiter = ',')]
+        allowed_npubs: Vec<String>,
     },
 }
 
@@ -332,8 +332,8 @@ async fn main() -> Result<()> {
         Command::Entities { kind } => {
             cmd_entities(kind.as_deref()).await?;
         }
-        Command::Serve { stdio: _ } => {
-            cmd_serve(&cli).await?;
+        Command::Serve { stdio: _, context_vm, ref allowed_npubs } => {
+            cmd_serve(&cli, context_vm, allowed_npubs.clone()).await?;
         }
     }
 
@@ -487,7 +487,7 @@ async fn cmd_store(
 
     // Store locally in SurrealDB
     let db = db::init_db().await?;
-    let parsed = crate::memory::ParsedMemory {
+    let parsed = nomen::memory::ParsedMemory {
         tier: tier.to_string(),
         topic: topic.to_string(),
         version: "1".to_string(),
@@ -971,9 +971,8 @@ async fn cmd_entities(kind_filter: Option<&str>) -> Result<()> {
 
 // ── Command: serve (MCP server) ─────────────────────────────────────
 
-async fn cmd_serve(cli: &Cli) -> Result<()> {
+async fn cmd_serve(cli: &Cli, context_vm: bool, allowed_npubs: Vec<String>) -> Result<()> {
     let config = load_config(cli)?;
-    let embedder = config.build_embedder();
     let db = db::init_db().await?;
 
     // Optionally build relay manager if nsecs are available
@@ -987,5 +986,41 @@ async fn cmd_serve(cli: &Cli) -> Result<()> {
         None
     };
 
-    mcp::serve_stdio(db, embedder, relay_manager).await
+    if context_vm {
+        // Need relay + keys for Context-VM
+        if relay_manager.is_none() {
+            bail!(
+                "Context-VM requires nsec keys. Set in {} or pass --nsec",
+                Config::path().display()
+            );
+        }
+
+        // Build a second relay manager for Context-VM (it needs its own)
+        let (all_keys, _) = parse_keys(&resolved.nsecs)?;
+        let vm_relay = build_relay_manager(&resolved.relay, &all_keys[0]);
+        vm_relay.connect().await?;
+
+        let vm_embedder = config.build_embedder();
+        let vm_db = db::init_db().await?;
+
+        let vm_server = contextvm::ContextVmServer::new(
+            vm_db,
+            vm_embedder,
+            vm_relay,
+            allowed_npubs,
+        );
+
+        // Run MCP on stdio and Context-VM on Nostr concurrently
+        let mcp_embedder = config.build_embedder();
+        let mcp_future = mcp::serve_stdio(db, mcp_embedder, relay_manager);
+        let vm_future = vm_server.run();
+
+        tokio::select! {
+            result = mcp_future => result,
+            result = vm_future => result,
+        }
+    } else {
+        let embedder = config.build_embedder();
+        mcp::serve_stdio(db, embedder, relay_manager).await
+    }
 }

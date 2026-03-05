@@ -3,7 +3,19 @@ name = "nomen"
 version = "0.1.0"
 edition = "2021"
 license = "MIT OR Apache-2.0"
-description = "Nostr-native memory system CLI"
+description = "Nostr-native memory system CLI and library"
+
+[lib]
+name = "nomen"
+path = "src/lib.rs"
+
+[[bin]]
+name = "nomen"
+path = "src/main.rs"
+
+[features]
+default = []
+migrate = ["rusqlite"]
 
 [dependencies]
 # Nostr
@@ -47,3 +59,6 @@ reqwest = { version = "0.12", default-features = false, features = ["json", "rus
 
 # Async trait support
 async-trait = "0.1"
+
+# SQLite migration (optional)
+rusqlite = { version = "0.32", features = ["bundled"], optional = true }

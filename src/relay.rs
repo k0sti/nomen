@@ -176,6 +176,11 @@ impl RelayManager {
         &self.keys
     }
 
+    /// Get a reference to the underlying nostr-sdk Client.
+    pub fn client(&self) -> &Client {
+        &self.client
+    }
+
     /// Disconnect from the relay.
     pub async fn disconnect(&self) {
         self.client.disconnect().await;
