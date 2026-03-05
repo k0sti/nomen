@@ -3,6 +3,7 @@
   import { nip19 } from 'nostr-tools';
   import { compressNpub, fetchProfileMetadata } from '../lib/nostr';
   import type { NostrProfile } from '../lib/nostr';
+  import ProfileCard from '../components/ProfileCard.svelte';
 
   const CONFIG_D_TAG = 'nomen:config:agents';
 
@@ -262,31 +263,15 @@
       {:else}
         <div class="space-y-2">
           {#each agents as agent (agent.npub)}
-            <div class="flex items-center gap-3 p-3 rounded-xl border border-gray-700 bg-gray-800/30 hover:bg-gray-800/50 transition-colors duration-150">
-              <!-- Avatar -->
-              {#if agent.profile?.picture}
-                <img src={agent.profile.picture} alt="" class="w-10 h-10 rounded-full object-cover shrink-0" />
-              {:else}
-                <div class="w-10 h-10 rounded-full bg-accent-600/30 flex items-center justify-center text-accent-400 font-bold shrink-0">
-                  {displayName(agent)[0].toUpperCase()}
-                </div>
-              {/if}
-
-              <!-- Info -->
-              <div class="flex-1 min-w-0">
-                <div class="flex items-center gap-2">
-                  <span class="text-sm font-medium text-gray-100 truncate">{displayName(agent)}</span>
-                  {#if isBot(agent)}
-                    <span class="text-[10px] px-1.5 py-0.5 rounded bg-blue-900/40 text-blue-400 border border-blue-800/50">bot</span>
-                  {/if}
-                </div>
-                <code class="text-xs text-gray-500 font-mono">{compressNpub(agent.npub)}</code>
-                {#if ownerOf(agent)}
-                  <span class="text-[10px] text-green-500 ml-2">declares you as owner</span>
-                {/if}
-              </div>
-
-              <!-- Role badge (clickable to toggle) -->
+            <ProfileCard
+              pubkey={agent.profile?.pubkey || (() => { try { return nip19.decode(agent.npub).data as string; } catch { return ''; } })()}
+              name={agent.profile?.name}
+              displayName={agent.profile?.displayName}
+              picture={agent.profile?.picture}
+              about={agent.profile?.about}
+              isBot={isBot(agent)}
+              role={agent.role}
+            >
               <button
                 onclick={() => toggleRole(agent.npub)}
                 class="text-[11px] px-2 py-1 rounded-lg border transition-colors duration-150
@@ -297,8 +282,6 @@
               >
                 {agent.role}
               </button>
-
-              <!-- Remove -->
               <button
                 onclick={() => removeAgent(agent.npub)}
                 class="w-9 h-9 flex items-center justify-center rounded-lg text-gray-600 hover:text-red-400 hover:bg-red-900/20 transition-colors duration-150"
@@ -309,7 +292,7 @@
                   <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
                 </svg>
               </button>
-            </div>
+            </ProfileCard>
           {/each}
         </div>
       {/if}
@@ -341,26 +324,20 @@
         {/if}
 
         {#if addPreview}
-          <div class="flex items-center gap-3 p-3 rounded-lg border border-accent-600/30 bg-accent-600/5">
-            {#if addPreview.profile?.picture}
-              <img src={addPreview.profile.picture} alt="" class="w-10 h-10 rounded-full object-cover shrink-0" />
-            {:else}
-              <div class="w-10 h-10 rounded-full bg-gray-700 flex items-center justify-center text-gray-400 font-bold shrink-0">?</div>
-            {/if}
-            <div class="flex-1 min-w-0">
-              <div class="text-sm font-medium text-gray-100">{displayName(addPreview)}</div>
-              <code class="text-xs text-gray-500 font-mono">{compressNpub(addPreview.npub)}</code>
-              {#if addPreview.profile?.about}
-                <p class="text-xs text-gray-500 mt-1 truncate">{addPreview.profile.about}</p>
-              {/if}
-            </div>
+          <ProfileCard
+            pubkey={addPreview.profile?.pubkey || (() => { try { return nip19.decode(addPreview.npub).data as string; } catch { return ''; } })()}
+            name={addPreview.profile?.name}
+            displayName={addPreview.profile?.displayName}
+            picture={addPreview.profile?.picture}
+            about={addPreview.profile?.about}
+          >
             <button
               onclick={() => addAgent()}
               class="px-4 py-2 rounded-lg bg-accent-600/20 border border-accent-600/50 text-accent-300 hover:bg-accent-600/30 text-sm font-medium transition-colors duration-150 shrink-0"
             >
               Add Agent
             </button>
-          </div>
+          </ProfileCard>
         {/if}
       </div>
     </section>
@@ -381,23 +358,21 @@
       {:else}
         <div class="space-y-2">
           {#each discovered as disc (disc.npub)}
-            <div class="flex items-center gap-3 p-3 rounded-xl border border-gray-700 bg-gray-800/30">
-              {#if disc.profile?.picture}
-                <img src={disc.profile.picture} alt="" class="w-10 h-10 rounded-full object-cover shrink-0" />
-              {:else}
-                <div class="w-10 h-10 rounded-full bg-gray-700 flex items-center justify-center text-gray-400 font-bold shrink-0">?</div>
-              {/if}
-              <div class="flex-1 min-w-0">
-                <div class="text-sm font-medium text-gray-100">{displayName(disc)}</div>
-                <code class="text-xs text-gray-500 font-mono">{compressNpub(disc.npub)}</code>
-              </div>
+            <ProfileCard
+              pubkey={disc.profile?.pubkey || (() => { try { return nip19.decode(disc.npub).data as string; } catch { return ''; } })()}
+              name={disc.profile?.name}
+              displayName={disc.profile?.displayName}
+              picture={disc.profile?.picture}
+              about={disc.profile?.about}
+              isBot={isBot(disc)}
+            >
               <button
                 onclick={() => addAgent(disc)}
                 class="px-3 py-1.5 rounded-lg border border-accent-600/50 bg-accent-600/10 hover:bg-accent-600/20 text-accent-300 text-sm transition-colors duration-150 shrink-0"
               >
                 Add
               </button>
-            </div>
+            </ProfileCard>
           {/each}
         </div>
       {/if}

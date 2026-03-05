@@ -58,9 +58,9 @@ if (typeof window !== 'undefined') {
 }
 
 // ── Navigation ───────────────────────────────────────────────────
-export type Page = 'memories' | 'search' | 'messages' | 'groups' | 'agents' | 'settings';
+export type Page = 'memories' | 'search' | 'messages' | 'members' | 'groups' | 'agents' | 'settings';
 
-const validPages: Page[] = ['memories', 'search', 'messages', 'groups', 'agents', 'settings'];
+const validPages: Page[] = ['memories', 'search', 'messages', 'members', 'groups', 'agents', 'settings'];
 
 function getPageFromHash(): Page {
   const hash = window.location.hash.replace('#/', '').replace('#', '');

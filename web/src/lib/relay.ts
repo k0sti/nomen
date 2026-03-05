@@ -384,6 +384,36 @@ export class NomenRelay {
     return this.publish(signed);
   }
 
+  // ── Profiles (kind 0) ───────────────────────────────────────
+
+  async listProfiles(): Promise<{ pubkey: string; meta: Record<string, any>; created_at: number }[]> {
+    const events = await this.request({
+      kinds: [0],
+      limit: 500,
+    });
+
+    // Deduplicate by pubkey, latest event wins
+    const byPubkey = new Map<string, NostrEvent>();
+    for (const e of events) {
+      const existing = byPubkey.get(e.pubkey);
+      if (!existing || e.created_at > existing.created_at) {
+        byPubkey.set(e.pubkey, e);
+      }
+    }
+
+    const profiles: { pubkey: string; meta: Record<string, any>; created_at: number }[] = [];
+    for (const [pubkey, event] of byPubkey) {
+      try {
+        const meta = JSON.parse(event.content);
+        profiles.push({ pubkey, meta, created_at: event.created_at });
+      } catch {
+        profiles.push({ pubkey, meta: {}, created_at: event.created_at });
+      }
+    }
+
+    return profiles;
+  }
+
   // ── Disconnect ────────────────────────────────────────────────
 
   disconnect() {
