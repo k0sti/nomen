@@ -14,6 +14,8 @@ pub mod ingest;
 pub mod memory;
 pub mod relay;
 pub mod search;
+pub mod send;
+pub mod session;
 
 #[cfg(feature = "migrate")]
 pub mod migrate;
@@ -258,5 +260,23 @@ impl Nomen {
             db::delete_memory_by_nostr_id(&self.db, id).await?;
         }
         Ok(())
+    }
+
+    /// Resolve a session ID to tier/scope/channel using the loaded groups.
+    pub fn resolve_session(
+        &self,
+        session_id: &str,
+        default_channel: &str,
+    ) -> Result<session::ResolvedSession> {
+        session::resolve_session(session_id, &self.groups, default_channel)
+    }
+
+    /// Send a message via relay.
+    pub async fn send(&self, opts: send::SendOptions) -> Result<send::SendResult> {
+        let relay = self
+            .relay
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("No relay configured for sending"))?;
+        send::send_message(relay, &self.db, &self.groups, opts).await
     }
 }

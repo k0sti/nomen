@@ -20,7 +20,7 @@ snowclaw = ["snow-memory"]
 
 [dependencies]
 # Nostr
-nostr-sdk = { version = "0.39", features = ["nip44"] }
+nostr-sdk = { version = "0.39", features = ["nip44", "nip59"] }
 
 # CLI
 clap = { version = "4", features = ["derive"] }

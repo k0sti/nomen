@@ -18,6 +18,7 @@ use nomen::mcp;
 use nomen::memory::{get_tag_value, parse_event};
 use nomen::relay::{RelayConfig, RelayManager};
 use nomen::search;
+use nomen::send;
 
 // ── CLI ─────────────────────────────────────────────────────────────
 
@@ -159,6 +160,17 @@ enum Command {
         /// Delete consolidated messages older than N days
         #[arg(long, default_value = "30")]
         days: u64,
+    },
+    /// Send a message to a recipient (npub, group, or public)
+    Send {
+        /// Message content
+        content: String,
+        /// Recipient: npub1... for DM, group:<id> for group, "public" for broadcast
+        #[arg(long)]
+        to: String,
+        /// Delivery channel (default: nostr)
+        #[arg(long)]
+        channel: Option<String>,
     },
     /// Start MCP server (JSON-RPC over stdio)
     Serve {
@@ -346,6 +358,12 @@ async fn main() -> Result<()> {
         }
         Command::Prune { days } => {
             cmd_prune(days).await?;
+        }
+        Command::Send { ref content, ref to, ref channel } => {
+            if resolved.nsecs.is_empty() {
+                bail!("No nsec provided. Set it in {} or pass --nsec", Config::path().display());
+            }
+            cmd_send(&resolved.relay, &resolved.nsecs, &to, &content, channel.as_deref(), &cli).await?;
         }
         Command::Serve { stdio: _, context_vm, ref allowed_npubs } => {
             cmd_serve(&cli, context_vm, allowed_npubs.clone()).await?;
@@ -1047,11 +1065,60 @@ async fn cmd_prune(days: u64) -> Result<()> {
     Ok(())
 }
 
+// ── Command: send ───────────────────────────────────────────────────
+
+async fn cmd_send(
+    relay_url: &str,
+    nsecs: &[String],
+    recipient: &str,
+    content: &str,
+    channel: Option<&str>,
+    cli: &Cli,
+) -> Result<()> {
+    let (all_keys, _) = parse_keys(nsecs)?;
+    let config = load_config(cli)?;
+
+    let mgr = build_relay_manager(relay_url, &all_keys[0]);
+    mgr.connect().await?;
+
+    let db = db::init_db().await?;
+    let group_store = groups::GroupStore::load(&config.groups, &db).await?;
+
+    let target = send::parse_recipient(recipient)?;
+    let opts = send::SendOptions {
+        target,
+        content: content.to_string(),
+        channel: channel.map(String::from),
+        metadata: None,
+    };
+
+    let result = send::send_message(&mgr, &db, &group_store, opts).await?;
+
+    println!(
+        "{} to {}: event_id={}",
+        "Sent".green().bold(),
+        recipient.bold(),
+        result.event_id
+    );
+    println!("  {}", result.summary());
+
+    mgr.disconnect().await;
+    Ok(())
+}
+
 // ── Command: serve (MCP server) ─────────────────────────────────────
 
 async fn cmd_serve(cli: &Cli, context_vm: bool, allowed_npubs: Vec<String>) -> Result<()> {
     let config = load_config(cli)?;
     let db = db::init_db().await?;
+
+    let default_channel = config
+        .messaging
+        .as_ref()
+        .map(|m| m.default_channel.clone())
+        .unwrap_or_else(|| "nostr".to_string());
+
+    let group_store = groups::GroupStore::load(&config.groups, &db).await?;
 
     // Optionally build relay manager if nsecs are available
     let resolved = resolve_config(cli)?;
@@ -1080,17 +1147,20 @@ async fn cmd_serve(cli: &Cli, context_vm: bool, allowed_npubs: Vec<String>) -> R
 
         let vm_embedder = config.build_embedder();
         let vm_db = db::init_db().await?;
+        let vm_groups = groups::GroupStore::load(&config.groups, &vm_db).await?;
 
         let vm_server = contextvm::ContextVmServer::new(
             vm_db,
             vm_embedder,
             vm_relay,
             allowed_npubs,
+            vm_groups,
+            default_channel.clone(),
         );
 
         // Run MCP on stdio and Context-VM on Nostr concurrently
         let mcp_embedder = config.build_embedder();
-        let mcp_future = mcp::serve_stdio(db, mcp_embedder, relay_manager);
+        let mcp_future = mcp::serve_stdio(db, mcp_embedder, relay_manager, group_store, default_channel);
         let vm_future = vm_server.run();
 
         tokio::select! {
@@ -1099,6 +1169,6 @@ async fn cmd_serve(cli: &Cli, context_vm: bool, allowed_npubs: Vec<String>) -> R
         }
     } else {
         let embedder = config.build_embedder();
-        mcp::serve_stdio(db, embedder, relay_manager).await
+        mcp::serve_stdio(db, embedder, relay_manager, group_store, default_channel).await
     }
 }

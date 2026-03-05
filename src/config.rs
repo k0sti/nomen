@@ -39,6 +39,20 @@ pub struct Config {
     /// Consolidation LLM configuration
     #[serde(default)]
     pub consolidation: Option<ConsolidationLlmConfig>,
+    /// Messaging configuration
+    #[serde(default)]
+    pub messaging: Option<MessagingConfig>,
+}
+
+#[derive(Deserialize, Clone)]
+pub struct MessagingConfig {
+    /// Default delivery channel (e.g. "nostr", "telegram"). Defaults to "nostr".
+    #[serde(default = "default_messaging_channel")]
+    pub default_channel: String,
+}
+
+fn default_messaging_channel() -> String {
+    "nostr".to_string()
 }
 
 #[derive(Deserialize, Clone)]

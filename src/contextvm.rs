@@ -23,9 +23,11 @@ use crate::consolidate;
 use crate::db;
 use crate::embed::Embedder;
 use crate::entities;
+use crate::groups::GroupStore;
 use crate::ingest;
 use crate::relay::RelayManager;
 use crate::search;
+use crate::send;
 
 const REQUEST_KIND: u16 = 21900;
 const RESPONSE_KIND: u16 = 21901;
@@ -107,6 +109,9 @@ pub struct ContextVmServer {
     /// Allowed requester npubs (hex pubkeys). Empty = deny all.
     allowed_npubs: HashSet<String>,
     rate_limiter: RateLimiter,
+    groups: GroupStore,
+    #[allow(dead_code)]
+    default_channel: String,
 }
 
 impl ContextVmServer {
@@ -115,8 +120,10 @@ impl ContextVmServer {
         embedder: Box<dyn Embedder>,
         relay: RelayManager,
         allowed_npubs: Vec<String>,
+        groups: GroupStore,
+        default_channel: String,
     ) -> Self {
-        Self::with_rate_limit(db, embedder, relay, allowed_npubs, 30)
+        Self::with_rate_limit(db, embedder, relay, allowed_npubs, 30, groups, default_channel)
     }
 
     pub fn with_rate_limit(
@@ -125,6 +132,8 @@ impl ContextVmServer {
         relay: RelayManager,
         allowed_npubs: Vec<String>,
         max_requests_per_minute: u32,
+        groups: GroupStore,
+        default_channel: String,
     ) -> Self {
         Self {
             db,
@@ -132,6 +141,8 @@ impl ContextVmServer {
             relay,
             allowed_npubs: allowed_npubs.into_iter().collect(),
             rate_limiter: RateLimiter::new(max_requests_per_minute),
+            groups,
+            default_channel,
         }
     }
 
@@ -239,6 +250,7 @@ impl ContextVmServer {
             "consolidate" => self.handle_consolidate(&request.params).await,
             "messages" => self.handle_messages(&request.params).await,
             "groups" => self.handle_groups(&request.params).await,
+            "send" => self.handle_send(&request.params).await,
             _ => Ok(ContextVmResponse::err(format!(
                 "Unknown action: {}",
                 request.action
@@ -543,6 +555,46 @@ impl ContextVmServer {
         Ok(ContextVmResponse::ok(json!({
             "count": items.len(),
             "groups": items,
+        })))
+    }
+
+    async fn handle_send(&self, params: &Value) -> Result<ContextVmResponse> {
+        let recipient = params
+            .get("recipient")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        let content = params
+            .get("content")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+
+        if recipient.is_empty() || content.is_empty() {
+            return Ok(ContextVmResponse::err("recipient and content are required"));
+        }
+
+        let channel = params
+            .get("channel")
+            .and_then(|v| v.as_str())
+            .map(String::from);
+        let metadata = params.get("metadata").cloned();
+
+        let target = send::parse_recipient(recipient)
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
+
+        let opts = send::SendOptions {
+            target,
+            content: content.to_string(),
+            channel,
+            metadata,
+        };
+
+        let result = send::send_message(&self.relay, &self.db, &self.groups, opts).await?;
+
+        Ok(ContextVmResponse::ok(json!({
+            "sent": true,
+            "event_id": result.event_id,
+            "accepted": result.accepted.len(),
+            "rejected": result.rejected.len(),
         })))
     }
 }

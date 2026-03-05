@@ -227,6 +227,18 @@ DEFINE TABLE IF NOT EXISTS related_to SCHEMALESS;
 
 DEFINE INDEX IF NOT EXISTS raw_msg_source ON raw_message FIELDS source, source_id UNIQUE;
 DEFINE INDEX IF NOT EXISTS raw_msg_sender ON raw_message FIELDS sender;
+
+DEFINE TABLE IF NOT EXISTS session SCHEMAFULL;
+DEFINE FIELD IF NOT EXISTS session_id    ON session TYPE string;
+DEFINE FIELD IF NOT EXISTS tier          ON session TYPE string;
+DEFINE FIELD IF NOT EXISTS scope         ON session TYPE string;
+DEFINE FIELD IF NOT EXISTS channel       ON session TYPE string;
+DEFINE FIELD IF NOT EXISTS group_id      ON session TYPE string;
+DEFINE FIELD IF NOT EXISTS participants  ON session TYPE array;
+DEFINE FIELD IF NOT EXISTS participants.* ON session TYPE string;
+DEFINE FIELD IF NOT EXISTS created_at    ON session TYPE string;
+DEFINE FIELD IF NOT EXISTS last_active   ON session TYPE string;
+DEFINE INDEX IF NOT EXISTS session_sid   ON session FIELDS session_id UNIQUE;
 "#;
 
 /// Initialize (or open) the SurrealDB database and apply schema.
@@ -795,4 +807,80 @@ pub async fn create_consolidated_edge(
         .await?
         .check()?;
     Ok(())
+}
+
+// ── Session CRUD ─────────────────────────────────────────────────────
+
+use crate::session::SessionRecord;
+
+/// Create or update a session record.
+pub async fn create_session(
+    db: &Surreal<Db>,
+    session: &crate::session::ResolvedSession,
+) -> Result<String> {
+    let now = chrono::Utc::now().to_rfc3339();
+
+    #[derive(Serialize)]
+    struct NewSession {
+        session_id: String,
+        tier: String,
+        scope: String,
+        channel: String,
+        group_id: String,
+        participants: Vec<String>,
+        created_at: String,
+        last_active: String,
+    }
+
+    let record = NewSession {
+        session_id: session.session_id.clone(),
+        tier: session.tier.clone(),
+        scope: session.scope.clone(),
+        channel: session.channel.clone(),
+        group_id: session.group_id.clone(),
+        participants: session.participants.clone(),
+        created_at: now.clone(),
+        last_active: now,
+    };
+
+    // Upsert: delete existing then create
+    db.query("DELETE FROM session WHERE session_id = $sid; CREATE session CONTENT $record")
+        .bind(("sid", session.session_id.clone()))
+        .bind(("record", record))
+        .await?
+        .check()?;
+
+    Ok(session.session_id.clone())
+}
+
+/// Get a session by session_id.
+pub async fn get_session(db: &Surreal<Db>, session_id: &str) -> Result<Option<SessionRecord>> {
+    let result: Option<SessionRecord> = db
+        .query("SELECT meta::id(id) AS id, session_id, tier, scope, channel, group_id, participants, created_at, last_active FROM session WHERE session_id = $sid LIMIT 1")
+        .bind(("sid", session_id.to_string()))
+        .await?
+        .check()?
+        .take(0)?;
+    Ok(result)
+}
+
+/// Update the last_active timestamp of a session.
+pub async fn update_session_last_active(db: &Surreal<Db>, session_id: &str) -> Result<()> {
+    let now = chrono::Utc::now().to_rfc3339();
+    db.query("UPDATE session SET last_active = $now WHERE session_id = $sid")
+        .bind(("sid", session_id.to_string()))
+        .bind(("now", now))
+        .await?
+        .check()?;
+    Ok(())
+}
+
+/// List all sessions, ordered by last_active descending.
+pub async fn list_sessions(db: &Surreal<Db>) -> Result<Vec<SessionRecord>> {
+    let results: Vec<SessionRecord> = db
+        .query("SELECT meta::id(id) AS id, session_id, tier, scope, channel, group_id, participants, created_at, last_active FROM session ORDER BY last_active DESC")
+        .await?
+        .check()?
+        .take(0)?;
+    Ok(results)
 }

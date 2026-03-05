@@ -16,9 +16,12 @@ use crate::db;
 use crate::embed::Embedder;
 use crate::entities;
 use crate::groups;
+use crate::groups::GroupStore;
 use crate::ingest;
 use crate::relay::RelayManager;
 use crate::search;
+use crate::send;
+use crate::session;
 
 // ── JSON-RPC types ──────────────────────────────────────────────────
 
@@ -108,7 +111,8 @@ fn tools_list() -> Value {
                         "query": { "type": "string", "description": "Search query" },
                         "tier": { "type": "string", "description": "Filter by tier (public/group/private)" },
                         "scope": { "type": "string", "description": "Filter by scope" },
-                        "limit": { "type": "integer", "description": "Max results (default 10)" }
+                        "limit": { "type": "integer", "description": "Max results (default 10)" },
+                        "session_id": { "type": "string", "description": "Session ID to auto-derive tier/scope" }
                     },
                     "required": ["query"]
                 }
@@ -124,7 +128,8 @@ fn tools_list() -> Value {
                         "detail": { "type": "string", "description": "Full detail text" },
                         "tier": { "type": "string", "description": "Visibility tier (public/group/private, default public)" },
                         "scope": { "type": "string", "description": "Scope for group tier" },
-                        "confidence": { "type": "number", "description": "Confidence score 0.0-1.0 (default 0.8)" }
+                        "confidence": { "type": "number", "description": "Confidence score 0.0-1.0 (default 0.8)" },
+                        "session_id": { "type": "string", "description": "Session ID to auto-derive tier/scope" }
                     },
                     "required": ["topic", "summary"]
                 }
@@ -139,7 +144,8 @@ fn tools_list() -> Value {
                         "sender": { "type": "string", "description": "Sender identifier" },
                         "channel": { "type": "string", "description": "Channel/room name" },
                         "content": { "type": "string", "description": "Message content" },
-                        "metadata": { "type": "object", "description": "Optional metadata" }
+                        "metadata": { "type": "object", "description": "Optional metadata" },
+                        "session_id": { "type": "string", "description": "Session ID to auto-derive tier/scope" }
                     },
                     "required": ["source", "sender", "content"]
                 }
@@ -207,6 +213,20 @@ fn tools_list() -> Value {
                     },
                     "required": ["action"]
                 }
+            },
+            {
+                "name": "nomen_send",
+                "description": "Send a message to a recipient via a specific channel",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "recipient": { "type": "string", "description": "npub1... for DM, group:<id> for group, 'public' for broadcast" },
+                        "content": { "type": "string", "description": "Message body" },
+                        "channel": { "type": "string", "description": "Delivery channel: nostr, telegram, etc. Default: nostr" },
+                        "metadata": { "type": "object", "description": "Platform-specific extras" }
+                    },
+                    "required": ["recipient", "content"]
+                }
             }
         ]
     })
@@ -217,8 +237,9 @@ fn tools_list() -> Value {
 struct McpServer {
     db: Surreal<Db>,
     embedder: Box<dyn Embedder>,
-    #[allow(dead_code)]
     relay: Option<RelayManager>,
+    groups: GroupStore,
+    default_channel: String,
 }
 
 impl McpServer {
@@ -257,6 +278,7 @@ impl McpServer {
             "nomen_consolidate" => self.tool_consolidate(&arguments).await,
             "nomen_delete" => self.tool_delete(&arguments).await,
             "nomen_groups" => self.tool_groups(&arguments).await,
+            "nomen_send" => self.tool_send(&arguments).await,
             _ => Err(anyhow::anyhow!("Unknown tool: {tool_name}")),
         };
 
@@ -291,7 +313,7 @@ impl McpServer {
             .and_then(|v| v.as_str())
             .unwrap_or("")
             .to_string();
-        let tier = args.get("tier").and_then(|v| v.as_str()).map(String::from);
+        let mut tier = args.get("tier").and_then(|v| v.as_str()).map(String::from);
         let limit = args
             .get("limit")
             .and_then(|v| v.as_u64())
@@ -301,10 +323,17 @@ impl McpServer {
             anyhow::bail!("query parameter is required");
         }
 
+        // Session ID overrides tier/scope if not explicitly provided
+        let (session_tier, session_scope) = self.resolve_session_from_args(args)?;
+        if tier.is_none() {
+            tier = session_tier;
+        }
+        let allowed_scopes = session_scope.map(|s| vec![s]);
+
         let opts = search::SearchOptions {
             query,
             tier,
-            allowed_scopes: None,
+            allowed_scopes,
             limit,
             vector_weight: 0.7,
             text_weight: 0.3,
@@ -349,15 +378,21 @@ impl McpServer {
             .and_then(|v| v.as_str())
             .unwrap_or("")
             .to_string();
-        let tier = args
+        let mut tier = args
             .get("tier")
             .and_then(|v| v.as_str())
-            .unwrap_or("public")
-            .to_string();
+            .map(String::from);
         let confidence = args
             .get("confidence")
             .and_then(|v| v.as_f64())
             .unwrap_or(0.8);
+
+        // Session ID overrides tier if not explicitly provided
+        let (session_tier, _session_scope) = self.resolve_session_from_args(args)?;
+        if tier.is_none() {
+            tier = session_tier;
+        }
+        let tier = tier.unwrap_or_else(|| "public".to_string());
 
         if topic.is_empty() || summary.is_empty() {
             anyhow::bail!("topic and summary are required");
@@ -616,6 +651,59 @@ impl McpServer {
         }
     }
 
+    /// Resolve session_id from args to (tier, scope). Returns (None, None) if no session_id.
+    fn resolve_session_from_args(&self, args: &Value) -> Result<(Option<String>, Option<String>)> {
+        let session_id = args.get("session_id").and_then(|v| v.as_str());
+        if let Some(sid) = session_id {
+            let resolved = session::resolve_session(sid, &self.groups, &self.default_channel)?;
+            Ok((Some(resolved.tier), Some(resolved.scope)))
+        } else {
+            Ok((None, None))
+        }
+    }
+
+    async fn tool_send(&self, args: &Value) -> Result<String> {
+        let recipient = args
+            .get("recipient")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        let content = args
+            .get("content")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        let channel = args
+            .get("channel")
+            .and_then(|v| v.as_str())
+            .map(String::from);
+        let metadata = args.get("metadata").cloned();
+
+        if recipient.is_empty() || content.is_empty() {
+            anyhow::bail!("recipient and content are required");
+        }
+
+        let relay = self
+            .relay
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("No relay configured — cannot send messages"))?;
+
+        let target = send::parse_recipient(recipient)?;
+        let opts = send::SendOptions {
+            target,
+            content: content.to_string(),
+            channel,
+            metadata,
+        };
+
+        let result = send::send_message(relay, &self.db, &self.groups, opts).await?;
+
+        let accepted_count = result.accepted.len();
+        let rejected_count = result.rejected.len();
+        Ok(format!(
+            "Sent to {recipient}: event_id={}, accepted={accepted_count}, rejected={rejected_count}",
+            result.event_id
+        ))
+    }
+
     async fn tool_delete(&self, args: &Value) -> Result<String> {
         let topic = args.get("topic").and_then(|v| v.as_str());
         let id = args.get("id").and_then(|v| v.as_str());
@@ -642,11 +730,15 @@ pub async fn serve_stdio(
     db: Surreal<Db>,
     embedder: Box<dyn Embedder>,
     relay: Option<RelayManager>,
+    groups: GroupStore,
+    default_channel: String,
 ) -> Result<()> {
     let server = McpServer {
         db,
         embedder,
         relay,
+        groups,
+        default_channel,
     };
 
     info!("Nomen MCP server starting on stdio");
