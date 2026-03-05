@@ -82,7 +82,7 @@ nomen delete "rust/error-handling"
 
 ### Storage
 
-- **Relay events:** NIP-78 (kind 30078) addressable/replaceable events with custom `snow:*` tags
+- **Relay events:** NIP-78 (kind 30078) addressable/replaceable events with custom `nomen:*` tags
 - **Local index:** SurrealDB with `kv-surrealkv` backend (pure Rust, no C deps)
 - **Vectors:** HNSW index (1536 dimensions, cosine similarity) for semantic search
 - **Full-text:** BM25 with snowball English analyzer
