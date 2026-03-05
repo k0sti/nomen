@@ -1,5 +1,6 @@
 <script lang="ts">
-  import { showLoginModal, profile, signer } from '../lib/stores';
+  import { showLoginModal, profile, signer, relay } from '../lib/stores';
+  import { fetchProfileEvent } from '../lib/nostr';
   import {
     hasNip07,
     loginWithNip07,
@@ -53,6 +54,8 @@
       profile.set(result.profile);
       signer.set(result.signer);
       localStorage.setItem('nomen_login_method', 'nip07');
+      // Mirror profile to zooid (best-effort, don't block)
+      mirrorProfile(result.profile.pubkey, result.signer);
       close();
     } catch (e: any) {
       error = e.message || 'Failed to login with extension';
@@ -103,6 +106,8 @@
       signer.set(result.signer);
       localStorage.setItem('nomen_login_method', 'nip46');
       localStorage.setItem('nomen_nip46_relay', session.relay);
+      // Mirror profile to zooid (best-effort, don't block)
+      mirrorProfile(result.profile.pubkey, result.signer);
 
       // Brief pause to show success state
       setTimeout(close, 500);
@@ -121,6 +126,18 @@
       setTimeout(() => (copied = false), 2000);
     } catch {
       error = 'Failed to copy to clipboard';
+    }
+  }
+
+  async function mirrorProfile(pubkey: string, signerInstance: any) {
+    try {
+      const event = await fetchProfileEvent(pubkey);
+      if (!event) return;
+      await $relay.connect();
+      await $relay.authenticate(signerInstance);
+      await $relay.publishEvent(event);
+    } catch {
+      // Best-effort
     }
   }
 

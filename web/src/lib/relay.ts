@@ -2,7 +2,7 @@
 
 import { finalizeEvent, type EventTemplate, type NostrEvent } from 'nostr-tools';
 import type { Memory, Message, Group } from './api';
-import { fetchProfilesBatch } from './nostr';
+import { fetchProfileEventsBatch } from './nostr';
 
 type Signer = {
   getPublicKey(): Promise<string>;
@@ -255,6 +255,11 @@ export class NomenRelay {
     });
   }
 
+  // ── Forward a pre-signed event to this relay ─────────────────
+  async publishEvent(event: NostrEvent): Promise<string> {
+    return this.publish(event);
+  }
+
   // ── Memory operations ─────────────────────────────────────────
 
   async listMemories(pubkey: string): Promise<Memory[]> {
@@ -388,29 +393,57 @@ export class NomenRelay {
   // ── Profiles (kind 0) ───────────────────────────────────────
 
   async listProfiles(): Promise<{ pubkey: string; meta: Record<string, any>; created_at: number }[]> {
-    // Step 1: Get all unique pubkeys from events on this relay
-    // (zooid doesn't store kind 0, so we discover members from their activity)
-    const events = await this.request({ limit: 500 });
-    const pubkeyTimestamps = new Map<string, number>();
-    for (const e of events) {
-      const existing = pubkeyTimestamps.get(e.pubkey) || 0;
+    // Step 1: Query kind 0 profiles already on zooid
+    const kind0Events = await this.request({ kinds: [0], limit: 500 });
+    const profileMap = new Map<string, { meta: Record<string, any>; created_at: number }>();
+    for (const e of kind0Events) {
+      try {
+        profileMap.set(e.pubkey, {
+          meta: JSON.parse(e.content),
+          created_at: e.created_at,
+        });
+      } catch { /* skip malformed */ }
+    }
+
+    // Step 2: Discover active pubkeys from other events (kind 9, 30078, etc.)
+    const activityEvents = await this.request({ limit: 500 });
+    const activityTimestamps = new Map<string, number>();
+    for (const e of activityEvents) {
+      const existing = activityTimestamps.get(e.pubkey) || 0;
       if (e.created_at > existing) {
-        pubkeyTimestamps.set(e.pubkey, e.created_at);
+        activityTimestamps.set(e.pubkey, e.created_at);
       }
     }
 
-    const pubkeys = [...pubkeyTimestamps.keys()];
-    if (pubkeys.length === 0) return [];
+    // Step 3: Find pubkeys with activity but no kind 0 on zooid
+    const missingPubkeys = [...activityTimestamps.keys()].filter((pk) => !profileMap.has(pk));
 
-    // Step 2: Fetch kind 0 profiles from public relays
-    const metaMap = await fetchProfilesBatch(pubkeys);
+    // Step 4: Fetch missing profiles from public relays and mirror to zooid
+    if (missingPubkeys.length > 0) {
+      const fetched = await fetchProfileEventsBatch(missingPubkeys);
+      for (const [pk, event] of fetched) {
+        try {
+          profileMap.set(pk, {
+            meta: JSON.parse(event.content),
+            created_at: event.created_at,
+          });
+        } catch { /* skip malformed */ }
+        // Mirror the original signed kind 0 event to zooid
+        try {
+          await this.publish(event);
+        } catch { /* best-effort mirror */ }
+      }
+    }
 
+    // Step 5: Build result — include all pubkeys (with or without profiles)
+    const allPubkeys = new Set([...profileMap.keys(), ...activityTimestamps.keys()]);
     const profiles: { pubkey: string; meta: Record<string, any>; created_at: number }[] = [];
-    for (const pubkey of pubkeys) {
+    for (const pubkey of allPubkeys) {
+      const p = profileMap.get(pubkey);
       profiles.push({
         pubkey,
-        meta: metaMap.get(pubkey) || {},
-        created_at: pubkeyTimestamps.get(pubkey) || 0,
+        meta: p?.meta || {},
+        created_at: p?.created_at || activityTimestamps.get(pubkey) || 0,
       });
     }
 

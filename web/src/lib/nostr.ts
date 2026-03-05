@@ -251,6 +251,20 @@ function setCachedProfile(pubkey: string, meta: Record<string, any>) {
   saveProfileCache();
 }
 
+// Fetch the raw kind 0 event for a single pubkey from public relays
+export async function fetchProfileEvent(pubkey: string): Promise<any | null> {
+  for (const url of PUBLIC_PROFILE_RELAYS) {
+    try {
+      const fetched = await fetchKind0EventsFromRelay(url, [pubkey]);
+      const event = fetched.get(pubkey);
+      if (event) return event;
+    } catch {
+      continue;
+    }
+  }
+  return null;
+}
+
 export const PUBLIC_PROFILE_RELAYS = [
   'wss://relay.damus.io',
   'wss://relay.nostr.band',
@@ -392,4 +406,73 @@ function fetchKind0FromRelay(
       reject(new Error('WebSocket error'));
     };
   });
+}
+
+// Fetch raw kind 0 events (full NostrEvent objects) from a public relay
+export function fetchKind0EventsFromRelay(
+  url: string,
+  pubkeys: string[],
+): Promise<Map<string, any>> {
+  return new Promise((resolve, reject) => {
+    const ws = new WebSocket(url);
+    const results = new Map<string, any>();
+    const timeout = setTimeout(() => {
+      ws.close();
+      resolve(results);
+    }, 8000);
+
+    ws.onopen = () => {
+      const subId = crypto.randomUUID().slice(0, 8);
+      ws.send(JSON.stringify(['REQ', subId, { kinds: [0], authors: pubkeys, limit: pubkeys.length }]));
+    };
+
+    ws.onmessage = (evt) => {
+      try {
+        const data = JSON.parse(evt.data);
+        if (data[0] === 'EVENT') {
+          const event = data[2];
+          const existing = results.get(event.pubkey);
+          if (!existing || event.created_at > existing.created_at) {
+            results.set(event.pubkey, event);
+          }
+        } else if (data[0] === 'EOSE') {
+          clearTimeout(timeout);
+          ws.close();
+          resolve(results);
+        }
+      } catch { /* ignore parse errors */ }
+    };
+
+    ws.onerror = () => {
+      clearTimeout(timeout);
+      reject(new Error('WebSocket error'));
+    };
+  });
+}
+
+// Fetch raw kind 0 events from public relays for given pubkeys
+export async function fetchProfileEventsBatch(
+  pubkeys: string[],
+): Promise<Map<string, any>> {
+  const results = new Map<string, any>();
+  const remaining = new Set(pubkeys);
+
+  for (const url of PUBLIC_PROFILE_RELAYS) {
+    if (remaining.size === 0) break;
+    try {
+      const fetched = await fetchKind0EventsFromRelay(url, [...remaining]);
+      for (const [pk, event] of fetched) {
+        results.set(pk, event);
+        remaining.delete(pk);
+        // Also populate profile cache
+        try {
+          setCachedProfile(pk, JSON.parse(event.content));
+        } catch { /* skip malformed */ }
+      }
+    } catch {
+      continue;
+    }
+  }
+
+  return results;
 }

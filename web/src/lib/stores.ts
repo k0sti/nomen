@@ -26,7 +26,7 @@ export const showLoginModal = writable(false);
 export const showProfileModal = writable(false);
 
 // ── Auto-restore login session ──────────────────────────────────
-import { loginWithNip07, restoreNip46Session } from './nostr';
+import { loginWithNip07, restoreNip46Session, fetchProfileEvent } from './nostr';
 
 if (typeof window !== 'undefined') {
   const savedMethod = localStorage.getItem('nomen_login_method');
@@ -35,6 +35,7 @@ if (typeof window !== 'undefined') {
       .then((result) => {
         profile.set(result.profile);
         signer.set(result.signer);
+        mirrorProfileToZooid(result.profile.pubkey, result.signer);
       })
       .catch(() => {
         localStorage.removeItem('nomen_login_method');
@@ -45,6 +46,7 @@ if (typeof window !== 'undefined') {
         if (result) {
           profile.set(result.profile);
           signer.set(result.signer);
+          mirrorProfileToZooid(result.profile.pubkey, result.signer);
         } else {
           localStorage.removeItem('nomen_login_method');
           localStorage.removeItem('nomen_nip46_relay');
@@ -54,6 +56,22 @@ if (typeof window !== 'undefined') {
         localStorage.removeItem('nomen_login_method');
         localStorage.removeItem('nomen_nip46_relay');
       });
+  }
+}
+
+// ── Mirror profile to zooid relay ────────────────────────────────
+async function mirrorProfileToZooid(pubkey: string, signerInstance: import('./nostr').NostrSigner) {
+  try {
+    const event = await fetchProfileEvent(pubkey);
+    if (!event) return;
+    let relayInstance: NomenRelay | null = null;
+    relay.subscribe((r) => (relayInstance = r))();
+    if (!relayInstance) return;
+    await (relayInstance as NomenRelay).connect();
+    await (relayInstance as NomenRelay).authenticate(signerInstance);
+    await (relayInstance as NomenRelay).publishEvent(event);
+  } catch {
+    // Best-effort — don't block login
   }
 }
 
