@@ -7,7 +7,7 @@
   import Settings from './pages/Settings.svelte';
   import LoginModal from './components/LoginModal.svelte';
   import ProfileModal from './components/ProfileModal.svelte';
-  import { currentPage, showLoginModal, showProfileModal } from './lib/stores';
+  import { currentPage } from './lib/stores';
 </script>
 
 <Layout>
@@ -24,10 +24,5 @@
   {/if}
 </Layout>
 
-{#if $showLoginModal}
-  <LoginModal />
-{/if}
-
-{#if $showProfileModal}
-  <ProfileModal />
-{/if}
+<LoginModal />
+<ProfileModal />

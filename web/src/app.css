@@ -1,17 +1,18 @@
 @import "tailwindcss";
+@import "./styles/theme.css";
 
 @theme {
-  --color-surface-50: #f8fafc;
-  --color-surface-100: #f1f5f9;
-  --color-surface-200: #e2e8f0;
-  --color-surface-700: #334155;
-  --color-surface-800: #1e293b;
-  --color-surface-850: #172033;
-  --color-surface-900: #0f172a;
-  --color-surface-950: #020617;
-  --color-accent-400: #a78bfa;
-  --color-accent-500: #8b5cf6;
-  --color-accent-600: #7c3aed;
+  --color-surface-50: oklch(0.98 0.005 265);
+  --color-surface-100: oklch(0.96 0.01 265);
+  --color-surface-200: oklch(0.93 0.015 265);
+  --color-surface-700: oklch(0.37 0.03 265);
+  --color-surface-800: oklch(0.28 0.03 265);
+  --color-surface-850: oklch(0.24 0.03 265);
+  --color-surface-900: oklch(0.20 0.03 265);
+  --color-surface-950: oklch(0.13 0.02 265);
+  --color-accent-400: oklch(0.68 0.16 290);
+  --color-accent-500: oklch(0.55 0.22 290);
+  --color-accent-600: oklch(0.50 0.24 290);
 }
 
 :root {
@@ -19,8 +20,45 @@
   -webkit-font-smoothing: antialiased;
 }
 
-/* Scrollbar */
+/* ── Global focus-visible ─────────────────────────────────────── */
+:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring-offset), var(--focus-ring);
+}
+
+:focus:not(:focus-visible) {
+  outline: none;
+  box-shadow: none;
+}
+
+/* ── Dialog reset ─────────────────────────────────────────────── */
+dialog {
+  background: transparent;
+  border: none;
+  padding: 0;
+  max-width: 100vw;
+  max-height: 100vh;
+  overflow: visible;
+}
+
+dialog::backdrop {
+  background: var(--color-backdrop);
+  backdrop-filter: blur(4px);
+}
+
+dialog[open] {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* ── Scrollbar ────────────────────────────────────────────────── */
 ::-webkit-scrollbar { width: 6px; }
 ::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: #334155; border-radius: 3px; }
-::-webkit-scrollbar-thumb:hover { background: #475569; }
+::-webkit-scrollbar-thumb {
+  background: var(--color-scrollbar);
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-scrollbar-hover);
+}

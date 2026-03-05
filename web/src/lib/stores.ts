@@ -6,7 +6,7 @@ import type { NostrProfile } from './nostr';
 import type { Memory, Message, Group, Entity, SearchResult } from './api';
 
 // ── Settings ──────────────────────────────────────────────────────
-export const apiBaseUrl = writable(localStorage.getItem('nomen:apiBaseUrl') || 'http://localhost:3000');
+export const apiBaseUrl = writable(localStorage.getItem('nomen:apiBaseUrl') || '/memory/api');
 export const relayUrl = writable(localStorage.getItem('nomen:relayUrl') || 'wss://zooid.atlantislabs.space');
 export const embeddingProvider = writable(localStorage.getItem('nomen:embeddingProvider') || 'openai');
 export const defaultChannel = writable(localStorage.getItem('nomen:defaultChannel') || 'nostr');

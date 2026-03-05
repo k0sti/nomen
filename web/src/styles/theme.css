@@ -1,0 +1,123 @@
+/* Nomen Design Tokens — OKLCH color system */
+
+/* ── Spacing scale (4px base) ─────────────────────────────────── */
+:root {
+  --space-1: 0.25rem;   /* 4px */
+  --space-2: 0.5rem;    /* 8px */
+  --space-3: 0.75rem;   /* 12px */
+  --space-4: 1rem;      /* 16px */
+  --space-5: 1.25rem;   /* 20px */
+  --space-6: 1.5rem;    /* 24px */
+  --space-7: 1.75rem;   /* 28px */
+  --space-8: 2rem;      /* 32px */
+  --space-9: 2.5rem;    /* 40px */
+  --space-10: 3rem;     /* 48px */
+
+  /* ── Type scale (fluid clamp) ─────────────────────────────── */
+  --text-xs: clamp(0.6875rem, 0.65rem + 0.1vw, 0.75rem);
+  --text-sm: clamp(0.8125rem, 0.78rem + 0.1vw, 0.875rem);
+  --text-base: clamp(0.9375rem, 0.9rem + 0.15vw, 1rem);
+  --text-lg: clamp(1.0625rem, 1rem + 0.2vw, 1.125rem);
+  --text-xl: clamp(1.1875rem, 1.1rem + 0.3vw, 1.25rem);
+  --text-2xl: clamp(1.4rem, 1.3rem + 0.4vw, 1.5rem);
+
+  /* ── Focus ring ───────────────────────────────────────────── */
+  --focus-ring: 0 0 0 2px oklch(0.55 0.22 290 / 0.7);
+  --focus-ring-offset: 0 0 0 3px oklch(0.13 0.02 265);
+}
+
+/* ── Dark theme (default) ─────────────────────────────────────── */
+:root {
+  --color-surface: oklch(0.13 0.02 265);
+  --color-surface-raised: oklch(0.18 0.02 265);
+  --color-surface-overlay: oklch(0.22 0.02 265);
+  --color-surface-hover: oklch(0.25 0.02 265);
+  --color-border: oklch(0.30 0.02 265);
+  --color-border-subtle: oklch(0.25 0.02 265);
+
+  --color-text-primary: oklch(0.93 0.01 265);
+  --color-text-secondary: oklch(0.70 0.01 265);
+  --color-text-muted: oklch(0.50 0.02 265);
+  --color-text-faint: oklch(0.40 0.02 265);
+
+  --color-accent: oklch(0.55 0.22 290);
+  --color-accent-light: oklch(0.68 0.16 290);
+  --color-accent-dim: oklch(0.55 0.22 290 / 0.15);
+  --color-accent-hover: oklch(0.60 0.20 290);
+
+  --color-success: oklch(0.65 0.17 155);
+  --color-success-dim: oklch(0.65 0.17 155 / 0.15);
+  --color-warning: oklch(0.70 0.15 75);
+  --color-warning-dim: oklch(0.70 0.15 75 / 0.15);
+  --color-danger: oklch(0.60 0.18 25);
+  --color-danger-dim: oklch(0.60 0.18 25 / 0.15);
+  --color-info: oklch(0.62 0.15 245);
+  --color-info-dim: oklch(0.62 0.15 245 / 0.15);
+
+  --color-backdrop: oklch(0 0 0 / 0.6);
+  --color-scrollbar: oklch(0.30 0.02 265);
+  --color-scrollbar-hover: oklch(0.38 0.02 265);
+}
+
+/* ── Light theme ──────────────────────────────────────────────── */
+@media (prefers-color-scheme: light) {
+  :root:not(.dark) {
+    --color-surface: oklch(0.985 0.005 265);
+    --color-surface-raised: oklch(0.97 0.008 265);
+    --color-surface-overlay: oklch(0.95 0.01 265);
+    --color-surface-hover: oklch(0.93 0.01 265);
+    --color-border: oklch(0.85 0.015 265);
+    --color-border-subtle: oklch(0.90 0.01 265);
+
+    --color-text-primary: oklch(0.20 0.02 265);
+    --color-text-secondary: oklch(0.40 0.02 265);
+    --color-text-muted: oklch(0.55 0.02 265);
+    --color-text-faint: oklch(0.65 0.02 265);
+
+    --color-accent: oklch(0.50 0.24 290);
+    --color-accent-light: oklch(0.55 0.22 290);
+    --color-accent-dim: oklch(0.50 0.24 290 / 0.10);
+    --color-accent-hover: oklch(0.45 0.24 290);
+
+    --color-success: oklch(0.55 0.17 155);
+    --color-success-dim: oklch(0.55 0.17 155 / 0.10);
+    --color-warning: oklch(0.60 0.15 75);
+    --color-warning-dim: oklch(0.60 0.15 75 / 0.10);
+    --color-danger: oklch(0.55 0.20 25);
+    --color-danger-dim: oklch(0.55 0.20 25 / 0.10);
+    --color-info: oklch(0.52 0.15 245);
+    --color-info-dim: oklch(0.52 0.15 245 / 0.10);
+
+    --color-backdrop: oklch(0 0 0 / 0.3);
+    --color-scrollbar: oklch(0.80 0.01 265);
+    --color-scrollbar-hover: oklch(0.70 0.01 265);
+
+    --focus-ring-offset: 0 0 0 3px oklch(0.985 0.005 265);
+  }
+}
+
+/* ── Skeleton animation ───────────────────────────────────────── */
+@keyframes skeleton-pulse {
+  0%, 100% { opacity: 0.4; }
+  50% { opacity: 0.7; }
+}
+
+.skeleton {
+  background: var(--color-surface-overlay);
+  border-radius: 0.375rem;
+  animation: skeleton-pulse 1.8s ease-in-out infinite;
+}
+
+/* ── Reduced motion ───────────────────────────────────────────── */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+
+  .skeleton {
+    animation: none;
+    opacity: 0.5;
+  }
+}

@@ -1,8 +1,24 @@
 <script lang="ts">
   import { showProfileModal, profile } from '../lib/stores';
 
+  let dialogEl = $state<HTMLDialogElement>();
+  let copied = $state(false);
+
+  $effect(() => {
+    if ($showProfileModal && $profile) {
+      dialogEl?.showModal();
+    } else {
+      dialogEl?.close();
+    }
+  });
+
   function close() {
     showProfileModal.set(false);
+  }
+
+  function handleCancel(e: Event) {
+    e.preventDefault();
+    close();
   }
 
   function logout() {
@@ -17,17 +33,16 @@
       setTimeout(() => (copied = false), 2000);
     }
   }
-
-  let copied = $state(false);
 </script>
 
-{#if $profile}
-<!-- svelte-ignore a11y_no_static_element_interactions -->
-<div class="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50" onclick={close} onkeydown={() => {}}>
-  <!-- svelte-ignore a11y_no_static_element_interactions -->
-  <div class="bg-gray-900 border border-gray-700 rounded-xl p-6 w-full max-w-sm shadow-2xl" onclick={(e) => e.stopPropagation()} onkeydown={() => {}}>
+<dialog
+  bind:this={dialogEl}
+  oncancel={handleCancel}
+  class="w-full max-w-sm"
+>
+  {#if $profile}
+  <div class="bg-gray-900 border border-gray-700 rounded-xl p-6 w-full shadow-2xl">
     <div class="flex flex-col items-center">
-      <!-- Profile image -->
       {#if $profile.picture}
         <img
           src={$profile.picture}
@@ -40,18 +55,17 @@
         </div>
       {/if}
 
-      <!-- Display name -->
       <h2 class="text-xl font-semibold text-gray-100">
         {$profile.displayName || $profile.name || 'Anonymous'}
       </h2>
 
-      <!-- npub -->
       <div class="flex items-center gap-2 mt-2">
         <code class="text-sm text-gray-400 font-mono">{$profile.npubShort}</code>
         <button
           onclick={copyNpub}
-          class="text-gray-500 hover:text-gray-300 transition-colors"
+          class="w-9 h-9 flex items-center justify-center rounded-lg text-gray-500 hover:text-gray-300 hover:bg-gray-800 active:bg-gray-700 transition-colors duration-150"
           title="Copy full npub"
+          aria-label="Copy npub"
         >
           {#if copied}
             <svg class="w-4 h-4 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -73,17 +87,17 @@
     <div class="mt-6 space-y-2">
       <button
         onclick={logout}
-        class="w-full py-2.5 rounded-lg bg-red-900/30 border border-red-800/50 text-red-400 hover:bg-red-900/50 transition-colors text-sm"
+        class="w-full py-2.5 min-h-11 rounded-lg bg-red-900/30 border border-red-800/50 text-red-400 hover:bg-red-900/50 active:bg-red-900/70 transition-colors duration-150 text-sm"
       >
         Logout
       </button>
       <button
         onclick={close}
-        class="w-full py-2.5 rounded-lg border border-gray-700 text-gray-400 hover:text-gray-200 hover:bg-gray-800 transition-colors text-sm"
+        class="w-full py-2.5 min-h-11 rounded-lg border border-gray-700 text-gray-400 hover:text-gray-200 hover:bg-gray-800 active:bg-gray-700 transition-colors duration-150 text-sm"
       >
         Close
       </button>
     </div>
   </div>
-</div>
-{/if}
+  {/if}
+</dialog>

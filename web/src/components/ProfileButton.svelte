@@ -12,7 +12,8 @@
 
 <button
   onclick={handleClick}
-  class="flex items-center gap-2 px-3 py-1.5 rounded-lg transition-colors hover:bg-gray-800"
+  class="flex items-center gap-2 px-3 py-2 min-h-11 rounded-lg transition-colors duration-150 hover:bg-gray-800 active:bg-gray-700"
+  aria-label={$isLoggedIn ? 'View profile' : 'Login'}
 >
   {#if $isLoggedIn && $profile}
     {#if $profile.picture}

@@ -29,12 +29,12 @@
 </script>
 
 <div
-  class="border border-gray-800 rounded-lg hover:border-gray-700 transition-colors bg-gray-900/50"
+  class="border border-gray-800 rounded-lg hover:border-gray-700 transition-colors duration-150 bg-gray-900/50"
 >
-  <!-- Header row -->
   <button
-    class="w-full p-4 text-left"
+    class="w-full p-4 min-h-14 text-left transition-colors duration-150 rounded-t-lg hover:bg-gray-800/30 active:bg-gray-800/50"
     onclick={toggle}
+    aria-expanded={isExpanded}
   >
     <div class="flex items-start justify-between gap-3">
       <div class="min-w-0 flex-1">
@@ -53,7 +53,6 @@
     </div>
   </button>
 
-  <!-- Expanded detail -->
   {#if isExpanded}
     <div class="px-4 pb-4 border-t border-gray-800/50 pt-3 space-y-3">
       <div>
@@ -67,7 +66,7 @@
       <div class="flex justify-end">
         <button
           onclick={handleDelete}
-          class="px-3 py-1.5 text-xs rounded-md bg-red-900/20 border border-red-800/30 text-red-400 hover:bg-red-900/40 transition-colors"
+          class="px-3 py-2 min-h-9 text-xs rounded-md bg-red-900/20 border border-red-800/30 text-red-400 hover:bg-red-900/40 active:bg-red-900/60 transition-colors duration-150"
         >
           Delete
         </button>
