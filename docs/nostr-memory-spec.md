@@ -135,6 +135,22 @@ The `h` tag scopes visibility to group members (relay-enforced):
 ["h", "techteam"]
 ```
 
+### Group Types
+
+**Named groups** (NIP-29): Pre-defined with an ID, mapped to a relay group via `h` tag. Members managed by the relay. Used for teams, communities, projects.
+
+```json
+["h", "techteam"]
+```
+
+**Ad-hoc npub sets**: Implicit groups formed by a set of participants (e.g., a multi-party DM). No relay group — scoped by a deterministic hash of sorted participant npubs. Used for private conversations between specific agents/users.
+
+```json
+["snow:scope", "sha256:sorted_npub1,npub2,npub3"]
+```
+
+Ad-hoc sets are always private tier with NIP-44 encryption. They don't use `h` tags since they aren't relay-managed groups.
+
 ---
 
 ## 4. Agent Lessons — Kind 4129

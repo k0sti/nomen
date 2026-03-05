@@ -87,6 +87,53 @@ Single embedded database. Multi-model: documents, vectors (HNSW), full-text (BM2
 | Group | `group:<id>` | None (relay auth) | Group members |
 | Private | `npub:<hex>` | NIP-44 | Owning agent only |
 
+## Groups
+
+Two kinds of groups serve different purposes:
+
+### Named Groups
+
+Pre-defined groups with an ID, name, and explicit member list. Configured in `config.toml` or created via CLI. Can map to a NIP-29 relay group via `nostr_group` field.
+
+```toml
+[[groups]]
+id = "atlantislabs.engineering"
+name = "Engineering"
+members = ["npub1abc...", "npub1def..."]
+nostr_group = "techteam"    # maps to NIP-29 h-tag on relay
+relay = "wss://zooid.atlantislabs.space"
+```
+
+- Hierarchical IDs with dot separator (`atlantislabs.engineering.infra`)
+- Parent derived automatically (`atlantislabs.engineering` → parent `atlantislabs`)
+- Membership is explicit per level — being in a parent doesn't grant child access
+- `nostr_group` enables bidirectional mapping: scope ↔ NIP-29 h-tag
+- Stored in SurrealDB `nomen_group` table, config entries merged on load
+
+**CLI:** `nomen group create/list/members/add/remove`
+
+### Ad-hoc npub Sets
+
+Implicit groups formed by a set of participants — like a multi-party DM. No pre-configuration needed. The group identity is the sorted set of npubs.
+
+- **Session ID:** `hash(sorted npubs)` — deterministic, same participants always produce the same scope
+- **Tier:** private (encrypted between participants)
+- **Use case:** Multi-party conversations, pair-wise agent interactions
+- **No relay mapping** — these are direct NIP-17 DM conversations, not NIP-29 groups
+
+**Status:** Designed but not yet implemented. Currently, only named groups and single-npub private sessions are supported in session resolution.
+
+### Comparison
+
+| | Named Groups | Ad-hoc npub Sets |
+|---|---|---|
+| Configuration | Explicit (config/CLI) | Implicit (from participants) |
+| Identity | Human-readable ID | Hash of sorted npubs |
+| Membership | Managed list | Fixed set |
+| Relay mapping | NIP-29 via `nostr_group` | None (NIP-17 DMs) |
+| Hierarchy | Dot-separated nesting | Flat |
+| Use case | Teams, projects, communities | DMs, pair-wise interactions |
+
 ## Messaging (`nomen send`)
 
 Agents send messages to recipients via configurable channels.
@@ -116,15 +163,18 @@ A session ID encodes recipient + channel + tier in a single string, eliminating 
 
 **Formats:**
 
-| Session ID | Resolves to |
-|---|---|
-| `npub1abc...` | private DM, scope=npub hex |
-| `telegram:npub1abc...` | private DM via telegram |
-| `techteam` | group, scope=group_id |
-| `nostr:inner-circle` | group via nostr relay |
-| `public` | public, no scope |
+| Session ID | Type | Resolves to | Status |
+|---|---|---|---|
+| `public` | Public | tier=public, empty scope | ✅ |
+| `npub1abc...` | Private DM | tier=private, scope=npub hex | ✅ |
+| `telegram:npub1abc...` | Private DM (explicit channel) | tier=private, channel=telegram | ✅ |
+| `techteam` | Named group | tier=group, scope=group_id | ✅ |
+| `nostr:inner-circle` | Named group (via NIP-29 alias) | tier=group, resolved via `nostr_group` | ✅ |
+| `hash(sorted npubs)` | Ad-hoc npub set | tier=private, scope=hash | 📋 planned |
 
-**Resolution** (`src/session.rs`): `resolve_session(id, groups, default_channel) → ResolvedSession { tier, scope, group_id, participants }`
+**Resolution** (`src/session.rs`): `resolve_session(id, groups, default_channel) → ResolvedSession { tier, scope, channel, group_id, participants }`
+
+Named groups resolve via GroupStore lookup (by ID or `nostr_group` alias). Ad-hoc npub sets will resolve by looking up the hash in the session table.
 
 **Integration:** All MCP tools accept optional `session_id` parameter. When provided, tier and scope are derived automatically — no risk of misconfiguring visibility.
 
