@@ -7,6 +7,7 @@ mod embed;
 mod entities;
 mod groups;
 mod ingest;
+mod mcp;
 mod memory;
 mod relay;
 mod search;
@@ -22,6 +23,7 @@ use tracing::debug;
 use crate::config::Config;
 use crate::display::{display_memories, format_timestamp};
 use crate::memory::{get_tag_value, parse_event};
+use crate::relay::{RelayConfig, RelayManager};
 
 // ── CLI ─────────────────────────────────────────────────────────────
 
@@ -152,6 +154,12 @@ enum Command {
         #[arg(long)]
         kind: Option<String>,
     },
+    /// Start MCP server (JSON-RPC over stdio)
+    Serve {
+        /// Use stdio transport
+        #[arg(long, default_value = "true")]
+        stdio: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -248,6 +256,16 @@ fn parse_keys(nsecs: &[String]) -> Result<(Vec<Keys>, Vec<PublicKey>)> {
     Ok((all_keys, pubkeys))
 }
 
+fn build_relay_manager(relay_url: &str, keys: &Keys) -> RelayManager {
+    RelayManager::new(
+        keys.clone(),
+        RelayConfig {
+            relay_url: relay_url.to_string(),
+            ..Default::default()
+        },
+    )
+}
+
 // ── Main ────────────────────────────────────────────────────────────
 
 #[tokio::main]
@@ -294,7 +312,7 @@ async fn main() -> Result<()> {
             cmd_delete(&resolved.relay, &resolved.nsecs, topic.as_deref(), id.as_deref()).await?;
         }
         Command::Search { ref query, ref tier, limit, vector_weight, text_weight } => {
-            cmd_search(&cli, &query, tier.as_deref(), limit, vector_weight, text_weight).await?;
+            cmd_search(&cli, query, tier.as_deref(), limit, vector_weight, text_weight).await?;
         }
         Command::Embed { limit } => {
             cmd_embed(&cli, limit).await?;
@@ -314,6 +332,9 @@ async fn main() -> Result<()> {
         Command::Entities { kind } => {
             cmd_entities(kind.as_deref()).await?;
         }
+        Command::Serve { stdio: _ } => {
+            cmd_serve(&cli).await?;
+        }
     }
 
     Ok(())
@@ -325,8 +346,9 @@ async fn cmd_list(relay_url: &str, nsecs: &[String]) -> Result<()> {
     let (all_keys, pubkeys) = parse_keys(nsecs)?;
     debug!("Parsed {} keys", all_keys.len());
 
-    let client = relay::connect(relay_url, &all_keys[0]).await?;
-    let events = relay::fetch_memory_events(&client, &pubkeys).await?;
+    let mgr = build_relay_manager(relay_url, &all_keys[0]);
+    mgr.connect().await?;
+    let events = mgr.fetch_memories(&pubkeys).await?;
 
     let mut memories = Vec::new();
     let mut lesson_count = 0usize;
@@ -349,7 +371,7 @@ async fn cmd_list(relay_url: &str, nsecs: &[String]) -> Result<()> {
         .collect();
 
     display_memories(&npubs, &memories, lesson_count);
-    client.disconnect().await;
+    mgr.disconnect().await;
     Ok(())
 }
 
@@ -373,8 +395,9 @@ async fn cmd_sync(relay_url: &str, nsecs: &[String]) -> Result<()> {
     let (all_keys, pubkeys) = parse_keys(nsecs)?;
 
     println!("Connecting to relay...");
-    let client = relay::connect(relay_url, &all_keys[0]).await?;
-    let events = relay::fetch_memory_events(&client, &pubkeys).await?;
+    let mgr = build_relay_manager(relay_url, &all_keys[0]);
+    mgr.connect().await?;
+    let events = mgr.fetch_memories(&pubkeys).await?;
 
     let db = db::init_db().await?;
 
@@ -407,7 +430,7 @@ async fn cmd_sync(relay_url: &str, nsecs: &[String]) -> Result<()> {
         skipped
     );
 
-    client.disconnect().await;
+    mgr.disconnect().await;
     Ok(())
 }
 
@@ -425,12 +448,23 @@ async fn cmd_store(
     let (all_keys, _pubkeys) = parse_keys(nsecs)?;
     let keys = &all_keys[0];
 
+    let mgr = build_relay_manager(relay_url, keys);
+    mgr.connect().await?;
+
     // Build content JSON
-    let content = serde_json::json!({
+    let content_str = serde_json::json!({
         "summary": summary,
         "detail": if detail.is_empty() { summary } else { detail },
         "context": null
-    });
+    })
+    .to_string();
+
+    // Encrypt if private tier
+    let final_content = if tier == "private" {
+        mgr.encrypt_private(&content_str)?
+    } else {
+        content_str.clone()
+    };
 
     // Build d-tag
     let d_tag = format!("snow:memory:{topic}");
@@ -445,12 +479,11 @@ async fn cmd_store(
         Tag::custom(TagKind::Custom("snow:version".into()), vec!["1".to_string()]),
     ];
 
-    let builder = EventBuilder::new(Kind::Custom(30078), content.to_string()).tags(tags);
+    let builder = EventBuilder::new(Kind::Custom(30078), final_content).tags(tags);
 
     // Publish to relay
     println!("Publishing to relay...");
-    let client = relay::connect(relay_url, keys).await?;
-    let event_id = relay::publish_event(&client, builder).await?;
+    let result = mgr.publish(builder).await?;
 
     // Store locally in SurrealDB
     let db = db::init_db().await?;
@@ -464,10 +497,10 @@ async fn cmd_store(
         created_at: Timestamp::now(),
         d_tag,
         source: keys.public_key().to_hex(),
-        content_raw: content.to_string(),
+        content_raw: content_str,
         detail: if detail.is_empty() { summary.to_string() } else { detail.to_string() },
     };
-    let _ = db::store_memory_direct(&db, &parsed, &event_id.to_hex()).await;
+    let _ = db::store_memory_direct(&db, &parsed, &result.event_id.to_hex()).await;
 
     println!(
         "{} stored: {} [{}]",
@@ -475,9 +508,10 @@ async fn cmd_store(
         topic.bold(),
         tier
     );
-    println!("  Event ID: {event_id}");
+    println!("  Event ID: {}", result.event_id);
+    println!("  Relay: {}", result.summary());
 
-    client.disconnect().await;
+    mgr.disconnect().await;
     Ok(())
 }
 
@@ -496,7 +530,8 @@ async fn cmd_delete(
     let (all_keys, pubkeys) = parse_keys(nsecs)?;
     let keys = &all_keys[0];
 
-    let client = relay::connect(relay_url, keys).await?;
+    let mgr = build_relay_manager(relay_url, keys);
+    mgr.connect().await?;
 
     // If deleting by topic, we need to find the event first
     let target_event_id = if let Some(eid) = event_id {
@@ -506,7 +541,7 @@ async fn cmd_delete(
         let d_tag = format!("snow:memory:{topic}");
 
         // Fetch to find the event with this d-tag
-        let events = relay::fetch_memory_events(&client, &pubkeys).await?;
+        let events = mgr.fetch_memories(&pubkeys).await?;
         let found = events.into_iter().find(|e| {
             get_tag_value(&e.tags, "d").as_deref() == Some(&d_tag)
         });
@@ -521,7 +556,7 @@ async fn cmd_delete(
     let delete_builder = EventBuilder::new(Kind::Custom(5), "")
         .tags(vec![Tag::event(target_event_id)]);
 
-    relay::publish_event(&client, delete_builder).await?;
+    let result = mgr.publish(delete_builder).await?;
 
     // Remove from local SurrealDB
     let db = db::init_db().await?;
@@ -532,9 +567,14 @@ async fn cmd_delete(
         db::delete_memory_by_nostr_id(&db, eid).await?;
     }
 
-    println!("{} Event {} marked for deletion", "Deleted.".red().bold(), target_event_id);
+    println!(
+        "{} Event {} marked for deletion ({})",
+        "Deleted.".red().bold(),
+        target_event_id,
+        result.summary()
+    );
 
-    client.disconnect().await;
+    mgr.disconnect().await;
     Ok(())
 }
 
@@ -629,7 +669,6 @@ async fn cmd_embed(cli: &Cli, limit: usize) -> Result<()> {
 
     println!("Generating embeddings for {} memories...", missing.len());
 
-    // Collect texts to embed (use summary if available, otherwise content)
     let texts: Vec<String> = missing
         .iter()
         .map(|m| m.summary.clone().unwrap_or_else(|| m.content.clone()))
@@ -682,7 +721,6 @@ async fn cmd_group(action: GroupAction) -> Result<()> {
         GroupAction::List => {
             let db_groups = groups::list_groups(&db).await?;
 
-            // Also load config groups for display
             let config = Config::load()?;
             let store = groups::GroupStore::load(&config.groups, &db).await?;
             let all = store.list();
@@ -726,7 +764,6 @@ async fn cmd_group(action: GroupAction) -> Result<()> {
                     }
                 );
             }
-            // Suppress unused variable warning
             let _ = db_groups;
             println!();
         }
@@ -930,4 +967,25 @@ async fn cmd_entities(kind_filter: Option<&str>) -> Result<()> {
 
     println!("\n{}: {} entities\n", "Total".bold(), entity_list.len());
     Ok(())
+}
+
+// ── Command: serve (MCP server) ─────────────────────────────────────
+
+async fn cmd_serve(cli: &Cli) -> Result<()> {
+    let config = load_config(cli)?;
+    let embedder = config.build_embedder();
+    let db = db::init_db().await?;
+
+    // Optionally build relay manager if nsecs are available
+    let resolved = resolve_config(cli)?;
+    let relay_manager = if !resolved.nsecs.is_empty() {
+        let (all_keys, _) = parse_keys(&resolved.nsecs)?;
+        let mgr = build_relay_manager(&resolved.relay, &all_keys[0]);
+        mgr.connect().await.ok();
+        Some(mgr)
+    } else {
+        None
+    };
+
+    mcp::serve_stdio(db, embedder, relay_manager).await
 }
