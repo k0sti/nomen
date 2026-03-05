@@ -1,5 +1,6 @@
 <script lang="ts">
-  import { profile, signer, relay, relayConnected } from '../lib/stores';
+  import { onMount } from 'svelte';
+  import { profile, signer, relay, ensureConnected, showError } from '../lib/stores';
   import { nip19 } from 'nostr-tools';
   import { compressNpub, fetchProfileMetadata } from '../lib/nostr';
   import type { NostrProfile } from '../lib/nostr';
@@ -26,20 +27,18 @@
   let loadingConfig = $state(false);
   let discoverLoading = $state(false);
 
-  // Load agent config on mount
-  $effect(() => {
-    if ($profile && $relayConnected) {
+  onMount(() => {
+    if ($profile) {
       loadConfig();
     }
   });
 
   async function loadConfig() {
-    if (!$profile || !$relay) return;
+    if (!$profile) return;
     loadingConfig = true;
     try {
-      await $relay.connect();
-      if ($signer) await $relay.authenticate($signer);
-      const event = await $relay.fetchAppData($profile.pubkey, CONFIG_D_TAG);
+      const r = await ensureConnected();
+      const event = await r.fetchAppData($profile.pubkey, CONFIG_D_TAG);
       if (event) {
         const data = JSON.parse(event.content);
         agents = (data.agents || []) as AgentEntry[];
@@ -202,17 +201,16 @@
   }
 
   async function saveConfig() {
-    if (!$signer || !$relay) return;
+    if (!$signer) return;
     saving = true;
     try {
       const content = JSON.stringify({
         agents: agents.map(a => ({ npub: a.npub, role: a.role, added: a.added })),
       });
-      await $relay.connect();
-      await $relay.authenticate($signer);
-      await $relay.publishAppData(CONFIG_D_TAG, content, $signer);
+      const r = await ensureConnected();
+      await r.publishAppData(CONFIG_D_TAG, content, $signer);
     } catch (e: any) {
-      console.error('Failed to save agent config:', e);
+      showError('Failed to save agent config: ' + (e.message || e));
     } finally {
       saving = false;
     }

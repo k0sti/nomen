@@ -1,5 +1,6 @@
 <script lang="ts">
-  import { profile, signer, relay, relayConnected } from '../lib/stores';
+  import { onMount } from 'svelte';
+  import { profile, signer, relay, ensureConnected } from '../lib/stores';
   import { nip19 } from 'nostr-tools';
   import ProfileCard from '../components/ProfileCard.svelte';
 
@@ -16,25 +17,18 @@
   let error = $state('');
   let agentNpubs = $state<Set<string>>(new Set());
 
-  $effect(() => {
-    if ($relayConnected) {
+  onMount(() => {
+    if ($profile) {
       loadMembers();
-    }
-  });
-
-  // Load the user's agent config to mark agents
-  $effect(() => {
-    if ($profile && $relayConnected) {
       loadAgentConfig();
     }
   });
 
   async function loadAgentConfig() {
-    if (!$profile || !$relay) return;
+    if (!$profile) return;
     try {
-      await $relay.connect();
-      if ($signer) await $relay.authenticate($signer);
-      const event = await $relay.fetchAppData($profile.pubkey, CONFIG_D_TAG);
+      const r = await ensureConnected();
+      const event = await r.fetchAppData($profile.pubkey, CONFIG_D_TAG);
       if (event) {
         const data = JSON.parse(event.content);
         const npubs = (data.agents || []).map((a: any) => a.npub);
@@ -46,13 +40,11 @@
   }
 
   async function loadMembers() {
-    if (!$relay) return;
     loading = true;
     error = '';
     try {
-      await $relay.connect();
-      if ($signer) await $relay.authenticate($signer);
-      const profiles = await $relay.listProfiles();
+      const r = await ensureConnected();
+      const profiles = await r.listProfiles();
       // Sort: humans first, then bots/agents, alphabetical within each group
       members = profiles.sort((a, b) => {
         const aIsBot = a.meta.bot === true;

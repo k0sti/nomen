@@ -1,6 +1,6 @@
 <script lang="ts">
   import SearchResultCard from '../components/SearchResult.svelte';
-  import { api, searchResults, searchQuery, loading } from '../lib/stores';
+  import { api, searchResults, searchQuery, loading, showError } from '../lib/stores';
 
   let mode = $state<'hybrid' | 'text'>('hybrid');
 
@@ -9,10 +9,10 @@
     if (!q) return;
     loading.set(true);
     try {
-      const results = await $api.search(q, { limit: 20 });
+      const results = await $api.search(q, { limit: 20, mode });
       searchResults.set(results);
     } catch (err: any) {
-      console.error('Search failed:', err);
+      showError('Search failed: ' + (err.message || err));
       searchResults.set([]);
     } finally {
       loading.set(false);

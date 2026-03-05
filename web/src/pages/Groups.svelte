@@ -2,7 +2,7 @@
   import { onMount } from 'svelte';
   import GroupTree from '../components/GroupTree.svelte';
   import GroupMembers from '../components/GroupMembers.svelte';
-  import { relay, groups, loading, profile, isLoggedIn, getSigner } from '../lib/stores';
+  import { relay, groups, loading, profile, isLoggedIn, getSigner, ensureConnected, showError } from '../lib/stores';
 
   let selectedGroup = $state<string | null>(null);
 
@@ -12,15 +12,12 @@
     if (!$profile) return;
     loading.set(true);
     try {
-      const r = $relay;
-      await r.connect();
-      const signer = getSigner();
-      await r.authenticate(signer);
+      const r = await ensureConnected();
 
       const result = await r.listGroups();
       groups.set(result);
     } catch (err: any) {
-      console.error('Failed to load groups:', err);
+      showError('Failed to load groups: ' + (err.message || err));
     } finally {
       loading.set(false);
     }

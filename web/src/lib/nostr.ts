@@ -372,6 +372,7 @@ function fetchKind0FromRelay(
   return new Promise((resolve, reject) => {
     const ws = new WebSocket(url);
     const results = new Map<string, Record<string, any>>();
+    const timestamps = new Map<string, number>();
     const timeout = setTimeout(() => {
       ws.close();
       resolve(results); // return whatever we got
@@ -387,10 +388,11 @@ function fetchKind0FromRelay(
         const data = JSON.parse(evt.data);
         if (data[0] === 'EVENT') {
           const event = data[2];
-          // Keep latest per pubkey
-          if (!results.has(event.pubkey)) {
+          const existing = timestamps.get(event.pubkey) || 0;
+          if (!results.has(event.pubkey) || event.created_at > existing) {
             try {
               results.set(event.pubkey, JSON.parse(event.content));
+              timestamps.set(event.pubkey, event.created_at);
             } catch { /* skip malformed */ }
           }
         } else if (data[0] === 'EOSE') {

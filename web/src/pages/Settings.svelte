@@ -1,9 +1,16 @@
 <script lang="ts">
-  import { relayUrl, apiBaseUrl } from '../lib/stores';
+  import { relayUrl, apiBaseUrl, relay, relayConnected } from '../lib/stores';
+  import { NomenRelay } from '../lib/relay';
 
   let saved = $state(false);
 
   function save() {
+    // Recreate relay instance if URL changed
+    if ($relay.url !== $relayUrl) {
+      $relay.disconnect();
+      relay.set(new NomenRelay($relayUrl));
+      relayConnected.set(false);
+    }
     saved = true;
     setTimeout(() => saved = false, 2000);
   }

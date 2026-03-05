@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
   import MemoryCard from '../components/MemoryCard.svelte';
-  import { relay, memories, tierFilter, loading, profile, isLoggedIn, getSigner } from '../lib/stores';
+  import { relay, memories, tierFilter, loading, profile, isLoggedIn, getSigner, ensureConnected, showError } from '../lib/stores';
   import type { Memory } from '../lib/api';
   import type { Subscription } from '../lib/relay';
 
@@ -30,10 +30,7 @@
     if (!$profile) return;
     loading.set(true);
     try {
-      const r = $relay;
-      await r.connect();
-      const signer = getSigner();
-      await r.authenticate(signer);
+      const r = await ensureConnected();
 
       const result = await r.listMemories($profile.pubkey);
       memories.set(result);
@@ -51,7 +48,7 @@
         });
       });
     } catch (err: any) {
-      console.error('Failed to load memories:', err);
+      showError('Failed to load memories: ' + (err.message || err));
     } finally {
       loading.set(false);
     }
@@ -65,10 +62,10 @@
     if (!memory.id) return;
     try {
       const signer = getSigner();
-      await $relay.deleteMemory(memory.id, signer);
+      await $relay.deleteMemory(memory.id, signer, memory.d_tag);
       memories.update((ms) => ms.filter((m) => m.d_tag !== memory.d_tag));
     } catch (err: any) {
-      console.error('Failed to delete memory:', err);
+      showError('Failed to delete memory: ' + (err.message || err));
     }
   }
 

@@ -1,5 +1,6 @@
 <script lang="ts">
   import { compressNpub } from '../lib/nostr';
+  import { nip19 } from 'nostr-tools';
 
   let { members, onremove, onadd }: {
     members: string[];
@@ -10,6 +11,16 @@
   let newNpub = $state('');
   let copied = $state<string | null>(null);
 
+  // Convert hex pubkey to npub if needed
+  function toNpub(key: string): string {
+    if (key.startsWith('npub1')) return key;
+    try {
+      return nip19.npubEncode(key);
+    } catch {
+      return key;
+    }
+  }
+
   function handleAdd() {
     const v = newNpub.trim();
     if (v && v.startsWith('npub1')) {
@@ -18,9 +29,10 @@
     }
   }
 
-  function copyNpub(npub: string) {
+  function copyNpub(key: string) {
+    const npub = toNpub(key);
     navigator.clipboard.writeText(npub);
-    copied = npub;
+    copied = key;
     setTimeout(() => copied = null, 1500);
   }
 </script>
@@ -29,23 +41,24 @@
   <div class="text-xs font-medium text-gray-500 uppercase tracking-wide">Members ({members.length})</div>
 
   <div class="space-y-1">
-    {#each members as npub}
+    {#each members as member}
+      {@const npub = toNpub(member)}
       <div class="flex items-center gap-2 py-2 px-2 min-h-11 rounded-lg hover:bg-gray-800/50 group transition-colors duration-150">
         <div class="w-6 h-6 rounded-full bg-gray-700 flex items-center justify-center text-xs text-gray-400">
           {npub.slice(5, 6).toUpperCase()}
         </div>
         <code class="text-xs text-gray-400 flex-1 font-mono">{compressNpub(npub)}</code>
         <button
-          onclick={() => copyNpub(npub)}
+          onclick={() => copyNpub(member)}
           class="px-2 py-1 min-h-7 text-gray-600 hover:text-gray-300 text-xs opacity-0 group-hover:opacity-100 focus-visible:opacity-100 transition-all duration-150 rounded"
           title="Copy npub"
           aria-label="Copy npub"
         >
-          {copied === npub ? 'ok' : 'copy'}
+          {copied === member ? 'ok' : 'copy'}
         </button>
         {#if onremove}
           <button
-            onclick={() => onremove?.(npub)}
+            onclick={() => onremove?.(member)}
             class="px-2 py-1 min-h-7 text-red-600 hover:text-red-400 text-xs opacity-0 group-hover:opacity-100 focus-visible:opacity-100 transition-all duration-150 rounded"
             aria-label="Remove member"
           >

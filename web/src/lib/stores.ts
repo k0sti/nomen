@@ -1,6 +1,6 @@
 // Svelte stores for state management — relay-first architecture
 
-import { writable, derived } from 'svelte/store';
+import { writable, derived, get } from 'svelte/store';
 import { NomenRelay } from './relay';
 import { NomenApi } from './api';
 import type { NostrProfile, NostrSigner } from './nostr';
@@ -59,30 +59,41 @@ if (typeof window !== 'undefined') {
   }
 }
 
+// ── Centralized relay connection helper ──────────────────────────
+// Ensures relay is connected and authenticated. Idempotent — safe to call from every page.
+export async function ensureConnected(): Promise<NomenRelay> {
+  const r = get(relay);
+  const s = get(signer);
+  await r.connect();
+  if (s) await r.authenticate(s);
+  relayConnected.set(true);
+  return r;
+}
+
 // ── Mirror profile to zooid relay ────────────────────────────────
 async function mirrorProfileToZooid(pubkey: string, signerInstance: import('./nostr').NostrSigner) {
   try {
     const event = await fetchProfileEvent(pubkey);
     if (!event) return;
-    let relayInstance: NomenRelay | null = null;
-    relay.subscribe((r) => (relayInstance = r))();
-    if (!relayInstance) return;
-    await (relayInstance as NomenRelay).connect();
-    await (relayInstance as NomenRelay).authenticate(signerInstance);
-    await (relayInstance as NomenRelay).publishEvent(event);
+    const relayInstance = get(relay);
+    await relayInstance.connect();
+    await relayInstance.authenticate(signerInstance);
+    await relayInstance.publishEvent(event);
+    relayConnected.set(true);
   } catch {
     // Best-effort — don't block login
   }
 }
 
 // ── Navigation ───────────────────────────────────────────────────
-export type Page = 'memories' | 'search' | 'messages' | 'members' | 'groups' | 'agents' | 'settings';
+export type Page = 'landing' | 'memories' | 'search' | 'messages' | 'members' | 'groups' | 'agents' | 'settings';
 
 const validPages: Page[] = ['memories', 'search', 'messages', 'members', 'groups', 'agents', 'settings'];
 
 function getPageFromHash(): Page {
   const hash = window.location.hash.replace('#/', '').replace('#', '');
-  return validPages.includes(hash as Page) ? (hash as Page) : 'memories';
+  if (!hash) return 'landing';
+  return validPages.includes(hash as Page) ? (hash as Page) : 'landing';
 }
 
 export const currentPage = writable<Page>(getPageFromHash());
@@ -94,9 +105,15 @@ if (typeof window !== 'undefined') {
   });
 
   currentPage.subscribe((page) => {
-    const target = `#/${page}`;
-    if (window.location.hash !== target) {
-      window.location.hash = target;
+    if (page === 'landing') {
+      if (window.location.hash && window.location.hash !== '#' && window.location.hash !== '#/') {
+        history.pushState(null, '', window.location.pathname);
+      }
+    } else {
+      const target = `#/${page}`;
+      if (window.location.hash !== target) {
+        window.location.hash = target;
+      }
     }
   });
 }
@@ -118,14 +135,34 @@ export const channelFilter = writable<string>('');
 export const loading = writable(false);
 export const expandedMemory = writable<string | null>(null);
 
+// ── Error toasts ─────────────────────────────────────────────────
+export interface Toast {
+  id: number;
+  message: string;
+  type: 'error' | 'info';
+}
+let toastId = 0;
+export const toasts = writable<Toast[]>([]);
+
+export function showError(message: string) {
+  const id = ++toastId;
+  toasts.update((t) => [...t, { id, message, type: 'error' }]);
+  setTimeout(() => toasts.update((t) => t.filter((x) => x.id !== id)), 5000);
+}
+
+export function showInfo(message: string) {
+  const id = ++toastId;
+  toasts.update((t) => [...t, { id, message, type: 'info' }]);
+  setTimeout(() => toasts.update((t) => t.filter((x) => x.id !== id)), 3000);
+}
+
 // ── Relay connection state ───────────────────────────────────────
 export const relayConnected = writable(false);
 
 // ── Signer helper ────────────────────────────────────────────────
 // Returns the current signer (NIP-07 or NIP-46)
 export function getSigner(): NostrSigner {
-  let current: NostrSigner | null = null;
-  signer.subscribe((s) => (current = s))();
+  const current = get(signer);
   if (!current) throw new Error('Not logged in');
   return current;
 }

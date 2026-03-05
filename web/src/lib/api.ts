@@ -63,6 +63,7 @@ export interface SearchOpts {
   tier?: string;
   scope?: string;
   limit?: number;
+  mode?: 'hybrid' | 'text';
 }
 
 export interface EntityOpts {
@@ -116,6 +117,7 @@ export class NomenApi {
       tier: opts?.tier,
       scope: opts?.scope,
       limit: opts?.limit,
+      mode: opts?.mode,
     });
     return data.results.map(mapSearchResult);
   }

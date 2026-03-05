@@ -1,6 +1,6 @@
 // Nostr relay client — direct WebSocket communication with NIP-42 AUTH
 
-import { finalizeEvent, type EventTemplate, type NostrEvent } from 'nostr-tools';
+import { type EventTemplate, type NostrEvent } from 'nostr-tools';
 import type { Memory, Message, Group } from './api';
 import { fetchProfileEventsBatch } from './nostr';
 
@@ -187,6 +187,9 @@ export class NomenRelay {
   }
 
   private async handleAuth(challenge: string) {
+    // If already authenticated, ignore subsequent AUTH challenges (zooid sends them repeatedly)
+    if (this.authenticated) return;
+
     if (!this._signer) {
       // Signer not set yet — buffer challenge for when authenticate() is called
       this.bufferedAuthChallenge = challenge;
@@ -194,7 +197,6 @@ export class NomenRelay {
     }
 
     try {
-      const pubkey = await this._signer.getPublicKey();
       const authEvent: EventTemplate = {
         kind: 22242,
         created_at: Math.floor(Date.now() / 1000),
@@ -348,11 +350,18 @@ export class NomenRelay {
     return this.publish(signed);
   }
 
-  async deleteMemory(eventId: string, signer: Signer): Promise<void> {
+  async deleteMemory(eventId: string, signer: Signer, dTag?: string): Promise<void> {
+    const pubkey = await signer.getPublicKey();
+    const tags: string[][] = [['e', eventId]];
+    // Kind 30078 are addressable events — use a-tag for proper NIP-09 deletion
+    if (dTag) {
+      tags.push(['a', `30078:${pubkey}:${dTag}`]);
+    }
+
     const event: EventTemplate = {
       kind: 5,
       created_at: Math.floor(Date.now() / 1000),
-      tags: [['e', eventId]],
+      tags,
       content: 'Memory deleted via Nomen UI',
     };
 

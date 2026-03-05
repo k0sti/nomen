@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import MessageItem from '../components/MessageItem.svelte';
-  import { relay, messages, channelFilter, loading, profile, isLoggedIn, groups, getSigner } from '../lib/stores';
+  import { relay, messages, channelFilter, loading, profile, isLoggedIn, groups, getSigner, ensureConnected, showError } from '../lib/stores';
 
   let senderFilter = $state('');
   let selectedGroup = $state('');
@@ -25,10 +25,7 @@
     if (!$profile) return;
     loading.set(true);
     try {
-      const r = $relay;
-      await r.connect();
-      const signer = getSigner();
-      await r.authenticate(signer);
+      const r = await ensureConnected();
 
       if ($groups.length === 0) {
         const grps = await r.listGroups();
@@ -41,7 +38,7 @@
         messages.set(msgs);
       }
     } catch (err: any) {
-      console.error('Failed to load messages:', err);
+      showError('Failed to load messages: ' + (err.message || err));
     } finally {
       loading.set(false);
     }
@@ -54,7 +51,7 @@
       const msgs = await $relay.getGroupMessages(selectedGroup, 100);
       messages.set(msgs);
     } catch (err: any) {
-      console.error('Failed to load messages:', err);
+      showError('Failed to load messages: ' + (err.message || err));
     } finally {
       loading.set(false);
     }
