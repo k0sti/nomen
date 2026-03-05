@@ -1,4 +1,4 @@
-// Nomen API Client — wraps calls to Nomen MCP/REST endpoint
+// Nomen API Client — REST calls for server-side operations only (search, entities, consolidation)
 
 export interface SearchResult {
   topic: string;
@@ -13,6 +13,7 @@ export interface SearchResult {
 }
 
 export interface Memory {
+  id: string;
   topic: string;
   summary: string;
   detail: string;
@@ -64,25 +65,9 @@ export interface SearchOpts {
   limit?: number;
 }
 
-export interface StoreOpts {
-  detail?: string;
-  tier?: string;
-  scope?: string;
-  confidence?: number;
-}
-
-export interface IngestOpts {
-  sender?: string;
-  channel?: string;
-  metadata?: Record<string, unknown>;
-}
-
-export interface MessageOpts {
-  source?: string;
-  channel?: string;
-  sender?: string;
-  since?: string;
-  limit?: number;
+export interface EntityOpts {
+  kind?: string;
+  query?: string;
 }
 
 export interface ConsolidateOpts {
@@ -90,127 +75,86 @@ export interface ConsolidateOpts {
   since?: string;
 }
 
-export interface EntityOpts {
-  kind?: string;
-  query?: string;
-}
-
-export interface SendOpts {
-  channel?: string;
-  metadata?: Record<string, unknown>;
-}
-
-export interface SendResult {
-  ok: boolean;
-  message: string;
-}
-
-export class NomenClient {
+export class NomenApi {
   private baseUrl: string;
-  private useMock: boolean = false;
 
-  constructor(baseUrl: string) {
+  constructor(baseUrl: string = '/memory/api') {
     this.baseUrl = baseUrl.replace(/\/$/, '');
   }
 
-  private async request<T>(method: string, params: Record<string, unknown> = {}): Promise<T> {
-    try {
-      const resp = await fetch(`${this.baseUrl}/rpc`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          jsonrpc: '2.0',
-          id: crypto.randomUUID(),
-          method: 'tools/call',
-          params: { name: method, arguments: params },
-        }),
-      });
-
-      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-
-      const data = await resp.json();
-      if (data.error) throw new Error(data.error.message);
-
-      const content = data.result?.content?.[0]?.text;
-      if (data.result?.isError) throw new Error(content || 'Unknown error');
-
-      return JSON.parse(content) as T;
-    } catch {
-      this.useMock = true;
-      throw new Error('Backend unavailable — using mock data');
+  private async postJson<T>(path: string, body: Record<string, unknown>): Promise<T> {
+    const resp = await fetch(`${this.baseUrl}${path}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    if (!resp.ok) {
+      const text = await resp.text().catch(() => '');
+      throw new Error(`${resp.status}: ${text}`);
     }
+    return resp.json();
   }
 
-  get isMockMode(): boolean {
-    return this.useMock;
-  }
-
-  enableMock(): void {
-    this.useMock = true;
+  private async getJson<T>(path: string, params?: Record<string, string | undefined>): Promise<T> {
+    const url = new URL(`${this.baseUrl}${path}`, window.location.origin);
+    if (params) {
+      for (const [k, v] of Object.entries(params)) {
+        if (v !== undefined && v !== '') url.searchParams.set(k, v);
+      }
+    }
+    const resp = await fetch(url.toString());
+    if (!resp.ok) {
+      const text = await resp.text().catch(() => '');
+      throw new Error(`${resp.status}: ${text}`);
+    }
+    return resp.json();
   }
 
   async search(query: string, opts?: SearchOpts): Promise<SearchResult[]> {
-    if (this.useMock) return (await import('./mock')).mockSearch(query, opts);
-    return this.request('nomen_search', { query, ...opts });
+    const data = await this.postJson<{ results: RawSearchResult[] }>('/search', {
+      query,
+      tier: opts?.tier,
+      scope: opts?.scope,
+      limit: opts?.limit,
+    });
+    return data.results.map(mapSearchResult);
   }
 
-  async store(topic: string, summary: string, opts?: StoreOpts): Promise<void> {
-    if (this.useMock) return;
-    await this.request('nomen_store', { topic, summary, ...opts });
-  }
-
-  async ingest(source: string, content: string, opts?: IngestOpts): Promise<void> {
-    if (this.useMock) return;
-    await this.request('nomen_ingest', { source, content, ...opts });
-  }
-
-  async getMessages(opts?: MessageOpts): Promise<Message[]> {
-    if (this.useMock) return (await import('./mock')).mockMessages(opts);
-    return this.request('nomen_messages', { ...opts });
+  async getEntities(opts?: EntityOpts): Promise<Entity[]> {
+    const data = await this.getJson<{ entities: Entity[] }>('/entities', {
+      kind: opts?.kind,
+      query: opts?.query,
+    });
+    return data.entities;
   }
 
   async consolidate(opts?: ConsolidateOpts): Promise<ConsolidateReport> {
-    if (this.useMock) return { messages_processed: 0, memories_created: 0, channels: [] };
-    return this.request('nomen_consolidate', { ...opts });
+    return this.postJson('/consolidate', { ...opts });
   }
+}
 
-  async listGroups(): Promise<Group[]> {
-    if (this.useMock) return (await import('./mock')).mockGroups();
-    return this.request('nomen_groups', { action: 'list' });
-  }
+// ── Raw backend types & mappers ──────────────────────────────────
 
-  async listEntities(opts?: EntityOpts): Promise<Entity[]> {
-    if (this.useMock) return (await import('./mock')).mockEntities(opts);
-    return this.request('nomen_entities', { ...opts });
-  }
+interface RawSearchResult {
+  tier: string;
+  topic: string;
+  confidence: string;
+  summary: string;
+  created_at: number;
+  score: number;
+  match_type: string;
+}
 
-  async send(recipient: string, content: string, opts?: SendOpts): Promise<SendResult> {
-    if (this.useMock) return { ok: true, message: 'Mock send' };
-    return this.request('nomen_send', { recipient, content, ...opts });
-  }
-
-  async deleteMemory(topic: string): Promise<void> {
-    if (this.useMock) return;
-    await this.request('nomen_delete', { topic });
-  }
-
-  async listMemories(tier?: string): Promise<Memory[]> {
-    if (this.useMock) return (await import('./mock')).mockMemories(tier);
-    return this.request('nomen_search', { query: '*', tier, limit: 100 });
-  }
-
-  async createGroup(id: string, name: string, members: string[]): Promise<void> {
-    if (this.useMock) return;
-    await this.request('nomen_groups', { action: 'create', id, name, members });
-  }
-
-  async addMember(groupId: string, npub: string): Promise<void> {
-    if (this.useMock) return;
-    await this.request('nomen_groups', { action: 'add_member', id: groupId, npub });
-  }
-
-  async removeMember(groupId: string, npub: string): Promise<void> {
-    if (this.useMock) return;
-    await this.request('nomen_groups', { action: 'remove_member', id: groupId, npub });
-  }
+function mapSearchResult(r: RawSearchResult): SearchResult {
+  return {
+    topic: r.topic,
+    summary: r.summary,
+    detail: '',
+    tier: r.tier,
+    scope: '',
+    confidence: parseFloat(r.confidence) || 0,
+    score: r.score,
+    match_type: r.match_type,
+    created_at: r.created_at ? new Date(r.created_at * 1000).toISOString() : '',
+  };
 }

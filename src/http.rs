@@ -94,6 +94,12 @@ pub struct EntitiesQuery {
 }
 
 #[derive(Deserialize)]
+pub struct MemoriesQuery {
+    pub tier: Option<String>,
+    pub limit: Option<usize>,
+}
+
+#[derive(Deserialize)]
 pub struct ConsolidateRequest {
     pub channel: Option<String>,
     pub since: Option<String>,
@@ -146,6 +152,7 @@ pub fn build_router(state: AppState, static_dir: Option<PathBuf>) -> Router {
         .route("/messages", get(api_messages))
         .route("/entities", get(api_entities))
         .route("/consolidate", post(api_consolidate))
+        .route("/memories", get(api_list_memories))
         .route("/memories/{topic}", delete(api_delete_memory))
         .route("/groups", get(api_list_groups))
         .route("/groups", post(api_create_group))
@@ -299,6 +306,15 @@ async fn api_consolidate(
         "memories_created": report.memories_created,
         "channels": report.channels,
     })))
+}
+
+async fn api_list_memories(
+    State(state): State<SharedState>,
+    Query(q): Query<MemoriesQuery>,
+) -> Result<Json<Value>, AppError> {
+    let limit = q.limit.unwrap_or(200);
+    let memories = db::list_memories(&state.db, q.tier.as_deref(), limit).await?;
+    Ok(Json(json!({ "memories": memories })))
 }
 
 async fn api_delete_memory(

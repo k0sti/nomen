@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { showLoginModal, profile, mockMode } from '../lib/stores';
+  import { showLoginModal, profile } from '../lib/stores';
   import { hasNip07, hasAmber, loginWithNip07 } from '../lib/nostr';
 
   let error = $state('');
@@ -146,26 +146,5 @@
         </div>
       {/if}
     </div>
-
-    {#if $mockMode}
-      <div class="mt-4 pt-4 border-t border-gray-800">
-        <button
-          onclick={() => {
-            profile.set({
-              pubkey: 'a'.repeat(64),
-              npub: 'npub1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqz4s3f5',
-              npubShort: 'npub1qqqqqqqqq...s3f5',
-              name: 'Demo User',
-              displayName: 'Demo User',
-              picture: undefined,
-            });
-            close();
-          }}
-          class="w-full p-3 min-h-11 rounded-lg border border-dashed border-gray-700 text-gray-400 hover:text-gray-200 hover:border-gray-500 active:bg-gray-800 text-sm transition-colors duration-150"
-        >
-          Login as Demo User (mock mode)
-        </button>
-      </div>
-    {/if}
   </div>
 </dialog>

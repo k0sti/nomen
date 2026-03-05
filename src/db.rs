@@ -419,6 +419,38 @@ pub async fn store_embedding(
     Ok(())
 }
 
+/// List all memories (without embeddings, for display).
+pub async fn list_memories(
+    db: &Surreal<Db>,
+    tier: Option<&str>,
+    limit: usize,
+) -> Result<Vec<MemoryRecord>> {
+    let (sql, bind_tier);
+    if let Some(t) = tier {
+        sql = format!(
+            "SELECT * FROM memory WHERE tier = $tier ORDER BY created_at DESC LIMIT {limit}"
+        );
+        bind_tier = Some(t.to_string());
+    } else {
+        sql = format!(
+            "SELECT * FROM memory ORDER BY created_at DESC LIMIT {limit}"
+        );
+        bind_tier = None;
+    }
+
+    let mut q = db.query(&sql);
+    if let Some(ref t) = bind_tier {
+        q = q.bind(("tier", t.clone()));
+    }
+
+    let mut results: Vec<MemoryRecord> = q.await?.check()?.take(0)?;
+    // Strip embeddings from response to keep payload small
+    for r in &mut results {
+        r.embedding = None;
+    }
+    Ok(results)
+}
+
 /// Get memories that are missing embeddings.
 pub async fn get_memories_without_embeddings(
     db: &Surreal<Db>,

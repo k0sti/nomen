@@ -1,29 +1,22 @@
-// Svelte stores for state management
+// Svelte stores for state management — relay-first architecture
 
 import { writable, derived } from 'svelte/store';
-import { NomenClient } from './api';
+import { NomenRelay } from './relay';
+import { NomenApi } from './api';
 import type { NostrProfile } from './nostr';
 import type { Memory, Message, Group, Entity, SearchResult } from './api';
 
 // ── Settings ──────────────────────────────────────────────────────
-export const apiBaseUrl = writable(localStorage.getItem('nomen:apiBaseUrl') || '/memory/api');
 export const relayUrl = writable(localStorage.getItem('nomen:relayUrl') || 'wss://zooid.atlantislabs.space');
-export const embeddingProvider = writable(localStorage.getItem('nomen:embeddingProvider') || 'openai');
-export const defaultChannel = writable(localStorage.getItem('nomen:defaultChannel') || 'nostr');
+export const apiBaseUrl = writable(localStorage.getItem('nomen:apiBaseUrl') || '/memory/api');
 
 // Persist settings
-apiBaseUrl.subscribe((v) => localStorage.setItem('nomen:apiBaseUrl', v));
 relayUrl.subscribe((v) => localStorage.setItem('nomen:relayUrl', v));
-embeddingProvider.subscribe((v) => localStorage.setItem('nomen:embeddingProvider', v));
-defaultChannel.subscribe((v) => localStorage.setItem('nomen:defaultChannel', v));
+apiBaseUrl.subscribe((v) => localStorage.setItem('nomen:apiBaseUrl', v));
 
-// ── API Client ────────────────────────────────────────────────────
-export const client = derived(apiBaseUrl, ($url) => {
-  const c = new NomenClient($url);
-  // Start in mock mode — real mode activates when backend responds
-  c.enableMock();
-  return c;
-});
+// ── Relay & API instances ────────────────────────────────────────
+export const relay = writable<NomenRelay>(new NomenRelay());
+export const api = derived(apiBaseUrl, ($url) => new NomenApi($url));
 
 // ── Auth ──────────────────────────────────────────────────────────
 export const profile = writable<NostrProfile | null>(null);
@@ -72,5 +65,17 @@ export const channelFilter = writable<string>('');
 
 // ── UI State ─────────────────────────────────────────────────────
 export const loading = writable(false);
-export const mockMode = writable(true);
 export const expandedMemory = writable<string | null>(null);
+
+// ── Relay connection state ───────────────────────────────────────
+export const relayConnected = writable(false);
+
+// ── NIP-07 signer helper ─────────────────────────────────────────
+export function getNip07Signer() {
+  const ext = (window as any).nostr;
+  if (!ext) throw new Error('No NIP-07 extension found');
+  return {
+    getPublicKey: () => ext.getPublicKey(),
+    signEvent: (event: any) => ext.signEvent(event),
+  };
+}

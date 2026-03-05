@@ -1,11 +1,12 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onMount, onDestroy } from 'svelte';
   import MemoryCard from '../components/MemoryCard.svelte';
-  import TierBadge from '../components/TierBadge.svelte';
-  import { client, memories, tierFilter, loading } from '../lib/stores';
+  import { relay, memories, tierFilter, loading, profile, isLoggedIn, getNip07Signer } from '../lib/stores';
   import type { Memory } from '../lib/api';
+  import type { Subscription } from '../lib/relay';
 
   let filterText = $state('');
+  let sub: Subscription | null = null;
 
   const filtered = $derived(
     $memories.filter((m) => {
@@ -26,18 +27,49 @@
   });
 
   onMount(async () => {
+    if (!$profile) return;
     loading.set(true);
     try {
-      const result = await $client.listMemories($tierFilter || undefined);
+      const r = $relay;
+      await r.connect();
+      const signer = getNip07Signer();
+      await r.authenticate(signer);
+
+      const result = await r.listMemories($profile.pubkey);
       memories.set(result);
+
+      // Live subscription for new memories
+      sub = r.subscribeMemories($profile.pubkey, (m: Memory) => {
+        memories.update((ms) => {
+          const idx = ms.findIndex((x) => x.d_tag === m.d_tag);
+          if (idx >= 0) {
+            const updated = [...ms];
+            updated[idx] = m;
+            return updated;
+          }
+          return [m, ...ms];
+        });
+      });
+    } catch (err: any) {
+      console.error('Failed to load memories:', err);
     } finally {
       loading.set(false);
     }
   });
 
-  async function handleDelete(topic: string) {
-    await $client.deleteMemory(topic);
-    memories.update((ms) => ms.filter((m) => m.topic !== topic));
+  onDestroy(() => {
+    sub?.close();
+  });
+
+  async function handleDelete(memory: Memory) {
+    if (!memory.id) return;
+    try {
+      const signer = getNip07Signer();
+      await $relay.deleteMemory(memory.id, signer);
+      memories.update((ms) => ms.filter((m) => m.d_tag !== memory.d_tag));
+    } catch (err: any) {
+      console.error('Failed to delete memory:', err);
+    }
   }
 
   function setTierFilter(tier: string) {
@@ -77,7 +109,9 @@
     </div>
   </div>
 
-  {#if $loading}
+  {#if !$isLoggedIn}
+    <div class="text-center py-12 text-gray-500">Login to view memories from the relay</div>
+  {:else if $loading}
     <div class="space-y-2">
       {#each { length: 4 } as _}
         <div class="border border-gray-800 rounded-lg p-4 bg-gray-900/50">

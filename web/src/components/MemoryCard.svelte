@@ -1,9 +1,9 @@
 <script lang="ts">
   import TierBadge from './TierBadge.svelte';
   import type { Memory } from '../lib/api';
-  import { expandedMemory, client } from '../lib/stores';
+  import { expandedMemory } from '../lib/stores';
 
-  let { memory, ondelete }: { memory: Memory; ondelete?: (topic: string) => void } = $props();
+  let { memory, ondelete }: { memory: Memory; ondelete?: (memory: Memory) => void } = $props();
 
   const isExpanded = $derived($expandedMemory === memory.d_tag);
 
@@ -23,7 +23,7 @@
 
   async function handleDelete() {
     if (confirm(`Delete memory "${memory.topic}"?`)) {
-      ondelete?.(memory.topic);
+      ondelete?.(memory);
     }
   }
 </script>
@@ -60,8 +60,12 @@
         <p class="text-sm text-gray-300 mt-1">{memory.detail}</p>
       </div>
       <div class="flex items-center gap-4 text-xs text-gray-500">
-        <span>Model: <span class="text-gray-400">{memory.model}</span></span>
-        <span>Source: <span class="text-gray-400">{memory.source}</span></span>
+        {#if memory.model}
+          <span>Model: <span class="text-gray-400">{memory.model}</span></span>
+        {/if}
+        {#if memory.source}
+          <span>Source: <span class="text-gray-400">{memory.source}</span></span>
+        {/if}
       </div>
       <div class="flex justify-end">
         <button
