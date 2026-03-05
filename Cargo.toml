@@ -43,7 +43,7 @@ dirs = "5"
 surrealdb = { version = "2", features = ["kv-surrealkv"] }
 
 # HTTP client (for embedding API)
-reqwest = { version = "0.12", features = ["json"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 
 # Async trait support
 async-trait = "0.1"
