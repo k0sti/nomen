@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { showProfileModal, profile } from '../lib/stores';
+  import { showProfileModal, profile, signer } from '../lib/stores';
 
   let dialogEl = $state<HTMLDialogElement>();
   let copied = $state(false);
@@ -21,8 +21,16 @@
     close();
   }
 
-  function logout() {
+  async function logout() {
+    // Close NIP-46 signer if active
+    let currentSigner: any = null;
+    signer.subscribe((s) => (currentSigner = s))();
+    if (currentSigner?.close) {
+      try { await currentSigner.close(); } catch {}
+    }
+    signer.set(null);
     profile.set(null);
+    sessionStorage.removeItem('nomen:nip46');
     close();
   }
 

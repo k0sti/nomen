@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
   import MemoryCard from '../components/MemoryCard.svelte';
-  import { relay, memories, tierFilter, loading, profile, isLoggedIn, getNip07Signer } from '../lib/stores';
+  import { relay, memories, tierFilter, loading, profile, isLoggedIn, getSigner } from '../lib/stores';
   import type { Memory } from '../lib/api';
   import type { Subscription } from '../lib/relay';
 
@@ -32,7 +32,7 @@
     try {
       const r = $relay;
       await r.connect();
-      const signer = getNip07Signer();
+      const signer = getSigner();
       await r.authenticate(signer);
 
       const result = await r.listMemories($profile.pubkey);
@@ -64,7 +64,7 @@
   async function handleDelete(memory: Memory) {
     if (!memory.id) return;
     try {
-      const signer = getNip07Signer();
+      const signer = getSigner();
       await $relay.deleteMemory(memory.id, signer);
       memories.update((ms) => ms.filter((m) => m.d_tag !== memory.d_tag));
     } catch (err: any) {

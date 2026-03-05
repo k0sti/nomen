@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import MessageItem from '../components/MessageItem.svelte';
-  import { relay, messages, channelFilter, loading, profile, isLoggedIn, groups, getNip07Signer } from '../lib/stores';
+  import { relay, messages, channelFilter, loading, profile, isLoggedIn, groups, getSigner } from '../lib/stores';
 
   let senderFilter = $state('');
   let selectedGroup = $state('');
@@ -27,7 +27,7 @@
     try {
       const r = $relay;
       await r.connect();
-      const signer = getNip07Signer();
+      const signer = getSigner();
       await r.authenticate(signer);
 
       if ($groups.length === 0) {

@@ -3,7 +3,7 @@
 import { writable, derived } from 'svelte/store';
 import { NomenRelay } from './relay';
 import { NomenApi } from './api';
-import type { NostrProfile } from './nostr';
+import type { NostrProfile, NostrSigner } from './nostr';
 import type { Memory, Message, Group, Entity, SearchResult } from './api';
 
 // ── Settings ──────────────────────────────────────────────────────
@@ -20,6 +20,7 @@ export const api = derived(apiBaseUrl, ($url) => new NomenApi($url));
 
 // ── Auth ──────────────────────────────────────────────────────────
 export const profile = writable<NostrProfile | null>(null);
+export const signer = writable<NostrSigner | null>(null);
 export const isLoggedIn = derived(profile, ($p) => $p !== null);
 export const showLoginModal = writable(false);
 export const showProfileModal = writable(false);
@@ -70,12 +71,11 @@ export const expandedMemory = writable<string | null>(null);
 // ── Relay connection state ───────────────────────────────────────
 export const relayConnected = writable(false);
 
-// ── NIP-07 signer helper ─────────────────────────────────────────
-export function getNip07Signer() {
-  const ext = (window as any).nostr;
-  if (!ext) throw new Error('No NIP-07 extension found');
-  return {
-    getPublicKey: () => ext.getPublicKey(),
-    signEvent: (event: any) => ext.signEvent(event),
-  };
+// ── Signer helper ────────────────────────────────────────────────
+// Returns the current signer (NIP-07 or NIP-46)
+export function getSigner(): NostrSigner {
+  let current: NostrSigner | null = null;
+  signer.subscribe((s) => (current = s))();
+  if (!current) throw new Error('Not logged in');
+  return current;
 }

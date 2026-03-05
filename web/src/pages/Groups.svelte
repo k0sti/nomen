@@ -2,7 +2,7 @@
   import { onMount } from 'svelte';
   import GroupTree from '../components/GroupTree.svelte';
   import GroupMembers from '../components/GroupMembers.svelte';
-  import { relay, groups, loading, profile, isLoggedIn, getNip07Signer } from '../lib/stores';
+  import { relay, groups, loading, profile, isLoggedIn, getSigner } from '../lib/stores';
 
   let selectedGroup = $state<string | null>(null);
 
@@ -14,7 +14,7 @@
     try {
       const r = $relay;
       await r.connect();
-      const signer = getNip07Signer();
+      const signer = getSigner();
       await r.authenticate(signer);
 
       const result = await r.listGroups();
