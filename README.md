@@ -1,5 +1,9 @@
 # Nomen
 
+<p align="center">
+  <img src="nomen.png" alt="Nomen" width="200" />
+</p>
+
 Nostr-native agent memory system — CLI and library.
 
 Nomen provides persistent, searchable memory for AI agents using [Nostr](https://nostr.com) as the storage and sync layer. It combines NIP-78 addressable events on relays with a local [SurrealDB](https://surrealdb.com) index for hybrid semantic + full-text search, entity graphs, and group-scoped access control.
