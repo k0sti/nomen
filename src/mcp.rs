@@ -400,7 +400,7 @@ impl McpServer {
             .and_then(|v| v.as_str())
             .unwrap_or("")
             .to_string();
-        let metadata = args.get("metadata").cloned();
+        let metadata = args.get("metadata").map(|v| v.to_string());
 
         if content.is_empty() {
             anyhow::bail!("content is required");
@@ -461,11 +461,11 @@ impl McpServer {
 
         let mut output = Vec::new();
         for msg in &messages {
-            let channel_str = msg
-                .channel
-                .as_deref()
-                .map(|c| format!(" #{c}"))
-                .unwrap_or_default();
+            let channel_str = if msg.channel.is_empty() {
+                String::new()
+            } else {
+                format!(" #{}", msg.channel)
+            };
             output.push(format!(
                 "[{}] {}{}: {}\n  {}",
                 msg.source, msg.sender, channel_str, msg.content, msg.created_at

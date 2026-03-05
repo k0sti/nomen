@@ -39,7 +39,7 @@ impl LlmProvider for NoopLlmProvider {
         // Group by channel
         let mut by_channel: HashMap<String, Vec<&RawMessageRecord>> = HashMap::new();
         for msg in messages {
-            let channel = msg.channel.clone().unwrap_or_else(|| "general".to_string());
+            let channel = { let c = msg.channel.clone(); if c.is_empty() { "general".to_string() } else { c } };
             by_channel.entry(channel).or_default().push(msg);
         }
 
@@ -187,7 +187,7 @@ pub async fn consolidate(
     // We link each consolidated memory to the messages from its channel
     let mut by_channel: HashMap<String, Vec<String>> = HashMap::new();
     for msg in &messages {
-        let channel = msg.channel.clone().unwrap_or_else(|| "general".to_string());
+        let channel = { let c = msg.channel.clone(); if c.is_empty() { "general".to_string() } else { c } };
         by_channel.entry(channel).or_default().push(msg.id.clone());
     }
 

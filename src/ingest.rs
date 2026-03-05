@@ -12,21 +12,28 @@ pub struct RawMessage {
     pub sender: String,
     pub channel: Option<String>,
     pub content: String,
-    pub metadata: Option<serde_json::Value>,
+    pub metadata: Option<String>,
     pub created_at: Option<String>,
 }
 
 /// A raw message as stored in SurrealDB (with DB-assigned id and consolidated flag).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RawMessageRecord {
-    #[serde(default)]
+    #[serde(default, deserialize_with = "crate::db::deserialize_thing_as_string")]
     pub id: String,
+    #[serde(default)]
     pub source: String,
-    pub source_id: Option<String>,
+    #[serde(default)]
+    pub source_id: String,
+    #[serde(default)]
     pub sender: String,
-    pub channel: Option<String>,
+    #[serde(default)]
+    pub channel: String,
+    #[serde(default)]
     pub content: String,
-    pub metadata: Option<serde_json::Value>,
+    #[serde(default)]
+    pub metadata: String,
+    #[serde(default)]
     pub created_at: String,
     #[serde(default)]
     pub consolidated: bool,

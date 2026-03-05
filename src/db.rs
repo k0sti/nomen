@@ -1,11 +1,84 @@
 use anyhow::{Context, Result};
 use nostr_sdk::prelude::*;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use surrealdb::Surreal;
 use surrealdb::engine::local::{Db, SurrealKv};
 use tracing::debug;
 
 use crate::memory::ParsedMemory;
+
+/// Deserialize SurrealDB NONE/null as None for Option<String>.
+pub fn deserialize_option_string<'de, D>(deserializer: D) -> std::result::Result<Option<String>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    use serde::de;
+    struct OptionStringVisitor;
+    impl<'de> de::Visitor<'de> for OptionStringVisitor {
+        type Value = Option<String>;
+        fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+            f.write_str("a string, null, or NONE")
+        }
+        fn visit_none<E: de::Error>(self) -> std::result::Result<Option<String>, E> { Ok(None) }
+        fn visit_unit<E: de::Error>(self) -> std::result::Result<Option<String>, E> { Ok(None) }
+        fn visit_some<D2: Deserializer<'de>>(self, d: D2) -> std::result::Result<Option<String>, D2::Error> {
+            Ok(Some(String::deserialize(d)?))
+        }
+        fn visit_str<E: de::Error>(self, v: &str) -> std::result::Result<Option<String>, E> {
+            Ok(Some(v.to_string()))
+        }
+        fn visit_string<E: de::Error>(self, v: String) -> std::result::Result<Option<String>, E> {
+            Ok(Some(v))
+        }
+        fn visit_enum<A: de::EnumAccess<'de>>(self, data: A) -> std::result::Result<Option<String>, A::Error> {
+            // SurrealDB NONE comes as an enum variant
+            let _ = data.variant::<String>()?;
+            Ok(None)
+        }
+    }
+    deserializer.deserialize_any(OptionStringVisitor)
+}
+
+/// Deserialize SurrealDB Thing (record ID) as a plain String.
+pub fn deserialize_thing_as_string<'de, D>(deserializer: D) -> std::result::Result<String, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    use serde::de;
+    struct ThingOrString;
+    impl<'de> de::Visitor<'de> for ThingOrString {
+        type Value = String;
+        fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+            formatter.write_str("a string or SurrealDB Thing")
+        }
+        fn visit_str<E: de::Error>(self, v: &str) -> std::result::Result<String, E> {
+            Ok(v.to_string())
+        }
+        fn visit_string<E: de::Error>(self, v: String) -> std::result::Result<String, E> {
+            Ok(v)
+        }
+        fn visit_map<A: de::MapAccess<'de>>(self, mut map: A) -> std::result::Result<String, A::Error> {
+            let mut tb = String::new();
+            let mut id = String::new();
+            while let Some(key) = map.next_key::<String>()? {
+                match key.as_str() {
+                    "tb" => tb = map.next_value()?,
+                    "id" => {
+                        id = map.next_value::<serde_json::Value>()?.to_string().trim_matches('"').to_string();
+                    },
+                    _ => { let _ = map.next_value::<serde_json::Value>()?; }
+                }
+            }
+            Ok(format!("{tb}:{id}"))
+        }
+        fn visit_enum<A: de::EnumAccess<'de>>(self, data: A) -> std::result::Result<String, A::Error> {
+            // SurrealDB Thing can be serialized as an enum (internal representation)
+            let (variant, _): (String, _) = data.variant()?;
+            Ok(variant)
+        }
+    }
+    deserializer.deserialize_any(ThingOrString)
+}
 
 /// SurrealDB memory record
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -123,13 +196,13 @@ DEFINE FIELD IF NOT EXISTS nostr_group ON nomen_group TYPE option<string>;
 DEFINE FIELD IF NOT EXISTS created_at ON nomen_group TYPE string;
 DEFINE INDEX IF NOT EXISTS group_id   ON nomen_group FIELDS id UNIQUE;
 
-DEFINE TABLE IF NOT EXISTS raw_message SCHEMAFULL;
+DEFINE TABLE IF NOT EXISTS raw_message SCHEMALESS;
 DEFINE FIELD IF NOT EXISTS source       ON raw_message TYPE string;
 DEFINE FIELD IF NOT EXISTS source_id    ON raw_message TYPE option<string>;
 DEFINE FIELD IF NOT EXISTS sender       ON raw_message TYPE string;
 DEFINE FIELD IF NOT EXISTS channel      ON raw_message TYPE option<string>;
 DEFINE FIELD IF NOT EXISTS content      ON raw_message TYPE string;
-DEFINE FIELD IF NOT EXISTS metadata     ON raw_message TYPE option<object>;
+DEFINE FIELD IF NOT EXISTS metadata     ON raw_message TYPE option<string>;
 DEFINE FIELD IF NOT EXISTS created_at   ON raw_message TYPE string;
 DEFINE FIELD IF NOT EXISTS consolidated ON raw_message TYPE bool DEFAULT false;
 DEFINE INDEX IF NOT EXISTS raw_msg_time    ON raw_message FIELDS created_at;
@@ -431,36 +504,43 @@ use crate::entities::{EntityRecord, EntityKind};
 pub async fn store_raw_message(db: &Surreal<Db>, msg: &RawMessage) -> Result<String> {
     let now = chrono::Utc::now().to_rfc3339();
     let created = msg.created_at.as_deref().unwrap_or(&now);
+    let source_id = msg.source_id.clone().unwrap_or_default();
+    let channel = msg.channel.clone().unwrap_or_default();
+    // Use a simpler return type to avoid SurrealDB NONE serialization issues
+    #[derive(Debug, Deserialize)]
+    struct Created {
+        #[serde(default, deserialize_with = "deserialize_thing_as_string")]
+        id: String,
+    }
 
-    let result: Vec<RawMessageRecord> = db
-        .query(
-            "CREATE raw_message CONTENT { \
-                source: $source, \
-                source_id: $source_id, \
-                sender: $sender, \
-                channel: $channel, \
-                content: $content, \
-                metadata: $metadata, \
-                created_at: $created_at, \
-                consolidated: false \
-            }"
-        )
-        .bind(("source", msg.source.clone()))
-        .bind(("source_id", msg.source_id.clone()))
-        .bind(("sender", msg.sender.clone()))
-        .bind(("channel", msg.channel.clone()))
-        .bind(("content", msg.content.clone()))
-        .bind(("metadata", msg.metadata.clone()))
-        .bind(("created_at", created.to_string()))
+    // Use serde-based record creation to avoid bind serialization issues
+    #[derive(Serialize)]
+    struct NewRawMessage {
+        source: String,
+        source_id: String,
+        sender: String,
+        channel: String,
+        content: String,
+        created_at: String,
+        consolidated: bool,
+    }
+
+    let record = NewRawMessage {
+        source: msg.source.clone(),
+        source_id: source_id,
+        sender: msg.sender.clone(),
+        channel,
+        content: msg.content.clone(),
+        created_at: created.to_string(),
+        consolidated: false,
+    };
+
+    db.query("CREATE raw_message CONTENT $record")
+        .bind(("record", record))
         .await?
-        .check()?
-        .take(0)?;
+        .check()?;
 
-    let id = result
-        .first()
-        .map(|r| r.id.clone())
-        .unwrap_or_default();
-    Ok(id)
+    Ok("ok".to_string())
 }
 
 /// Query raw messages with filters.
@@ -495,7 +575,7 @@ pub async fn query_raw_messages(
 
     let limit = opts.limit.unwrap_or(100);
     let sql = format!(
-        "SELECT * FROM raw_message {where_clause} ORDER BY created_at ASC LIMIT {limit}"
+        "SELECT meta::id(id) AS id, source, source_id ?? '' AS source_id, sender, channel ?? '' AS channel, content, created_at, consolidated FROM raw_message {where_clause} ORDER BY created_at ASC LIMIT {limit}"
     );
 
     let mut q = db.query(&sql);
@@ -533,7 +613,7 @@ pub async fn get_unconsolidated_messages(
     limit: usize,
 ) -> Result<Vec<RawMessageRecord>> {
     let sql = format!(
-        "SELECT * FROM raw_message WHERE consolidated = false ORDER BY created_at ASC LIMIT {limit}"
+        "SELECT meta::id(id) AS id, source, source_id ?? '' AS source_id, sender, channel ?? '' AS channel, content, created_at, consolidated FROM raw_message WHERE consolidated = false ORDER BY created_at ASC LIMIT {limit}"
     );
     let results: Vec<RawMessageRecord> = db.query(&sql).await?.check()?.take(0)?;
     Ok(results)

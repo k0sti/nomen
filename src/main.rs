@@ -870,11 +870,11 @@ async fn cmd_messages(
     );
 
     for msg in &messages {
-        let channel_display = msg
-            .channel
-            .as_deref()
-            .map(|c| format!(" #{c}"))
-            .unwrap_or_default();
+        let channel_display = if msg.channel.is_empty() {
+            String::new()
+        } else {
+            format!(" #{}", msg.channel)
+        };
         let consolidated_marker = if msg.consolidated {
             " [consolidated]".dimmed().to_string()
         } else {
