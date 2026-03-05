@@ -363,39 +363,17 @@ impl McpServer {
             anyhow::bail!("topic and summary are required");
         }
 
-        let content = serde_json::json!({
-            "summary": summary,
-            "detail": if detail.is_empty() { &summary } else { &detail },
-            "context": null
-        });
-
-        let d_tag = format!("snow:memory:{topic}");
-
-        let parsed = crate::memory::ParsedMemory {
-            tier: tier.clone(),
+        let mem = crate::NewMemory {
             topic: topic.clone(),
-            version: "1".to_string(),
-            confidence: format!("{confidence:.2}"),
-            model: "mcp/agent".to_string(),
-            summary: summary.clone(),
-            created_at: nostr_sdk::prelude::Timestamp::now(),
-            d_tag,
-            source: "mcp".to_string(),
-            content_raw: content.to_string(),
-            detail: if detail.is_empty() { summary.clone() } else { detail },
+            summary,
+            detail,
+            tier: tier.clone(),
+            confidence,
+            source: Some("mcp".to_string()),
+            model: Some("mcp/agent".to_string()),
         };
 
-        db::store_memory_direct(&self.db, &parsed, "mcp").await?;
-
-        // Generate embedding if available
-        if self.embedder.dimensions() > 0 {
-            let text = format!("{} {}", parsed.summary, parsed.detail);
-            if let Ok(embeddings) = self.embedder.embed(&[text]).await {
-                if let Some(embedding) = embeddings.into_iter().next() {
-                    let _ = db::store_embedding(&self.db, &parsed.d_tag, embedding).await;
-                }
-            }
-        }
+        crate::Nomen::store_direct(&self.db, self.embedder.as_ref(), mem).await?;
 
         Ok(format!("Stored memory: {topic} [{tier}] (confidence: {confidence:.2})"))
     }

@@ -7,7 +7,8 @@
 //! Request tags:  ["p", nomen_npub], ["t", "nomen-request"], ["expiration", unix+60]
 //! Response tags: ["p", requester_npub], ["e", request_event_id], ["t", "nomen-response"]
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
+use std::sync::Mutex;
 
 use anyhow::Result;
 use nostr_sdk::prelude::*;
@@ -62,6 +63,41 @@ impl ContextVmResponse {
     }
 }
 
+// ── Rate limiter ────────────────────────────────────────────────────
+
+/// Simple per-npub rate limiter: max N requests per minute.
+struct RateLimiter {
+    max_per_minute: u32,
+    state: Mutex<HashMap<String, (u32, u64)>>, // npub → (count, window_start)
+}
+
+impl RateLimiter {
+    fn new(max_per_minute: u32) -> Self {
+        Self {
+            max_per_minute,
+            state: Mutex::new(HashMap::new()),
+        }
+    }
+
+    /// Returns true if the request is allowed, false if rate-limited.
+    fn check(&self, npub: &str, now: u64) -> bool {
+        let mut state = self.state.lock().unwrap();
+        let entry = state.entry(npub.to_string()).or_insert((0, now));
+
+        // Reset window if more than 60s have passed
+        if now - entry.1 >= 60 {
+            entry.0 = 0;
+            entry.1 = now;
+        }
+
+        if entry.0 >= self.max_per_minute {
+            return false;
+        }
+        entry.0 += 1;
+        true
+    }
+}
+
 // ── Server ──────────────────────────────────────────────────────────
 
 pub struct ContextVmServer {
@@ -70,6 +106,7 @@ pub struct ContextVmServer {
     relay: RelayManager,
     /// Allowed requester npubs (hex pubkeys). Empty = deny all.
     allowed_npubs: HashSet<String>,
+    rate_limiter: RateLimiter,
 }
 
 impl ContextVmServer {
@@ -79,11 +116,22 @@ impl ContextVmServer {
         relay: RelayManager,
         allowed_npubs: Vec<String>,
     ) -> Self {
+        Self::with_rate_limit(db, embedder, relay, allowed_npubs, 30)
+    }
+
+    pub fn with_rate_limit(
+        db: Surreal<Db>,
+        embedder: Box<dyn Embedder>,
+        relay: RelayManager,
+        allowed_npubs: Vec<String>,
+        max_requests_per_minute: u32,
+    ) -> Self {
         Self {
             db,
             embedder,
             relay,
             allowed_npubs: allowed_npubs.into_iter().collect(),
+            rate_limiter: RateLimiter::new(max_requests_per_minute),
         }
     }
 
@@ -121,6 +169,19 @@ impl ContextVmServer {
     }
 
     async fn handle_event(&self, event: &Event) -> Result<()> {
+        // Expiration check — skip processing if request has expired
+        if let Some(expiration) = crate::memory::get_tag_value(&event.tags, "expiration") {
+            if let Ok(exp_ts) = expiration.parse::<u64>() {
+                if exp_ts < Timestamp::now().as_u64() {
+                    warn!(
+                        event_id = %event.id,
+                        "Skipping expired Context-VM request (expiration: {exp_ts})"
+                    );
+                    return Ok(());
+                }
+            }
+        }
+
         let requester = event.pubkey.to_hex();
 
         // Authorization check
@@ -134,6 +195,15 @@ impl ContextVmServer {
                 );
                 return Ok(());
             }
+        }
+
+        // Rate limit check
+        if !self.rate_limiter.check(&requester, Timestamp::now().as_u64()) {
+            warn!(
+                requester = %requester,
+                "Rate-limited Context-VM request"
+            );
+            return Ok(());
         }
 
         debug!(
@@ -299,39 +369,17 @@ impl ContextVmServer {
             .and_then(|v| v.as_f64())
             .unwrap_or(0.8);
 
-        let content = json!({
-            "summary": summary,
-            "detail": if detail.is_empty() { &summary } else { &detail },
-            "context": null
-        });
-
-        let d_tag = format!("snow:memory:{topic}");
-
-        let parsed = crate::memory::ParsedMemory {
-            tier: tier.clone(),
+        let mem = crate::NewMemory {
             topic: topic.clone(),
-            version: "1".to_string(),
-            confidence: format!("{confidence:.2}"),
-            model: "contextvm/agent".to_string(),
-            summary: summary.clone(),
-            created_at: Timestamp::now(),
-            d_tag: d_tag.clone(),
-            source: "contextvm".to_string(),
-            content_raw: content.to_string(),
-            detail: if detail.is_empty() { summary.clone() } else { detail },
+            summary,
+            detail,
+            tier: tier.clone(),
+            confidence,
+            source: Some("contextvm".to_string()),
+            model: Some("contextvm/agent".to_string()),
         };
 
-        db::store_memory_direct(&self.db, &parsed, "contextvm").await?;
-
-        // Generate embedding if available
-        if self.embedder.dimensions() > 0 {
-            let text = format!("{} {}", parsed.summary, parsed.detail);
-            if let Ok(embeddings) = self.embedder.embed(&[text]).await {
-                if let Some(embedding) = embeddings.into_iter().next() {
-                    let _ = db::store_embedding(&self.db, &d_tag, embedding).await;
-                }
-            }
-        }
+        crate::Nomen::store_direct(&self.db, self.embedder.as_ref(), mem).await?;
 
         Ok(ContextVmResponse::ok(json!({
             "stored": true,

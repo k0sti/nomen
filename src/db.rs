@@ -313,22 +313,35 @@ pub async fn store_memory(
     Ok(true)
 }
 
-/// Store a memory directly (not from a relay event).
+/// Store a memory directly (not from a relay event). Returns the SurrealDB record ID.
 pub async fn store_memory_direct(
     db: &Surreal<Db>,
     parsed: &ParsedMemory,
     event_id: &str,
-) -> Result<()> {
+) -> Result<String> {
     let record = build_record(parsed, event_id);
     let d_tag_owned = record.d_tag.clone().unwrap_or_default();
 
-    db.query("DELETE FROM memory WHERE d_tag = $d_tag; CREATE memory CONTENT $record")
+    #[derive(Deserialize)]
+    struct Created {
+        #[serde(deserialize_with = "deserialize_thing_as_string")]
+        id: String,
+    }
+
+    let mut result = db.query("DELETE FROM memory WHERE d_tag = $d_tag; CREATE memory CONTENT $record")
         .bind(("d_tag", d_tag_owned))
         .bind(("record", record))
-        .await?
-        .check()?;
+        .await?;
+    result.check()?;
 
-    Ok(())
+    // The CREATE is statement index 1 (after DELETE at index 0)
+    let created: Vec<Created> = result.take(1)?;
+    let id = created
+        .first()
+        .map(|c| c.id.clone())
+        .unwrap_or_default();
+
+    Ok(id)
 }
 
 /// Full-text search for memories.
@@ -336,35 +349,35 @@ pub async fn search_memories(
     db: &Surreal<Db>,
     query: &str,
     tier: Option<&str>,
+    allowed_scopes: Option<&[String]>,
     limit: usize,
 ) -> Result<Vec<SearchDisplayResult>> {
     let query_owned = query.to_string();
-    let tier_owned = tier.map(|t| t.to_string());
 
-    let results: Vec<TextSearchResult> = if let Some(ref tier_val) = tier_owned {
-        let sql = format!(
-            "SELECT *, search::score(1) AS score FROM memory \
-             WHERE content @1@ $query AND tier = $tier \
-             ORDER BY score DESC LIMIT {limit}"
-        );
-        db.query(&sql)
-            .bind(("query", query_owned))
-            .bind(("tier", tier_val.clone()))
-            .await?
-            .check()?
-            .take(0)?
-    } else {
-        let sql = format!(
-            "SELECT *, search::score(1) AS score FROM memory \
-             WHERE content @1@ $query \
-             ORDER BY score DESC LIMIT {limit}"
-        );
-        db.query(&sql)
-            .bind(("query", query_owned))
-            .await?
-            .check()?
-            .take(0)?
-    };
+    let mut conditions = vec!["content @1@ $query".to_string()];
+    if tier.is_some() {
+        conditions.push("tier = $tier".to_string());
+    }
+    if allowed_scopes.is_some() {
+        conditions.push("(scope = \"\" OR array::any($scopes, |$s| scope = $s OR string::starts_with(scope, string::concat($s, \".\"))))".to_string());
+    }
+    let where_clause = conditions.join(" AND ");
+
+    let sql = format!(
+        "SELECT *, search::score(1) AS score FROM memory \
+         WHERE {where_clause} \
+         ORDER BY score DESC LIMIT {limit}"
+    );
+
+    let mut q = db.query(&sql).bind(("query", query_owned));
+    if let Some(tier_val) = tier {
+        q = q.bind(("tier", tier_val.to_string()));
+    }
+    if let Some(scopes) = allowed_scopes {
+        q = q.bind(("scopes", scopes.to_vec()));
+    }
+
+    let results: Vec<TextSearchResult> = q.await?.check()?.take(0)?;
 
     let display_results = results
         .into_iter()
@@ -434,7 +447,7 @@ pub async fn hybrid_search(
         conditions.push("tier = $tier".to_string());
     }
     if allowed_scopes.is_some() {
-        conditions.push("(scope IN $scopes OR array::any($scopes, |$s| string::starts_with(scope, string::concat($s, '.'))))".to_string());
+        conditions.push("(scope = \"\" OR array::any($scopes, |$s| scope = $s OR string::starts_with(scope, string::concat($s, \".\"))))".to_string());
     }
     if min_confidence.is_some() {
         conditions.push("(confidence IS NONE OR confidence >= $min_conf)".to_string());

@@ -135,7 +135,7 @@ async fn text_only_search(
     opts: &SearchOptions,
 ) -> Result<Vec<SearchResult>> {
     let display_results: Vec<SearchDisplayResult> =
-        db::search_memories(db, &opts.query, opts.tier.as_deref(), opts.limit).await?;
+        db::search_memories(db, &opts.query, opts.tier.as_deref(), opts.allowed_scopes.as_deref(), opts.limit).await?;
 
     let results = display_results
         .into_iter()

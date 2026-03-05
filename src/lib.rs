@@ -57,6 +57,10 @@ pub struct NewMemory {
     pub detail: String,
     pub tier: String,
     pub confidence: f64,
+    /// Source label (e.g. "api", "mcp", "contextvm"). Defaults to "api".
+    pub source: Option<String>,
+    /// Model label. Defaults to "nomen/api".
+    pub model: Option<String>,
 }
 
 /// Options for consolidation.
@@ -128,12 +132,18 @@ impl Nomen {
     }
 
     /// Store a new memory directly into SurrealDB (no relay publish).
+    ///
+    /// Builds the ParsedMemory, stores in DB, and generates embeddings
+    /// automatically. This is the single source of truth for local memory
+    /// storage — MCP, Context-VM, and CLI all delegate here.
     pub async fn store(&self, mem: NewMemory) -> Result<String> {
-        let now = chrono::Utc::now().to_rfc3339();
         let d_tag = format!("snow:memory:{}", mem.topic);
+        let source = mem.source.as_deref().unwrap_or("api");
+        let model = mem.model.as_deref().unwrap_or("nomen/api");
+        let detail_text = if mem.detail.is_empty() { &mem.summary } else { &mem.detail };
         let content = serde_json::json!({
             "summary": mem.summary,
-            "detail": if mem.detail.is_empty() { &mem.summary } else { &mem.detail },
+            "detail": detail_text,
         });
 
         let parsed = memory::ParsedMemory {
@@ -141,16 +151,16 @@ impl Nomen {
             topic: mem.topic,
             version: "1".to_string(),
             confidence: format!("{:.2}", mem.confidence),
-            model: "nomen/api".to_string(),
+            model: model.to_string(),
             summary: mem.summary.clone(),
             created_at: nostr_sdk::Timestamp::now(),
             d_tag: d_tag.clone(),
-            source: "api".to_string(),
+            source: source.to_string(),
             content_raw: content.to_string(),
-            detail: if mem.detail.is_empty() { mem.summary } else { mem.detail },
+            detail: detail_text.to_string(),
         };
 
-        db::store_memory_direct(&self.db, &parsed, "api").await?;
+        db::store_memory_direct(&self.db, &parsed, source).await?;
 
         // Generate embedding if embedder is configured
         if self.embedder.dimensions() > 0 {
@@ -162,7 +172,54 @@ impl Nomen {
             }
         }
 
-        Ok(now)
+        Ok(d_tag)
+    }
+
+    /// Store a new memory using explicit db/embedder handles.
+    ///
+    /// This is for use by MCP, Context-VM, and other code that doesn't have
+    /// a full Nomen instance but does have db + embedder references.
+    pub async fn store_direct(
+        db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
+        embedder: &dyn Embedder,
+        mem: NewMemory,
+    ) -> Result<String> {
+        let d_tag = format!("snow:memory:{}", mem.topic);
+        let source = mem.source.as_deref().unwrap_or("api");
+        let model = mem.model.as_deref().unwrap_or("nomen/api");
+        let detail_text = if mem.detail.is_empty() { &mem.summary } else { &mem.detail };
+        let content = serde_json::json!({
+            "summary": mem.summary,
+            "detail": detail_text,
+        });
+
+        let parsed = memory::ParsedMemory {
+            tier: mem.tier,
+            topic: mem.topic,
+            version: "1".to_string(),
+            confidence: format!("{:.2}", mem.confidence),
+            model: model.to_string(),
+            summary: mem.summary.clone(),
+            created_at: nostr_sdk::Timestamp::now(),
+            d_tag: d_tag.clone(),
+            source: source.to_string(),
+            content_raw: content.to_string(),
+            detail: detail_text.to_string(),
+        };
+
+        db::store_memory_direct(db, &parsed, source).await?;
+
+        // Generate embedding if embedder is configured
+        if embedder.dimensions() > 0 {
+            let text = format!("{} {}", parsed.summary, parsed.detail);
+            if let Ok(embeddings) = embedder.embed(&[text]).await {
+                if let Some(embedding) = embeddings.into_iter().next() {
+                    let _ = db::store_embedding(db, &d_tag, embedding).await;
+                }
+            }
+        }
+
+        Ok(d_tag)
     }
 
     /// Ingest a raw message for later consolidation.

@@ -116,7 +116,7 @@ pub async fn migrate_from_sqlite(
         };
 
         match db::store_memory_direct(db, &parsed, "sqlite-import").await {
-            Ok(()) => {
+            Ok(_) => {
                 debug!("Imported memory: {}", mem.topic);
                 report.imported += 1;
             }

@@ -278,50 +278,36 @@ pub async fn consolidate(
         ..Default::default()
     };
 
+    // Group messages by channel for edge creation later
+    let mut by_channel: HashMap<String, Vec<String>> = HashMap::new();
+    for msg in &messages {
+        let channel = { let c = msg.channel.clone(); if c.is_empty() { "general".to_string() } else { c } };
+        by_channel.entry(channel).or_default().push(msg.id.clone());
+    }
+
+    // Track memory record IDs per channel for edge creation
+    let mut memory_ids_by_channel: HashMap<String, String> = HashMap::new();
+
     for memory in &extracted {
-        // Build content JSON
-        let content = serde_json::json!({
-            "summary": memory.summary,
-            "detail": memory.detail,
-        });
-
-        let d_tag = format!("snow:memory:{}", memory.topic);
-
-        // Store as a memory record
-        let parsed = crate::memory::ParsedMemory {
-            tier: "public".to_string(),
+        let mem = crate::NewMemory {
             topic: memory.topic.clone(),
-            version: "1".to_string(),
-            confidence: format!("{:.2}", memory.confidence),
-            model: "nomen/consolidation".to_string(),
             summary: memory.summary.clone(),
-            created_at: nostr_sdk::prelude::Timestamp::now(),
-            d_tag: d_tag.clone(),
-            source: "consolidation".to_string(),
-            content_raw: content.to_string(),
             detail: memory.detail.clone(),
+            tier: "public".to_string(),
+            confidence: memory.confidence,
+            source: Some("consolidation".to_string()),
+            model: Some("nomen/consolidation".to_string()),
         };
 
-        crate::db::store_memory_direct(db, &parsed, "consolidation").await?;
-
-        // Generate embedding if embedder is configured
-        if embedder.dimensions() > 0 {
-            let text = format!("{} {}", memory.summary, memory.detail);
-            match embedder.embed(&[text]).await {
-                Ok(embeddings) => {
-                    if let Some(embedding) = embeddings.into_iter().next() {
-                        let _ = crate::db::store_embedding(db, &d_tag, embedding).await;
-                    }
-                }
-                Err(e) => {
-                    tracing::warn!("Failed to generate embedding for consolidation: {e}");
-                }
-            }
-        }
+        let d_tag = crate::Nomen::store_direct(db, embedder, mem).await?;
 
         report.memories_created += 1;
         if let Some(channel) = memory.topic.strip_prefix("consolidated/") {
             report.channels.push(channel.to_string());
+            // Look up the record ID we just created
+            if let Ok(record_id) = get_memory_record_id(db, &d_tag).await {
+                memory_ids_by_channel.insert(channel.to_string(), record_id);
+            }
         }
     }
 
@@ -330,21 +316,39 @@ pub async fn consolidate(
     crate::db::mark_messages_consolidated(db, &msg_ids).await?;
 
     // Create consolidated_from edges (memory → raw_message)
-    // We link each consolidated memory to the messages from its channel
-    let mut by_channel: HashMap<String, Vec<String>> = HashMap::new();
-    for msg in &messages {
-        let channel = { let c = msg.channel.clone(); if c.is_empty() { "general".to_string() } else { c } };
-        by_channel.entry(channel).or_default().push(msg.id.clone());
+    for (channel, memory_record_id) in &memory_ids_by_channel {
+        if let Some(raw_msg_ids) = by_channel.get(channel) {
+            for raw_msg_id in raw_msg_ids {
+                if let Err(e) = crate::db::create_consolidated_edge(db, memory_record_id, raw_msg_id).await {
+                    warn!("Failed to create consolidated_from edge: {e}");
+                }
+            }
+        }
     }
 
-    // Note: edges require record IDs from SurrealDB. For now we log that
-    // edges would be created; full graph linking needs the memory record IDs
-    // returned from store_memory_direct (which currently doesn't return them).
     debug!(
         memories = report.memories_created,
         messages = report.messages_processed,
-        "Consolidation complete, edges pending full record ID support"
+        "Consolidation complete"
     );
 
     Ok(report)
+}
+
+/// Get the SurrealDB record ID for a memory by its d_tag.
+async fn get_memory_record_id(db: &Surreal<Db>, d_tag: &str) -> Result<String> {
+    #[derive(Deserialize)]
+    struct IdRow {
+        #[serde(deserialize_with = "crate::db::deserialize_thing_as_string")]
+        id: String,
+    }
+    let rows: Vec<IdRow> = db
+        .query("SELECT id FROM memory WHERE d_tag = $d_tag LIMIT 1")
+        .bind(("d_tag", d_tag.to_string()))
+        .await?
+        .check()?
+        .take(0)?;
+    rows.first()
+        .map(|r| r.id.clone())
+        .ok_or_else(|| anyhow::anyhow!("Memory not found for d_tag: {d_tag}"))
 }

@@ -38,13 +38,13 @@ async fn test_store_and_search() -> Result<()> {
     nomen::db::store_memory_direct(&db, &parsed, "test-event-1").await?;
 
     // Search for it using text search
-    let results = nomen::db::search_memories(&db, "anyhow error", None, 10).await?;
+    let results = nomen::db::search_memories(&db, "anyhow error", None, None, 10).await?;
     assert!(!results.is_empty(), "Should find stored memory via text search");
     assert_eq!(results[0].topic, "rust/error-handling");
 
     // Delete it
     nomen::db::delete_memory_by_dtag(&db, "snow:memory:rust/error-handling").await?;
-    let results = nomen::db::search_memories(&db, "anyhow error", None, 10).await?;
+    let results = nomen::db::search_memories(&db, "anyhow error", None, None, 10).await?;
     assert!(results.is_empty(), "Memory should be deleted");
 
     Ok(())
