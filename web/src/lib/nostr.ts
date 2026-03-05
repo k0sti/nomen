@@ -199,15 +199,71 @@ export async function restoreNip46Session(): Promise<{ profile: NostrProfile; si
   }
 }
 
-// Fetch kind 0 metadata from well-known relays
-export async function fetchProfileMetadata(pubkey: string): Promise<any> {
-  const relays = [
-    'wss://relay.damus.io',
-    'wss://relay.nostr.band',
-    'wss://nos.lol',
-  ];
+// ── Profile cache ──────────────────────────────────────────────
+const PROFILE_CACHE_KEY = 'nomen:profileCache';
+const PROFILE_CACHE_TTL = 60 * 60 * 1000; // 1 hour
 
-  for (const url of relays) {
+interface CachedProfile {
+  meta: Record<string, any>;
+  ts: number;
+}
+
+const profileMemCache = new Map<string, CachedProfile>();
+
+function loadProfileCache(): Map<string, CachedProfile> {
+  if (profileMemCache.size > 0) return profileMemCache;
+  try {
+    const raw = localStorage.getItem(PROFILE_CACHE_KEY);
+    if (raw) {
+      const entries = JSON.parse(raw) as Record<string, CachedProfile>;
+      const now = Date.now();
+      for (const [k, v] of Object.entries(entries)) {
+        if (now - v.ts < PROFILE_CACHE_TTL) {
+          profileMemCache.set(k, v);
+        }
+      }
+    }
+  } catch { /* ignore corrupt cache */ }
+  return profileMemCache;
+}
+
+function saveProfileCache() {
+  const obj: Record<string, CachedProfile> = {};
+  for (const [k, v] of profileMemCache) {
+    obj[k] = v;
+  }
+  try {
+    localStorage.setItem(PROFILE_CACHE_KEY, JSON.stringify(obj));
+  } catch { /* storage full, ignore */ }
+}
+
+function getCachedProfile(pubkey: string): Record<string, any> | undefined {
+  const cache = loadProfileCache();
+  const entry = cache.get(pubkey);
+  if (entry && Date.now() - entry.ts < PROFILE_CACHE_TTL) {
+    return entry.meta;
+  }
+  return undefined;
+}
+
+function setCachedProfile(pubkey: string, meta: Record<string, any>) {
+  profileMemCache.set(pubkey, { meta, ts: Date.now() });
+  saveProfileCache();
+}
+
+export const PUBLIC_PROFILE_RELAYS = [
+  'wss://relay.damus.io',
+  'wss://relay.nostr.band',
+  'wss://nos.lol',
+  'wss://purplepag.es',
+];
+
+// Fetch kind 0 metadata from well-known relays (single pubkey, cached)
+export async function fetchProfileMetadata(pubkey: string): Promise<any> {
+  const cached = getCachedProfile(pubkey);
+  if (cached) return cached;
+
+  for (const url of PUBLIC_PROFILE_RELAYS) {
     try {
       const ws = new WebSocket(url);
       const result = await new Promise<any>((resolve, reject) => {
@@ -244,11 +300,96 @@ export async function fetchProfileMetadata(pubkey: string): Promise<any> {
         };
       });
 
-      if (result) return result;
+      if (result) {
+        setCachedProfile(pubkey, result);
+        return result;
+      }
     } catch {
       continue;
     }
   }
 
   return null;
+}
+
+// Batch fetch kind 0 profiles for multiple pubkeys from public relays
+export async function fetchProfilesBatch(
+  pubkeys: string[],
+): Promise<Map<string, Record<string, any>>> {
+  const results = new Map<string, Record<string, any>>();
+  const uncached: string[] = [];
+
+  // Check cache first
+  for (const pk of pubkeys) {
+    const cached = getCachedProfile(pk);
+    if (cached) {
+      results.set(pk, cached);
+    } else {
+      uncached.push(pk);
+    }
+  }
+
+  if (uncached.length === 0) return results;
+
+  // Try each public relay until we've resolved all pubkeys
+  for (const url of PUBLIC_PROFILE_RELAYS) {
+    if (uncached.length === 0) break;
+    const remaining = uncached.filter((pk) => !results.has(pk));
+    if (remaining.length === 0) break;
+
+    try {
+      const fetched = await fetchKind0FromRelay(url, remaining);
+      for (const [pk, meta] of fetched) {
+        results.set(pk, meta);
+        setCachedProfile(pk, meta);
+      }
+    } catch {
+      continue;
+    }
+  }
+
+  return results;
+}
+
+function fetchKind0FromRelay(
+  url: string,
+  pubkeys: string[],
+): Promise<Map<string, Record<string, any>>> {
+  return new Promise((resolve, reject) => {
+    const ws = new WebSocket(url);
+    const results = new Map<string, Record<string, any>>();
+    const timeout = setTimeout(() => {
+      ws.close();
+      resolve(results); // return whatever we got
+    }, 8000);
+
+    ws.onopen = () => {
+      const subId = crypto.randomUUID().slice(0, 8);
+      ws.send(JSON.stringify(['REQ', subId, { kinds: [0], authors: pubkeys, limit: pubkeys.length }]));
+    };
+
+    ws.onmessage = (evt) => {
+      try {
+        const data = JSON.parse(evt.data);
+        if (data[0] === 'EVENT') {
+          const event = data[2];
+          // Keep latest per pubkey
+          if (!results.has(event.pubkey)) {
+            try {
+              results.set(event.pubkey, JSON.parse(event.content));
+            } catch { /* skip malformed */ }
+          }
+        } else if (data[0] === 'EOSE') {
+          clearTimeout(timeout);
+          ws.close();
+          resolve(results);
+        }
+      } catch { /* ignore parse errors */ }
+    };
+
+    ws.onerror = () => {
+      clearTimeout(timeout);
+      reject(new Error('WebSocket error'));
+    };
+  });
 }

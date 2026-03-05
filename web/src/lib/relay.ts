@@ -2,6 +2,7 @@
 
 import { finalizeEvent, type EventTemplate, type NostrEvent } from 'nostr-tools';
 import type { Memory, Message, Group } from './api';
+import { fetchProfilesBatch } from './nostr';
 
 type Signer = {
   getPublicKey(): Promise<string>;
@@ -387,28 +388,30 @@ export class NomenRelay {
   // ── Profiles (kind 0) ───────────────────────────────────────
 
   async listProfiles(): Promise<{ pubkey: string; meta: Record<string, any>; created_at: number }[]> {
-    const events = await this.request({
-      kinds: [0],
-      limit: 500,
-    });
-
-    // Deduplicate by pubkey, latest event wins
-    const byPubkey = new Map<string, NostrEvent>();
+    // Step 1: Get all unique pubkeys from events on this relay
+    // (zooid doesn't store kind 0, so we discover members from their activity)
+    const events = await this.request({ limit: 500 });
+    const pubkeyTimestamps = new Map<string, number>();
     for (const e of events) {
-      const existing = byPubkey.get(e.pubkey);
-      if (!existing || e.created_at > existing.created_at) {
-        byPubkey.set(e.pubkey, e);
+      const existing = pubkeyTimestamps.get(e.pubkey) || 0;
+      if (e.created_at > existing) {
+        pubkeyTimestamps.set(e.pubkey, e.created_at);
       }
     }
 
+    const pubkeys = [...pubkeyTimestamps.keys()];
+    if (pubkeys.length === 0) return [];
+
+    // Step 2: Fetch kind 0 profiles from public relays
+    const metaMap = await fetchProfilesBatch(pubkeys);
+
     const profiles: { pubkey: string; meta: Record<string, any>; created_at: number }[] = [];
-    for (const [pubkey, event] of byPubkey) {
-      try {
-        const meta = JSON.parse(event.content);
-        profiles.push({ pubkey, meta, created_at: event.created_at });
-      } catch {
-        profiles.push({ pubkey, meta: {}, created_at: event.created_at });
-      }
+    for (const pubkey of pubkeys) {
+      profiles.push({
+        pubkey,
+        meta: metaMap.get(pubkey) || {},
+        created_at: pubkeyTimestamps.get(pubkey) || 0,
+      });
     }
 
     return profiles;
