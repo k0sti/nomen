@@ -354,7 +354,7 @@ impl Memory for NomenAdapter {
             self.nomen
                 .db()
                 .query(
-                    "SELECT * FROM memory WHERE topic CONTAINS $prefix ORDER BY created_at DESC",
+                    "SELECT * FROM memory WHERE string::starts_with(topic, $prefix) ORDER BY created_at DESC",
                 )
                 .bind(("prefix", prefix.to_string()))
                 .await?

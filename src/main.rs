@@ -470,7 +470,7 @@ async fn cmd_store(
     let d_tag = format!("snow:memory:{topic}");
 
     // Build tags
-    let tags = vec![
+    let mut tags = vec![
         Tag::custom(TagKind::Custom("d".into()), vec![d_tag.clone()]),
         Tag::custom(TagKind::Custom("snow:tier".into()), vec![tier.to_string()]),
         Tag::custom(TagKind::Custom("snow:model".into()), vec!["human/manual".to_string()]),
@@ -478,6 +478,20 @@ async fn cmd_store(
         Tag::custom(TagKind::Custom("snow:source".into()), vec![keys.public_key().to_hex()]),
         Tag::custom(TagKind::Custom("snow:version".into()), vec!["1".to_string()]),
     ];
+
+    // Add topic tags for relay-side filtering (NIP-78 spec)
+    for part in topic.split('/') {
+        if !part.is_empty() {
+            tags.push(Tag::custom(TagKind::Custom("t".into()), vec![part.to_string()]));
+        }
+    }
+
+    // Add h tag for group-scoped memories (NIP-29)
+    if tier.starts_with("group") {
+        if let Some(group_id) = tier.strip_prefix("group:") {
+            tags.push(Tag::custom(TagKind::Custom("h".into()), vec![group_id.to_string()]));
+        }
+    }
 
     let builder = EventBuilder::new(Kind::Custom(30078), final_content).tags(tags);
 

@@ -217,6 +217,11 @@ DEFINE INDEX IF NOT EXISTS entity_name ON entity FIELDS name UNIQUE;
 
 DEFINE TABLE IF NOT EXISTS mentions SCHEMALESS;
 DEFINE TABLE IF NOT EXISTS consolidated_from SCHEMALESS;
+DEFINE TABLE IF NOT EXISTS references SCHEMALESS;
+DEFINE TABLE IF NOT EXISTS related_to SCHEMALESS;
+
+DEFINE INDEX IF NOT EXISTS raw_msg_source ON raw_message FIELDS source, source_id UNIQUE;
+DEFINE INDEX IF NOT EXISTS raw_msg_sender ON raw_message FIELDS sender;
 "#;
 
 /// Initialize (or open) the SurrealDB database and apply schema.
@@ -506,13 +511,6 @@ pub async fn store_raw_message(db: &Surreal<Db>, msg: &RawMessage) -> Result<Str
     let created = msg.created_at.as_deref().unwrap_or(&now);
     let source_id = msg.source_id.clone().unwrap_or_default();
     let channel = msg.channel.clone().unwrap_or_default();
-    // Use a simpler return type to avoid SurrealDB NONE serialization issues
-    #[derive(Debug, Deserialize)]
-    struct Created {
-        #[serde(default, deserialize_with = "deserialize_thing_as_string")]
-        id: String,
-    }
-
     // Use serde-based record creation to avoid bind serialization issues
     #[derive(Serialize)]
     struct NewRawMessage {
@@ -521,9 +519,12 @@ pub async fn store_raw_message(db: &Surreal<Db>, msg: &RawMessage) -> Result<Str
         sender: String,
         channel: String,
         content: String,
+        metadata: String,
         created_at: String,
         consolidated: bool,
     }
+
+    let metadata = msg.metadata.clone().unwrap_or_default();
 
     let record = NewRawMessage {
         source: msg.source.clone(),
@@ -531,6 +532,7 @@ pub async fn store_raw_message(db: &Surreal<Db>, msg: &RawMessage) -> Result<Str
         sender: msg.sender.clone(),
         channel,
         content: msg.content.clone(),
+        metadata,
         created_at: created.to_string(),
         consolidated: false,
     };
