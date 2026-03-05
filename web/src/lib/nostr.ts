@@ -200,7 +200,7 @@ export async function restoreNip46Session(): Promise<{ profile: NostrProfile; si
 }
 
 // Fetch kind 0 metadata from well-known relays
-async function fetchProfileMetadata(pubkey: string): Promise<any> {
+export async function fetchProfileMetadata(pubkey: string): Promise<any> {
   const relays = [
     'wss://relay.damus.io',
     'wss://relay.nostr.band',

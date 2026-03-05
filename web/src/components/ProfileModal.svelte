@@ -31,6 +31,8 @@
     signer.set(null);
     profile.set(null);
     sessionStorage.removeItem('nomen:nip46');
+    localStorage.removeItem('nomen_login_method');
+    localStorage.removeItem('nomen_nip46_relay');
     close();
   }
 

@@ -52,6 +52,7 @@
       const result = await loginWithNip07();
       profile.set(result.profile);
       signer.set(result.signer);
+      localStorage.setItem('nomen_login_method', 'nip07');
       close();
     } catch (e: any) {
       error = e.message || 'Failed to login with extension';
@@ -100,6 +101,8 @@
       connectStatus = 'connected';
       profile.set(result.profile);
       signer.set(result.signer);
+      localStorage.setItem('nomen_login_method', 'nip46');
+      localStorage.setItem('nomen_nip46_relay', session.relay);
 
       // Brief pause to show success state
       setTimeout(close, 500);

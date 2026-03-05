@@ -25,10 +25,42 @@ export const isLoggedIn = derived(profile, ($p) => $p !== null);
 export const showLoginModal = writable(false);
 export const showProfileModal = writable(false);
 
-// ── Navigation ───────────────────────────────────────────────────
-export type Page = 'memories' | 'search' | 'messages' | 'groups' | 'settings';
+// ── Auto-restore login session ──────────────────────────────────
+import { loginWithNip07, restoreNip46Session } from './nostr';
 
-const validPages: Page[] = ['memories', 'search', 'messages', 'groups', 'settings'];
+if (typeof window !== 'undefined') {
+  const savedMethod = localStorage.getItem('nomen_login_method');
+  if (savedMethod === 'nip07') {
+    loginWithNip07()
+      .then((result) => {
+        profile.set(result.profile);
+        signer.set(result.signer);
+      })
+      .catch(() => {
+        localStorage.removeItem('nomen_login_method');
+      });
+  } else if (savedMethod === 'nip46') {
+    restoreNip46Session()
+      .then((result) => {
+        if (result) {
+          profile.set(result.profile);
+          signer.set(result.signer);
+        } else {
+          localStorage.removeItem('nomen_login_method');
+          localStorage.removeItem('nomen_nip46_relay');
+        }
+      })
+      .catch(() => {
+        localStorage.removeItem('nomen_login_method');
+        localStorage.removeItem('nomen_nip46_relay');
+      });
+  }
+}
+
+// ── Navigation ───────────────────────────────────────────────────
+export type Page = 'memories' | 'search' | 'messages' | 'groups' | 'agents' | 'settings';
+
+const validPages: Page[] = ['memories', 'search', 'messages', 'groups', 'agents', 'settings'];
 
 function getPageFromHash(): Page {
   const hash = window.location.hash.replace('#/', '').replace('#', '');

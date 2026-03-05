@@ -361,6 +361,29 @@ export class NomenRelay {
     return events.map((e) => this.parseGroup(e));
   }
 
+  // ── Generic NIP-78 app data ──────────────────────────────────
+
+  async fetchAppData(pubkey: string, dTag: string): Promise<NostrEvent | null> {
+    const events = await this.request({
+      kinds: [30078],
+      authors: [pubkey],
+      '#d': [dTag],
+      limit: 1,
+    });
+    return events[0] || null;
+  }
+
+  async publishAppData(dTag: string, content: string, signer: Signer): Promise<string> {
+    const event: EventTemplate = {
+      kind: 30078,
+      created_at: Math.floor(Date.now() / 1000),
+      tags: [['d', dTag]],
+      content,
+    };
+    const signed = await signer.signEvent(event);
+    return this.publish(signed);
+  }
+
   // ── Disconnect ────────────────────────────────────────────────
 
   disconnect() {

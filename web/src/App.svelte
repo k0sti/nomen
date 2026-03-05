@@ -4,6 +4,7 @@
   import Search from './pages/Search.svelte';
   import Messages from './pages/Messages.svelte';
   import Groups from './pages/Groups.svelte';
+  import Agents from './pages/Agents.svelte';
   import Settings from './pages/Settings.svelte';
   import LoginModal from './components/LoginModal.svelte';
   import ProfileModal from './components/ProfileModal.svelte';
@@ -19,6 +20,8 @@
     <Messages />
   {:else if $currentPage === 'groups'}
     <Groups />
+  {:else if $currentPage === 'agents'}
+    <Agents />
   {:else if $currentPage === 'settings'}
     <Settings />
   {/if}
