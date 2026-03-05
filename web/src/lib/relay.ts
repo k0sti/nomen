@@ -34,6 +34,9 @@ export class NomenRelay {
   private authenticated = false;
   private messageQueue: string[] = [];
   private connected = false;
+  private bufferedAuthChallenge: string | null = null;
+  private _signer: Signer | null = null;
+  private okHandlers = new Map<string, { resolve: (id: string) => void; reject: (err: Error) => void }>();
 
   constructor(relay: string = 'wss://zooid.atlantislabs.space') {
     this.relay = relay;
@@ -82,16 +85,22 @@ export class NomenRelay {
   }
 
   async authenticate(signer: Signer): Promise<void> {
-    // Auth happens via challenge from relay — wait for it or it may have already happened
     if (this.authenticated) return;
 
-    // Store signer for when AUTH challenge arrives
-    (this as any)._signer = signer;
+    this._signer = signer;
 
-    // Wait for auth to complete (challenge may arrive at any time after connect)
+    // If AUTH challenge arrived before authenticate() was called, handle it now
+    if (this.bufferedAuthChallenge) {
+      const challenge = this.bufferedAuthChallenge;
+      this.bufferedAuthChallenge = null;
+      await this.handleAuth(challenge);
+      return;
+    }
+
+    // Wait for auth challenge to arrive, or timeout (relay may not require auth)
     return new Promise((resolve, reject) => {
       const timeout = setTimeout(() => {
-        // If no AUTH challenge received, relay may not require it
+        this.pendingAuth = null;
         this.authenticated = true;
         resolve();
       }, 3000);
@@ -154,14 +163,23 @@ export class NomenRelay {
       // Event publish confirmation — msg[1] is event id, msg[2] is success boolean
       const eventId = msg[1] as string;
       const success = msg[2] as boolean;
-      const okHandler = (this as any)._okHandlers?.get(eventId);
+      const okHandler = this.okHandlers.get(eventId);
       if (okHandler) {
-        (this as any)._okHandlers.delete(eventId);
+        this.okHandlers.delete(eventId);
         if (success) {
           okHandler.resolve(eventId);
         } else {
           okHandler.reject(new Error(msg[3] || 'Event rejected'));
         }
+      }
+    } else if (type === 'CLOSED') {
+      const subId = msg[1] as string;
+      const reason = (msg[2] as string) || '';
+      const pending = this.pendingReqs.get(subId);
+      if (pending) {
+        clearTimeout(pending.timeout);
+        this.pendingReqs.delete(subId);
+        pending.reject(new Error(`Subscription closed: ${reason}`));
       }
     } else if (type === 'NOTICE') {
       console.warn('[relay notice]', msg[1]);
@@ -169,14 +187,14 @@ export class NomenRelay {
   }
 
   private async handleAuth(challenge: string) {
-    const signer = (this as any)._signer as Signer | undefined;
-    if (!signer) {
-      console.warn('AUTH challenge received but no signer available');
+    if (!this._signer) {
+      // Signer not set yet — buffer challenge for when authenticate() is called
+      this.bufferedAuthChallenge = challenge;
       return;
     }
 
     try {
-      const pubkey = await signer.getPublicKey();
+      const pubkey = await this._signer.getPublicKey();
       const authEvent: EventTemplate = {
         kind: 22242,
         created_at: Math.floor(Date.now() / 1000),
@@ -187,8 +205,9 @@ export class NomenRelay {
         content: '',
       };
 
-      const signed = await signer.signEvent(authEvent);
+      const signed = await this._signer.signEvent(authEvent);
       this.send(JSON.stringify(['AUTH', signed]));
+      this.authenticated = true;
       this.pendingAuth?.resolve();
       this.pendingAuth = null;
     } catch (err: any) {
@@ -232,15 +251,12 @@ export class NomenRelay {
 
   private async publish(event: NostrEvent, timeoutMs = 10000): Promise<string> {
     return new Promise((resolve, reject) => {
-      if (!(this as any)._okHandlers) {
-        (this as any)._okHandlers = new Map();
-      }
       const timeout = setTimeout(() => {
-        (this as any)._okHandlers.delete(event.id);
+        this.okHandlers.delete(event.id);
         reject(new Error('Publish timeout'));
       }, timeoutMs);
 
-      (this as any)._okHandlers.set(event.id, {
+      this.okHandlers.set(event.id, {
         resolve: (id: string) => {
           clearTimeout(timeout);
           resolve(id);
@@ -459,6 +475,9 @@ export class NomenRelay {
     }
     this.subs.clear();
     this.pendingReqs.clear();
+    this.okHandlers.clear();
+    this.bufferedAuthChallenge = null;
+    this._signer = null;
     this.ws?.close();
     this.ws = null;
     this.connected = false;
