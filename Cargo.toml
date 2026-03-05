@@ -38,3 +38,12 @@ colored = "2"
 # Config
 toml = "0.8"
 dirs = "5"
+
+# Database
+surrealdb = { version = "2", features = ["kv-surrealkv"] }
+
+# HTTP client (for embedding API)
+reqwest = { version = "0.12", features = ["json"] }
+
+# Async trait support
+async-trait = "0.1"

@@ -1,60 +1,24 @@
+mod access;
+mod config;
+mod db;
+mod display;
+mod embed;
+mod groups;
+mod memory;
+mod relay;
+mod search;
+
 use std::path::PathBuf;
-use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
-use chrono::{TimeZone, Utc};
 use clap::{Parser, Subcommand};
 use colored::Colorize;
 use nostr_sdk::prelude::*;
-use nostr_sdk::prelude::nip44;
-use serde::Deserialize;
 use tracing::debug;
 
-// ── Config ──────────────────────────────────────────────────────────
-
-#[derive(Deserialize, Default)]
-struct Config {
-    #[serde(default)]
-    relay: Option<String>,
-    #[serde(default)]
-    nsecs: Vec<String>,
-    /// Single nsec shorthand
-    #[serde(default)]
-    nsec: Option<String>,
-}
-
-impl Config {
-    fn load() -> Result<Self> {
-        let path = Self::path();
-        if path.exists() {
-            let text = std::fs::read_to_string(&path)
-                .with_context(|| format!("Failed to read config: {}", path.display()))?;
-            let cfg: Config = toml::from_str(&text)
-                .with_context(|| format!("Failed to parse config: {}", path.display()))?;
-            Ok(cfg)
-        } else {
-            Ok(Config::default())
-        }
-    }
-
-    fn path() -> PathBuf {
-        dirs::config_dir()
-            .unwrap_or_else(|| PathBuf::from("~/.config"))
-            .join("nomen")
-            .join("config.toml")
-    }
-
-    /// Merge nsec + nsecs into a single list
-    fn all_nsecs(&self) -> Vec<String> {
-        let mut out = self.nsecs.clone();
-        if let Some(ref single) = self.nsec {
-            if !out.contains(single) {
-                out.insert(0, single.clone());
-            }
-        }
-        out
-    }
-}
+use crate::config::Config;
+use crate::display::{display_memories, format_timestamp};
+use crate::memory::{get_tag_value, parse_event};
 
 // ── CLI ─────────────────────────────────────────────────────────────
 
@@ -65,11 +29,11 @@ struct Cli {
     #[arg(long)]
     relay: Option<String>,
 
-    /// Nostr secret key (nsec1...), can be specified multiple times (overrides config file)
+    /// Nostr secret key (nsec1...), can be specified multiple times
     #[arg(long = "nsec")]
     nsecs: Vec<String>,
 
-    /// Path to config file (default: ~/.config/nomen/config.toml)
+    /// Path to config file
     #[arg(long)]
     config: Option<PathBuf>,
 
@@ -79,145 +43,159 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
-    /// List all memory events
+    /// List all memory events (fetches directly from relay)
     List,
     /// Show config file path and status
     Config,
+    /// Sync memory events from relay to local SurrealDB
+    Sync,
+    /// Store a new memory
+    Store {
+        /// Topic/namespace for the memory
+        topic: String,
+        /// Short summary
+        #[arg(long)]
+        summary: String,
+        /// Full detail text
+        #[arg(long, default_value = "")]
+        detail: String,
+        /// Visibility tier
+        #[arg(long, default_value = "public")]
+        tier: String,
+        /// Confidence score (0.0 to 1.0)
+        #[arg(long, default_value = "0.8")]
+        confidence: f64,
+    },
+    /// Delete a memory by topic or event ID
+    Delete {
+        /// Topic to delete
+        topic: Option<String>,
+        /// Event ID to delete
+        #[arg(long)]
+        id: Option<String>,
+    },
+    /// Search memories (hybrid vector + full-text when embeddings are configured)
+    Search {
+        /// Search query
+        query: String,
+        /// Filter by tier
+        #[arg(long)]
+        tier: Option<String>,
+        /// Max results
+        #[arg(long, default_value = "10")]
+        limit: usize,
+        /// Vector similarity weight (0.0–1.0)
+        #[arg(long, default_value = "0.7")]
+        vector_weight: f32,
+        /// Full-text BM25 weight (0.0–1.0)
+        #[arg(long, default_value = "0.3")]
+        text_weight: f32,
+    },
+    /// Generate embeddings for memories that lack them
+    Embed {
+        /// Max memories to embed in one run
+        #[arg(long, default_value = "100")]
+        limit: usize,
+    },
+    /// Manage groups (create, list, members, add/remove members)
+    Group {
+        #[command(subcommand)]
+        action: GroupAction,
+    },
 }
 
-// ── Memory parsing ──────────────────────────────────────────────────
-
-#[derive(Deserialize)]
-struct MemoryContent {
-    summary: String,
-    #[allow(dead_code)]
-    detail: String,
-    #[allow(dead_code)]
-    context: Option<String>,
+#[derive(Subcommand)]
+enum GroupAction {
+    /// Create a new group
+    Create {
+        /// Group id (dot-separated hierarchy, e.g. "atlantislabs.engineering")
+        id: String,
+        /// Human-readable name
+        #[arg(long)]
+        name: String,
+        /// Initial members (comma-separated npubs)
+        #[arg(long, value_delimiter = ',')]
+        members: Vec<String>,
+        /// NIP-29 group id mapping
+        #[arg(long)]
+        nostr_group: Option<String>,
+        /// Relay URL for this group
+        #[arg(long)]
+        relay: Option<String>,
+    },
+    /// List all groups
+    List,
+    /// Show members of a group
+    Members {
+        /// Group id
+        id: String,
+    },
+    /// Add a member to a group
+    AddMember {
+        /// Group id
+        id: String,
+        /// Member npub to add
+        npub: String,
+    },
+    /// Remove a member from a group
+    RemoveMember {
+        /// Group id
+        id: String,
+        /// Member npub to remove
+        npub: String,
+    },
 }
 
-struct ParsedMemory {
-    tier: String,
-    topic: String,
-    version: String,
-    confidence: String,
-    model: String,
-    summary: String,
-    created_at: Timestamp,
+// ── Resolve keys + relay from CLI + config ──────────────────────────
+
+struct ResolvedConfig {
+    nsecs: Vec<String>,
+    relay: String,
 }
 
-fn parse_d_tag(d_tag: &str) -> String {
-    if let Some(topic) = d_tag.strip_prefix("snow:memory:") {
-        topic.to_string()
-    } else if let Some(rest) = d_tag.strip_prefix("snowclaw:memory:npub:") {
-        format!("user:{}", &rest[..12.min(rest.len())])
-    } else if let Some(group) = d_tag.strip_prefix("snowclaw:memory:group:") {
-        format!("group:{group}")
-    } else if d_tag.starts_with("snowclaw:config:") {
-        format!("config:{}", d_tag.strip_prefix("snowclaw:config:").unwrap())
+fn load_config(cli: &Cli) -> Result<Config> {
+    if let Some(ref path) = cli.config {
+        let text = std::fs::read_to_string(path)
+            .with_context(|| format!("Failed to read config: {}", path.display()))?;
+        Ok(toml::from_str(&text)?)
     } else {
-        d_tag.to_string()
+        Config::load()
     }
 }
 
-fn parse_tier(tags: &Tags) -> String {
-    let tier_val = get_tag_value(tags, "snow:tier").unwrap_or("unknown".to_string());
-    if tier_val == "group" {
-        if let Some(h) = get_tag_value(tags, "h") {
-            return format!("group:{h}");
-        }
-    }
-    tier_val
-}
-
-fn get_tag_value(tags: &Tags, name: &str) -> Option<String> {
-    for tag in tags.iter() {
-        let vec = tag.as_slice();
-        if vec.len() >= 2 && vec[0] == name {
-            return Some(vec[1].to_string());
-        }
-    }
-    None
-}
-
-/// Try to decrypt NIP-44 encrypted content using the provided keys.
-/// For private-tier events, the agent encrypts to itself (same pubkey).
-/// Also tries decrypting with the `p` tag recipient if present.
-fn try_decrypt_content(event: &Event, keys: &Keys) -> Option<String> {
-    let content = event.content.as_str();
-
-    // Quick check: if it parses as JSON already, it's not encrypted
-    if content.starts_with('{') || content.starts_with('[') || content.starts_with('"') {
-        return None;
-    }
-
-    // First try: self-encrypted (secret_key + own public_key)
-    if let Ok(decrypted) = nip44::decrypt(keys.secret_key(), &keys.public_key(), content) {
-        return Some(decrypted);
-    }
-
-    // Second try: encrypted to a `p` tag recipient
-    for tag in event.tags.iter() {
-        let vec = tag.as_slice();
-        if vec.len() >= 2 && vec[0] == "p" {
-            if let Ok(recipient_pk) = PublicKey::from_hex(&vec[1]) {
-                if let Ok(decrypted) = nip44::decrypt(keys.secret_key(), &recipient_pk, content) {
-                    return Some(decrypted);
-                }
-            }
-        }
-    }
-
-    None
-}
-
-fn parse_event(event: &Event, keys: &Keys) -> ParsedMemory {
-    let tags = &event.tags;
-    let d_tag = get_tag_value(tags, "d").unwrap_or_default();
-    let topic = parse_d_tag(&d_tag);
-    let tier = parse_tier(tags);
-    let version = get_tag_value(tags, "snow:version").unwrap_or("?".to_string());
-    let confidence = get_tag_value(tags, "snow:confidence").unwrap_or("?".to_string());
-    let model = get_tag_value(tags, "snow:model").unwrap_or("unknown".to_string());
-
-    // Try decryption for private-tier events, fall back to raw content
-    let content_str = if tier == "private" {
-        match try_decrypt_content(event, keys) {
-            Some(decrypted) => decrypted,
-            None => event.content.to_string(),
-        }
+fn resolve_config(cli: &Cli) -> Result<ResolvedConfig> {
+    let config = if let Some(ref path) = cli.config {
+        let text = std::fs::read_to_string(path)
+            .with_context(|| format!("Failed to read config: {}", path.display()))?;
+        toml::from_str(&text)?
     } else {
-        event.content.to_string()
+        Config::load()?
     };
 
-    let summary = match serde_json::from_str::<MemoryContent>(&content_str) {
-        Ok(content) => content.summary,
-        Err(_) => {
-            if content_str.len() > 80 {
-                format!("{}...", &content_str[..80])
-            } else {
-                content_str.to_string()
-            }
-        }
+    let nsecs = if !cli.nsecs.is_empty() {
+        cli.nsecs.clone()
+    } else {
+        config.all_nsecs()
     };
 
-    ParsedMemory {
-        tier,
-        topic,
-        version,
-        confidence,
-        model,
-        summary,
-        created_at: event.created_at,
-    }
+    let relay = cli
+        .relay
+        .clone()
+        .or(config.relay)
+        .unwrap_or_else(|| "wss://zooid.atlantislabs.space".to_string());
+
+    Ok(ResolvedConfig { nsecs, relay })
 }
 
-fn format_timestamp(ts: Timestamp) -> String {
-    let secs = ts.as_u64() as i64;
-    match Utc.timestamp_opt(secs, 0) {
-        chrono::LocalResult::Single(dt) => dt.format("%Y-%m-%d %H:%M:%S UTC").to_string(),
-        _ => format!("{secs}"),
+fn parse_keys(nsecs: &[String]) -> Result<(Vec<Keys>, Vec<PublicKey>)> {
+    let mut all_keys = Vec::new();
+    let mut pubkeys = Vec::new();
+    for nsec in nsecs {
+        let keys = Keys::parse(nsec).context("Failed to parse nsec key")?;
+        pubkeys.push(keys.public_key());
+        all_keys.push(keys);
     }
+    Ok((all_keys, pubkeys))
 }
 
 // ── Main ────────────────────────────────────────────────────────────
@@ -232,173 +210,495 @@ async fn main() -> Result<()> {
         .init();
 
     let cli = Cli::parse();
-
-    // Load config file
-    let config = if let Some(ref path) = cli.config {
-        let text = std::fs::read_to_string(path)
-            .with_context(|| format!("Failed to read config: {}", path.display()))?;
-        toml::from_str(&text)?
-    } else {
-        Config::load()?
-    };
-
-    // CLI args override config file
-    let nsecs = if !cli.nsecs.is_empty() {
-        cli.nsecs
-    } else {
-        config.all_nsecs()
-    };
-
-    let relay = cli
-        .relay
-        .or(config.relay)
-        .unwrap_or_else(|| "wss://zooid.atlantislabs.space".to_string());
+    let resolved = resolve_config(&cli)?;
 
     match cli.command {
         Command::List => {
-            if nsecs.is_empty() {
+            if resolved.nsecs.is_empty() {
                 bail!(
                     "No nsec provided. Set it in {} or pass --nsec",
                     Config::path().display()
                 );
             }
-            list_memories(&relay, &nsecs).await?;
+            cmd_list(&resolved.relay, &resolved.nsecs).await?;
         }
         Command::Config => {
-            let path = Config::path();
-            println!("{}: {}", "Config path".bold(), path.display());
-            println!(
-                "{}: {}",
-                "Exists".bold(),
-                if path.exists() { "yes".green() } else { "no".red() }
-            );
-            println!("{}: {}", "Relay".bold(), relay);
-            println!("{}: {}", "Keys configured".bold(), nsecs.len());
+            cmd_config(&resolved.relay, &resolved.nsecs);
+        }
+        Command::Sync => {
+            if resolved.nsecs.is_empty() {
+                bail!("No nsec provided. Set it in {} or pass --nsec", Config::path().display());
+            }
+            cmd_sync(&resolved.relay, &resolved.nsecs).await?;
+        }
+        Command::Store { topic, summary, detail, tier, confidence } => {
+            if resolved.nsecs.is_empty() {
+                bail!("No nsec provided. Set it in {} or pass --nsec", Config::path().display());
+            }
+            cmd_store(&resolved.relay, &resolved.nsecs, &topic, &summary, &detail, &tier, confidence).await?;
+        }
+        Command::Delete { topic, id } => {
+            if resolved.nsecs.is_empty() {
+                bail!("No nsec provided. Set it in {} or pass --nsec", Config::path().display());
+            }
+            cmd_delete(&resolved.relay, &resolved.nsecs, topic.as_deref(), id.as_deref()).await?;
+        }
+        Command::Search { ref query, ref tier, limit, vector_weight, text_weight } => {
+            cmd_search(&cli, &query, tier.as_deref(), limit, vector_weight, text_weight).await?;
+        }
+        Command::Embed { limit } => {
+            cmd_embed(&cli, limit).await?;
+        }
+        Command::Group { action } => {
+            cmd_group(action).await?;
         }
     }
 
     Ok(())
 }
 
-async fn list_memories(relay_url: &str, nsecs: &[String]) -> Result<()> {
-    // Parse all nsec keys
-    let mut all_keys: Vec<Keys> = Vec::new();
-    let mut pubkeys: Vec<PublicKey> = Vec::new();
+// ── Command: list ───────────────────────────────────────────────────
 
-    for nsec in nsecs {
-        let keys = Keys::parse(nsec).context("Failed to parse nsec key")?;
-        pubkeys.push(keys.public_key());
-        all_keys.push(keys);
-    }
-
+async fn cmd_list(relay_url: &str, nsecs: &[String]) -> Result<()> {
+    let (all_keys, pubkeys) = parse_keys(nsecs)?;
     debug!("Parsed {} keys", all_keys.len());
 
-    // Use the first key as the signer for AUTH
-    let client = ClientBuilder::new()
-        .signer(all_keys[0].clone())
-        .build();
+    let client = relay::connect(relay_url, &all_keys[0]).await?;
+    let events = relay::fetch_memory_events(&client, &pubkeys).await?;
 
-    client.add_relay(relay_url).await?;
-    client.connect().await;
-
-    debug!("Connected to {relay_url}");
-
-    // Build filter for memory events (kind 30078) and agent lessons (kind 4129)
-    let filter = Filter::new()
-        .kinds(vec![Kind::Custom(30078), Kind::Custom(4129)])
-        .authors(pubkeys.clone());
-
-    debug!("Fetching events...");
-    let events = client
-        .fetch_events(filter, Duration::from_secs(10))
-        .await
-        .context("Failed to fetch events")?;
-
-    // Separate kind 30078 (memories) and kind 4129 (lessons)
-    let mut memories: Vec<ParsedMemory> = Vec::new();
-    let mut lesson_count: usize = 0;
+    let mut memories = Vec::new();
+    let mut lesson_count = 0usize;
 
     for event in events.into_iter() {
         if event.kind == Kind::Custom(4129) {
             lesson_count += 1;
             continue;
         }
+        let d_tag = get_tag_value(&event.tags, "d").unwrap_or_default();
+        if d_tag.starts_with("snowclaw:config:") {
+            continue;
+        }
+        memories.push(parse_event(&event, &all_keys[0]));
+    }
 
-        // Skip config events
+    let npubs: Vec<String> = all_keys
+        .iter()
+        .filter_map(|k| k.public_key().to_bech32().ok())
+        .collect();
+
+    display_memories(&npubs, &memories, lesson_count);
+    client.disconnect().await;
+    Ok(())
+}
+
+// ── Command: config ─────────────────────────────────────────────────
+
+fn cmd_config(relay: &str, nsecs: &[String]) {
+    let path = Config::path();
+    println!("{}: {}", "Config path".bold(), path.display());
+    println!(
+        "{}: {}",
+        "Exists".bold(),
+        if path.exists() { "yes".green() } else { "no".red() }
+    );
+    println!("{}: {}", "Relay".bold(), relay);
+    println!("{}: {}", "Keys configured".bold(), nsecs.len());
+}
+
+// ── Command: sync ───────────────────────────────────────────────────
+
+async fn cmd_sync(relay_url: &str, nsecs: &[String]) -> Result<()> {
+    let (all_keys, pubkeys) = parse_keys(nsecs)?;
+
+    println!("Connecting to relay...");
+    let client = relay::connect(relay_url, &all_keys[0]).await?;
+    let events = relay::fetch_memory_events(&client, &pubkeys).await?;
+
+    let db = db::init_db().await?;
+
+    let mut stored = 0usize;
+    let mut skipped = 0usize;
+
+    for event in events.into_iter() {
+        if event.kind == Kind::Custom(4129) {
+            continue;
+        }
         let d_tag = get_tag_value(&event.tags, "d").unwrap_or_default();
         if d_tag.starts_with("snowclaw:config:") {
             continue;
         }
 
-        memories.push(parse_event(&event, &all_keys[0]));
-    }
-
-    // Display results per pubkey
-    for keys in &all_keys {
-        let npub = keys.public_key().to_bech32()?;
-        println!(
-            "\n{}\n{}",
-            format!("Memory Events for {npub}").bold(),
-            "═".repeat(60)
-        );
-    }
-
-    if memories.is_empty() && lesson_count == 0 {
-        println!("\n  No memory events found.\n");
-        client.disconnect().await;
-        return Ok(());
-    }
-
-    // Count tiers
-    let mut public_count = 0usize;
-    let mut group_count = 0usize;
-    let mut private_count = 0usize;
-
-    for mem in &memories {
-        match mem.tier.as_str() {
-            "public" => public_count += 1,
-            "private" => private_count += 1,
-            t if t.starts_with("group") => group_count += 1,
-            _ => public_count += 1,
+        let parsed = parse_event(&event, &all_keys[0]);
+        match db::store_memory(&db, &parsed, &event).await {
+            Ok(true) => stored += 1,
+            Ok(false) => skipped += 1,
+            Err(e) => {
+                tracing::warn!("Failed to store memory {}: {e}", parsed.topic);
+                skipped += 1;
+            }
         }
     }
 
-    for mem in &memories {
-        let tier_display = format!("[{}]", mem.tier);
-        let tier_colored = match mem.tier.as_str() {
+    println!(
+        "Sync complete: {} stored, {} skipped (already up to date)",
+        stored.to_string().green(),
+        skipped
+    );
+
+    client.disconnect().await;
+    Ok(())
+}
+
+// ── Command: store ──────────────────────────────────────────────────
+
+async fn cmd_store(
+    relay_url: &str,
+    nsecs: &[String],
+    topic: &str,
+    summary: &str,
+    detail: &str,
+    tier: &str,
+    confidence: f64,
+) -> Result<()> {
+    let (all_keys, _pubkeys) = parse_keys(nsecs)?;
+    let keys = &all_keys[0];
+
+    // Build content JSON
+    let content = serde_json::json!({
+        "summary": summary,
+        "detail": if detail.is_empty() { summary } else { detail },
+        "context": null
+    });
+
+    // Build d-tag
+    let d_tag = format!("snow:memory:{topic}");
+
+    // Build tags
+    let tags = vec![
+        Tag::custom(TagKind::Custom("d".into()), vec![d_tag.clone()]),
+        Tag::custom(TagKind::Custom("snow:tier".into()), vec![tier.to_string()]),
+        Tag::custom(TagKind::Custom("snow:model".into()), vec!["human/manual".to_string()]),
+        Tag::custom(TagKind::Custom("snow:confidence".into()), vec![format!("{confidence:.2}")]),
+        Tag::custom(TagKind::Custom("snow:source".into()), vec![keys.public_key().to_hex()]),
+        Tag::custom(TagKind::Custom("snow:version".into()), vec!["1".to_string()]),
+    ];
+
+    let builder = EventBuilder::new(Kind::Custom(30078), content.to_string()).tags(tags);
+
+    // Publish to relay
+    println!("Publishing to relay...");
+    let client = relay::connect(relay_url, keys).await?;
+    let event_id = relay::publish_event(&client, builder).await?;
+
+    // Store locally in SurrealDB
+    let db = db::init_db().await?;
+    let parsed = crate::memory::ParsedMemory {
+        tier: tier.to_string(),
+        topic: topic.to_string(),
+        version: "1".to_string(),
+        confidence: format!("{confidence:.2}"),
+        model: "human/manual".to_string(),
+        summary: summary.to_string(),
+        created_at: Timestamp::now(),
+        d_tag,
+        source: keys.public_key().to_hex(),
+        content_raw: content.to_string(),
+        detail: if detail.is_empty() { summary.to_string() } else { detail.to_string() },
+    };
+    let _ = db::store_memory_direct(&db, &parsed, &event_id.to_hex()).await;
+
+    println!(
+        "{} stored: {} [{}]",
+        "Memory".green().bold(),
+        topic.bold(),
+        tier
+    );
+    println!("  Event ID: {event_id}");
+
+    client.disconnect().await;
+    Ok(())
+}
+
+// ── Command: delete ─────────────────────────────────────────────────
+
+async fn cmd_delete(
+    relay_url: &str,
+    nsecs: &[String],
+    topic: Option<&str>,
+    event_id: Option<&str>,
+) -> Result<()> {
+    if topic.is_none() && event_id.is_none() {
+        bail!("Provide either a topic or --id <event-id>");
+    }
+
+    let (all_keys, pubkeys) = parse_keys(nsecs)?;
+    let keys = &all_keys[0];
+
+    let client = relay::connect(relay_url, keys).await?;
+
+    // If deleting by topic, we need to find the event first
+    let target_event_id = if let Some(eid) = event_id {
+        EventId::from_hex(eid).context("Invalid event ID")?
+    } else {
+        let topic = topic.unwrap();
+        let d_tag = format!("snow:memory:{topic}");
+
+        // Fetch to find the event with this d-tag
+        let events = relay::fetch_memory_events(&client, &pubkeys).await?;
+        let found = events.into_iter().find(|e| {
+            get_tag_value(&e.tags, "d").as_deref() == Some(&d_tag)
+        });
+
+        match found {
+            Some(event) => event.id,
+            None => bail!("No memory found with topic: {topic}"),
+        }
+    };
+
+    // Publish NIP-09 deletion event (kind 5)
+    let delete_builder = EventBuilder::new(Kind::Custom(5), "")
+        .tags(vec![Tag::event(target_event_id)]);
+
+    relay::publish_event(&client, delete_builder).await?;
+
+    // Remove from local SurrealDB
+    let db = db::init_db().await?;
+    if let Some(topic) = topic {
+        let d_tag = format!("snow:memory:{topic}");
+        db::delete_memory_by_dtag(&db, &d_tag).await?;
+    } else if let Some(eid) = event_id {
+        db::delete_memory_by_nostr_id(&db, eid).await?;
+    }
+
+    println!("{} Event {} marked for deletion", "Deleted.".red().bold(), target_event_id);
+
+    client.disconnect().await;
+    Ok(())
+}
+
+// ── Command: search ─────────────────────────────────────────────────
+
+async fn cmd_search(
+    cli: &Cli,
+    query: &str,
+    tier: Option<&str>,
+    limit: usize,
+    vector_weight: f32,
+    text_weight: f32,
+) -> Result<()> {
+    let config = load_config(cli)?;
+    let embedder = config.build_embedder();
+    let db = db::init_db().await?;
+
+    let opts = search::SearchOptions {
+        query: query.to_string(),
+        tier: tier.map(|t| t.to_string()),
+        allowed_scopes: None,
+        limit,
+        vector_weight,
+        text_weight,
+        min_confidence: None,
+    };
+
+    let results = search::search(&db, embedder.as_ref(), &opts).await?;
+
+    if results.is_empty() {
+        println!("No results found for: {query}");
+        return Ok(());
+    }
+
+    println!(
+        "\n{} for \"{}\"\n{}",
+        "Search Results".bold(),
+        query,
+        "═".repeat(60)
+    );
+
+    for (i, result) in results.iter().enumerate() {
+        let tier_display = format!("[{}]", result.tier);
+        let tier_colored = match result.tier.as_str() {
             "public" => tier_display.green(),
             "private" => tier_display.red(),
             _ => tier_display.yellow(),
         };
 
+        let match_indicator = match result.match_type {
+            search::MatchType::Hybrid => " [hybrid]",
+            search::MatchType::Vector => " [vector]",
+            search::MatchType::Text => " [text]",
+        };
+
         println!(
-            "\n{} {} (v{}, confidence: {})",
+            "\n{}. {} {} (confidence: {}){}",
+            i + 1,
             tier_colored,
-            mem.topic.bold(),
-            mem.version,
-            mem.confidence
+            result.topic.bold(),
+            result.confidence,
+            match_indicator.dimmed()
         );
-        println!("  Model: {}", mem.model);
-        println!("  Summary: {}", mem.summary);
-        println!("  Created: {}", format_timestamp(mem.created_at));
+        println!("   {}", result.summary);
+        println!("   Created: {}", format_timestamp(result.created_at));
     }
 
-    if lesson_count > 0 {
-        println!(
-            "\n  {} agent lessons (kind 4129) found",
-            lesson_count.to_string().bold()
+    println!("\n{}: {} results\n", "Found".bold(), results.len());
+    Ok(())
+}
+
+// ── Command: embed ─────────────────────────────────────────────────
+
+async fn cmd_embed(cli: &Cli, limit: usize) -> Result<()> {
+    let config = load_config(cli)?;
+    let embedder = config.build_embedder();
+
+    if embedder.dimensions() == 0 {
+        bail!(
+            "No embedding provider configured. Add [embedding] section to {}",
+            Config::path().display()
         );
+    }
+
+    let db = db::init_db().await?;
+    let missing = db::get_memories_without_embeddings(&db, limit).await?;
+
+    if missing.is_empty() {
+        println!("All memories already have embeddings.");
+        return Ok(());
+    }
+
+    println!("Generating embeddings for {} memories...", missing.len());
+
+    // Collect texts to embed (use summary if available, otherwise content)
+    let texts: Vec<String> = missing
+        .iter()
+        .map(|m| m.summary.clone().unwrap_or_else(|| m.content.clone()))
+        .collect();
+
+    let embeddings = embedder.embed(&texts).await?;
+
+    let mut embedded = 0usize;
+    for (row, embedding) in missing.iter().zip(embeddings.into_iter()) {
+        if let Some(ref d_tag) = row.d_tag {
+            db::store_embedding(&db, d_tag, embedding).await?;
+            embedded += 1;
+        }
     }
 
     println!(
-        "\n{}: {} memories ({} public, {} group, {} private)\n",
-        "Total".bold(),
-        memories.len(),
-        public_count,
-        group_count,
-        private_count
+        "{}: {} memories embedded",
+        "Done".green().bold(),
+        embedded
     );
+    Ok(())
+}
 
-    client.disconnect().await;
+// ── Command: group ─────────────────────────────────────────────────
+
+async fn cmd_group(action: GroupAction) -> Result<()> {
+    let db = db::init_db().await?;
+
+    match action {
+        GroupAction::Create { id, name, members, nostr_group, relay } => {
+            groups::create_group(
+                &db,
+                &id,
+                &name,
+                &members,
+                nostr_group.as_deref(),
+                relay.as_deref(),
+            )
+            .await?;
+            println!(
+                "{} group: {} ({})",
+                "Created".green().bold(),
+                id.bold(),
+                name
+            );
+            if !members.is_empty() {
+                println!("  Members: {}", members.join(", "));
+            }
+        }
+        GroupAction::List => {
+            let db_groups = groups::list_groups(&db).await?;
+
+            // Also load config groups for display
+            let config = Config::load()?;
+            let store = groups::GroupStore::load(&config.groups, &db).await?;
+            let all = store.list();
+
+            if all.is_empty() {
+                println!("No groups configured.");
+                return Ok(());
+            }
+
+            println!(
+                "\n{}\n{}",
+                "Groups".bold(),
+                "═".repeat(60)
+            );
+
+            for group in all {
+                let parent_display = group
+                    .parent
+                    .as_deref()
+                    .map(|p| format!(" (parent: {p})"))
+                    .unwrap_or_default();
+                let nostr_display = group
+                    .nostr_group
+                    .as_deref()
+                    .map(|n| format!(" [NIP-29: {n}]"))
+                    .unwrap_or_default();
+
+                println!(
+                    "\n  {} — {}{}{}",
+                    group.id.bold(),
+                    group.name,
+                    parent_display,
+                    nostr_display.dimmed()
+                );
+                println!(
+                    "    Members: {}",
+                    if group.members.is_empty() {
+                        "(none)".to_string()
+                    } else {
+                        format!("{} member(s)", group.members.len())
+                    }
+                );
+            }
+            // Suppress unused variable warning
+            let _ = db_groups;
+            println!();
+        }
+        GroupAction::Members { id } => {
+            let members = groups::get_members(&db, &id).await?;
+            println!("\n{} members of {}:\n", "Showing".bold(), id.bold());
+            if members.is_empty() {
+                println!("  (no members)");
+            } else {
+                for m in &members {
+                    println!("  {m}");
+                }
+            }
+            println!();
+        }
+        GroupAction::AddMember { id, npub } => {
+            groups::add_member(&db, &id, &npub).await?;
+            println!(
+                "{} {} to group {}",
+                "Added".green().bold(),
+                npub,
+                id.bold()
+            );
+        }
+        GroupAction::RemoveMember { id, npub } => {
+            groups::remove_member(&db, &id, &npub).await?;
+            println!(
+                "{} {} from group {}",
+                "Removed".red().bold(),
+                npub,
+                id.bold()
+            );
+        }
+    }
+
     Ok(())
 }
