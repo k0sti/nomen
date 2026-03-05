@@ -87,6 +87,47 @@ Single embedded database. Multi-model: documents, vectors (HNSW), full-text (BM2
 | Group | `group:<id>` | None (relay auth) | Group members |
 | Private | `npub:<hex>` | NIP-44 | Owning agent only |
 
+## Messaging (`nomen send`)
+
+Agents send messages to recipients via configurable channels.
+
+```
+nomen send "hello" --to npub1abc...              # NIP-17 DM (default)
+nomen send "update" --to group:techteam           # NIP-29 group message
+nomen send "announcement" --to public             # Kind 1 note
+nomen send "hey" --to npub1abc... --channel telegram  # Telegram DM
+```
+
+**Routing:** recipient format determines tier and delivery:
+
+| Recipient | Channel | Delivery | Encryption |
+|-----------|---------|----------|------------|
+| `npub1...` | nostr (default) | Kind 1059 (NIP-17 DM) | NIP-44 |
+| `npub1...` | telegram | Telegram Bot API | Platform TLS |
+| `group:<id>` | nostr (default) | Kind 9 (NIP-29) | None (relay auth) |
+| `group:<id>` | telegram | Telegram group | Platform TLS |
+| `public` | nostr (default) | Kind 1 (note) | None |
+
+All sent messages are stored locally as `raw_message` with `source="nomen"`.
+
+## Session ID Model
+
+A session ID encodes recipient + channel + tier in a single string, eliminating the need to pass tier/scope separately on every call.
+
+**Formats:**
+
+| Session ID | Resolves to |
+|---|---|
+| `npub1abc...` | private DM, scope=npub hex |
+| `telegram:npub1abc...` | private DM via telegram |
+| `techteam` | group, scope=group_id |
+| `nostr:inner-circle` | group via nostr relay |
+| `public` | public, no scope |
+
+**Resolution** (`src/session.rs`): `resolve_session(id, groups, default_channel) → ResolvedSession { tier, scope, group_id, participants }`
+
+**Integration:** All MCP tools accept optional `session_id` parameter. When provided, tier and scope are derived automatically — no risk of misconfiguring visibility.
+
 ## Interfaces
 
 ### CLI
