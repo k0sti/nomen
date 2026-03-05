@@ -1,9 +1,12 @@
 mod access;
 mod config;
+mod consolidate;
 mod db;
 mod display;
 mod embed;
+mod entities;
 mod groups;
+mod ingest;
 mod memory;
 mod relay;
 mod search;
@@ -101,6 +104,53 @@ enum Command {
     Group {
         #[command(subcommand)]
         action: GroupAction,
+    },
+    /// Ingest a raw message
+    Ingest {
+        /// Message content
+        content: String,
+        /// Source system (e.g. telegram, nostr, webhook)
+        #[arg(long, default_value = "cli")]
+        source: String,
+        /// Sender identifier
+        #[arg(long, default_value = "local")]
+        sender: String,
+        /// Channel/room name
+        #[arg(long)]
+        channel: Option<String>,
+    },
+    /// List raw messages
+    Messages {
+        /// Filter by source
+        #[arg(long)]
+        source: Option<String>,
+        /// Filter by channel
+        #[arg(long)]
+        channel: Option<String>,
+        /// Filter by sender
+        #[arg(long)]
+        sender: Option<String>,
+        /// Show messages since (RFC3339 timestamp)
+        #[arg(long)]
+        since: Option<String>,
+        /// Max results
+        #[arg(long, default_value = "50")]
+        limit: usize,
+    },
+    /// Consolidate raw messages into memories
+    Consolidate {
+        /// Min messages required to trigger consolidation
+        #[arg(long, default_value = "3")]
+        min_messages: usize,
+        /// Max messages to process per run
+        #[arg(long, default_value = "50")]
+        batch_size: usize,
+    },
+    /// List extracted entities
+    Entities {
+        /// Filter by kind (person, project, concept, place, organization)
+        #[arg(long)]
+        kind: Option<String>,
     },
 }
 
@@ -251,6 +301,18 @@ async fn main() -> Result<()> {
         }
         Command::Group { action } => {
             cmd_group(action).await?;
+        }
+        Command::Ingest { content, source, sender, channel } => {
+            cmd_ingest(&content, &source, &sender, channel.as_deref()).await?;
+        }
+        Command::Messages { source, channel, sender, since, limit } => {
+            cmd_messages(source.as_deref(), channel.as_deref(), sender.as_deref(), since.as_deref(), limit).await?;
+        }
+        Command::Consolidate { min_messages, batch_size } => {
+            cmd_consolidate(&cli, min_messages, batch_size).await?;
+        }
+        Command::Entities { kind } => {
+            cmd_entities(kind.as_deref()).await?;
         }
     }
 
@@ -700,5 +762,172 @@ async fn cmd_group(action: GroupAction) -> Result<()> {
         }
     }
 
+    Ok(())
+}
+
+// ── Command: ingest ─────────────────────────────────────────────────
+
+async fn cmd_ingest(
+    content: &str,
+    source: &str,
+    sender: &str,
+    channel: Option<&str>,
+) -> Result<()> {
+    let db = db::init_db().await?;
+
+    let msg = ingest::RawMessage {
+        source: source.to_string(),
+        source_id: None,
+        sender: sender.to_string(),
+        channel: channel.map(|c| c.to_string()),
+        content: content.to_string(),
+        metadata: None,
+        created_at: None,
+    };
+
+    let id = ingest::ingest_message(&db, &msg).await?;
+    println!(
+        "{} message from {} [{}]{}",
+        "Ingested".green().bold(),
+        sender.bold(),
+        source,
+        channel
+            .map(|c| format!(" #{c}"))
+            .unwrap_or_default()
+    );
+    debug!("Record ID: {id}");
+    Ok(())
+}
+
+// ── Command: messages ───────────────────────────────────────────────
+
+async fn cmd_messages(
+    source: Option<&str>,
+    channel: Option<&str>,
+    sender: Option<&str>,
+    since: Option<&str>,
+    limit: usize,
+) -> Result<()> {
+    let db = db::init_db().await?;
+
+    let opts = ingest::MessageQuery {
+        source: source.map(|s| s.to_string()),
+        channel: channel.map(|c| c.to_string()),
+        sender: sender.map(|s| s.to_string()),
+        since: since.map(|s| s.to_string()),
+        limit: Some(limit),
+        consolidated_only: false,
+    };
+
+    let messages = ingest::get_messages(&db, &opts).await?;
+
+    if messages.is_empty() {
+        println!("No messages found.");
+        return Ok(());
+    }
+
+    println!(
+        "\n{}\n{}",
+        "Raw Messages".bold(),
+        "═".repeat(60)
+    );
+
+    for msg in &messages {
+        let channel_display = msg
+            .channel
+            .as_deref()
+            .map(|c| format!(" #{c}"))
+            .unwrap_or_default();
+        let consolidated_marker = if msg.consolidated {
+            " [consolidated]".dimmed().to_string()
+        } else {
+            String::new()
+        };
+
+        println!(
+            "\n  [{}] {}{}{}\n    {}",
+            msg.source,
+            msg.sender.bold(),
+            channel_display,
+            consolidated_marker,
+            msg.content
+        );
+        println!("    {}", msg.created_at.dimmed());
+    }
+
+    println!("\n{}: {} messages\n", "Total".bold(), messages.len());
+    Ok(())
+}
+
+// ── Command: consolidate ────────────────────────────────────────────
+
+async fn cmd_consolidate(cli: &Cli, min_messages: usize, batch_size: usize) -> Result<()> {
+    let config = load_config(cli)?;
+    let embedder = config.build_embedder();
+    let db = db::init_db().await?;
+
+    let consolidation_config = consolidate::ConsolidationConfig {
+        batch_size,
+        min_messages,
+        llm_provider: Box::new(consolidate::NoopLlmProvider),
+    };
+
+    println!("Running consolidation pipeline...");
+    let report = consolidate::consolidate(&db, embedder.as_ref(), &consolidation_config).await?;
+
+    if report.memories_created == 0 {
+        println!("Nothing to consolidate (need at least {min_messages} unconsolidated messages).");
+    } else {
+        println!(
+            "{}: {} messages → {} memories",
+            "Consolidated".green().bold(),
+            report.messages_processed,
+            report.memories_created
+        );
+        if !report.channels.is_empty() {
+            println!("  Channels: {}", report.channels.join(", "));
+        }
+    }
+
+    Ok(())
+}
+
+// ── Command: entities ───────────────────────────────────────────────
+
+async fn cmd_entities(kind_filter: Option<&str>) -> Result<()> {
+    let db = db::init_db().await?;
+
+    let kind = kind_filter.and_then(entities::EntityKind::from_str);
+
+    if kind_filter.is_some() && kind.is_none() {
+        bail!(
+            "Unknown entity kind: {}. Valid kinds: person, project, concept, place, organization",
+            kind_filter.unwrap()
+        );
+    }
+
+    let entity_list = db::list_entities(&db, kind.as_ref()).await?;
+
+    if entity_list.is_empty() {
+        println!("No entities found.");
+        return Ok(());
+    }
+
+    println!(
+        "\n{}\n{}",
+        "Entities".bold(),
+        "═".repeat(60)
+    );
+
+    for entity in &entity_list {
+        println!(
+            "\n  {} [{}]",
+            entity.name.bold(),
+            entity.kind.yellow()
+        );
+        println!("    Created: {}", entity.created_at.dimmed());
+    }
+
+    println!("\n{}: {} entities\n", "Total".bold(), entity_list.len());
     Ok(())
 }

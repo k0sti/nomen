@@ -122,6 +122,28 @@ DEFINE FIELD IF NOT EXISTS relay      ON nomen_group TYPE option<string>;
 DEFINE FIELD IF NOT EXISTS nostr_group ON nomen_group TYPE option<string>;
 DEFINE FIELD IF NOT EXISTS created_at ON nomen_group TYPE string;
 DEFINE INDEX IF NOT EXISTS group_id   ON nomen_group FIELDS id UNIQUE;
+
+DEFINE TABLE IF NOT EXISTS raw_message SCHEMAFULL;
+DEFINE FIELD IF NOT EXISTS source       ON raw_message TYPE string;
+DEFINE FIELD IF NOT EXISTS source_id    ON raw_message TYPE option<string>;
+DEFINE FIELD IF NOT EXISTS sender       ON raw_message TYPE string;
+DEFINE FIELD IF NOT EXISTS channel      ON raw_message TYPE option<string>;
+DEFINE FIELD IF NOT EXISTS content      ON raw_message TYPE string;
+DEFINE FIELD IF NOT EXISTS metadata     ON raw_message TYPE option<object>;
+DEFINE FIELD IF NOT EXISTS created_at   ON raw_message TYPE string;
+DEFINE FIELD IF NOT EXISTS consolidated ON raw_message TYPE bool DEFAULT false;
+DEFINE INDEX IF NOT EXISTS raw_msg_time    ON raw_message FIELDS created_at;
+DEFINE INDEX IF NOT EXISTS raw_msg_channel ON raw_message FIELDS channel;
+
+DEFINE TABLE IF NOT EXISTS entity SCHEMAFULL;
+DEFINE FIELD IF NOT EXISTS name       ON entity TYPE string;
+DEFINE FIELD IF NOT EXISTS kind       ON entity TYPE string;
+DEFINE FIELD IF NOT EXISTS attributes ON entity TYPE option<object>;
+DEFINE FIELD IF NOT EXISTS created_at ON entity TYPE string;
+DEFINE INDEX IF NOT EXISTS entity_name ON entity FIELDS name UNIQUE;
+
+DEFINE TABLE IF NOT EXISTS mentions SCHEMALESS;
+DEFINE TABLE IF NOT EXISTS consolidated_from SCHEMALESS;
 "#;
 
 /// Initialize (or open) the SurrealDB database and apply schema.
@@ -398,4 +420,217 @@ fn extract_scope(d_tag: &str) -> String {
     } else {
         String::new()
     }
+}
+
+// ── Raw Message CRUD ────────────────────────────────────────────────
+
+use crate::ingest::{RawMessage, RawMessageRecord, MessageQuery};
+use crate::entities::{EntityRecord, EntityKind};
+
+/// Store a raw message into SurrealDB.
+pub async fn store_raw_message(db: &Surreal<Db>, msg: &RawMessage) -> Result<String> {
+    let now = chrono::Utc::now().to_rfc3339();
+    let created = msg.created_at.as_deref().unwrap_or(&now);
+
+    let result: Vec<RawMessageRecord> = db
+        .query(
+            "CREATE raw_message CONTENT { \
+                source: $source, \
+                source_id: $source_id, \
+                sender: $sender, \
+                channel: $channel, \
+                content: $content, \
+                metadata: $metadata, \
+                created_at: $created_at, \
+                consolidated: false \
+            }"
+        )
+        .bind(("source", msg.source.clone()))
+        .bind(("source_id", msg.source_id.clone()))
+        .bind(("sender", msg.sender.clone()))
+        .bind(("channel", msg.channel.clone()))
+        .bind(("content", msg.content.clone()))
+        .bind(("metadata", msg.metadata.clone()))
+        .bind(("created_at", created.to_string()))
+        .await?
+        .check()?
+        .take(0)?;
+
+    let id = result
+        .first()
+        .map(|r| r.id.clone())
+        .unwrap_or_default();
+    Ok(id)
+}
+
+/// Query raw messages with filters.
+pub async fn query_raw_messages(
+    db: &Surreal<Db>,
+    opts: &MessageQuery,
+) -> Result<Vec<RawMessageRecord>> {
+    let mut conditions = Vec::new();
+    if opts.source.is_some() {
+        conditions.push("source = $source".to_string());
+    }
+    if opts.channel.is_some() {
+        conditions.push("channel = $channel".to_string());
+    }
+    if opts.sender.is_some() {
+        conditions.push("sender = $sender".to_string());
+    }
+    if opts.since.is_some() {
+        conditions.push("created_at >= $since".to_string());
+    }
+    if opts.consolidated_only {
+        conditions.push("consolidated = true".to_string());
+    } else {
+        conditions.push("consolidated = false".to_string());
+    }
+
+    let where_clause = if conditions.is_empty() {
+        String::new()
+    } else {
+        format!("WHERE {}", conditions.join(" AND "))
+    };
+
+    let limit = opts.limit.unwrap_or(100);
+    let sql = format!(
+        "SELECT * FROM raw_message {where_clause} ORDER BY created_at ASC LIMIT {limit}"
+    );
+
+    let mut q = db.query(&sql);
+    if let Some(ref source) = opts.source {
+        q = q.bind(("source", source.clone()));
+    }
+    if let Some(ref channel) = opts.channel {
+        q = q.bind(("channel", channel.clone()));
+    }
+    if let Some(ref sender) = opts.sender {
+        q = q.bind(("sender", sender.clone()));
+    }
+    if let Some(ref since) = opts.since {
+        q = q.bind(("since", since.clone()));
+    }
+
+    let results: Vec<RawMessageRecord> = q.await?.check()?.take(0)?;
+    Ok(results)
+}
+
+/// Mark raw messages as consolidated by their IDs.
+pub async fn mark_messages_consolidated(db: &Surreal<Db>, ids: &[String]) -> Result<()> {
+    for id in ids {
+        db.query("UPDATE $id SET consolidated = true")
+            .bind(("id", surrealdb::sql::Thing::from(("raw_message", id.as_str()))))
+            .await?
+            .check()?;
+    }
+    Ok(())
+}
+
+/// Get unconsolidated messages grouped by channel.
+pub async fn get_unconsolidated_messages(
+    db: &Surreal<Db>,
+    limit: usize,
+) -> Result<Vec<RawMessageRecord>> {
+    let sql = format!(
+        "SELECT * FROM raw_message WHERE consolidated = false ORDER BY created_at ASC LIMIT {limit}"
+    );
+    let results: Vec<RawMessageRecord> = db.query(&sql).await?.check()?.take(0)?;
+    Ok(results)
+}
+
+// ── Entity CRUD ─────────────────────────────────────────────────────
+
+/// Store an entity (upsert by name).
+pub async fn store_entity(
+    db: &Surreal<Db>,
+    name: &str,
+    kind: &EntityKind,
+) -> Result<String> {
+    let now = chrono::Utc::now().to_rfc3339();
+    let kind_str = kind.as_str();
+
+    // Try to find existing entity first
+    let existing: Vec<EntityRecord> = db
+        .query("SELECT * FROM entity WHERE name = $name LIMIT 1")
+        .bind(("name", name.to_string()))
+        .await?
+        .check()?
+        .take(0)?;
+
+    if let Some(entity) = existing.first() {
+        return Ok(entity.id.clone());
+    }
+
+    let result: Vec<EntityRecord> = db
+        .query(
+            "CREATE entity CONTENT { \
+                name: $name, \
+                kind: $kind, \
+                attributes: NONE, \
+                created_at: $created_at \
+            }"
+        )
+        .bind(("name", name.to_string()))
+        .bind(("kind", kind_str.to_string()))
+        .bind(("created_at", now))
+        .await?
+        .check()?
+        .take(0)?;
+
+    let id = result
+        .first()
+        .map(|r| r.id.clone())
+        .unwrap_or_default();
+    Ok(id)
+}
+
+/// List all entities, optionally filtered by kind.
+pub async fn list_entities(
+    db: &Surreal<Db>,
+    kind: Option<&EntityKind>,
+) -> Result<Vec<EntityRecord>> {
+    let results: Vec<EntityRecord> = if let Some(kind) = kind {
+        db.query("SELECT * FROM entity WHERE kind = $kind ORDER BY name ASC")
+            .bind(("kind", kind.as_str().to_string()))
+            .await?
+            .check()?
+            .take(0)?
+    } else {
+        db.query("SELECT * FROM entity ORDER BY name ASC")
+            .await?
+            .check()?
+            .take(0)?
+    };
+    Ok(results)
+}
+
+/// Create a "mentions" edge from a memory to an entity.
+pub async fn create_mention_edge(
+    db: &Surreal<Db>,
+    memory_id: &str,
+    entity_id: &str,
+    relevance: f64,
+) -> Result<()> {
+    db.query("RELATE $from->mentions->$to SET relevance = $relevance")
+        .bind(("from", surrealdb::sql::Thing::from(("memory", memory_id))))
+        .bind(("to", surrealdb::sql::Thing::from(("entity", entity_id))))
+        .bind(("relevance", relevance))
+        .await?
+        .check()?;
+    Ok(())
+}
+
+/// Create a "consolidated_from" edge from a consolidated memory to a raw message.
+pub async fn create_consolidated_edge(
+    db: &Surreal<Db>,
+    memory_id: &str,
+    raw_message_id: &str,
+) -> Result<()> {
+    db.query("RELATE $from->consolidated_from->$to")
+        .bind(("from", surrealdb::sql::Thing::from(("memory", memory_id))))
+        .bind(("to", surrealdb::sql::Thing::from(("raw_message", raw_message_id))))
+        .await?
+        .check()?;
+    Ok(())
 }
