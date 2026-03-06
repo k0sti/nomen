@@ -240,6 +240,12 @@ DEFINE TABLE IF NOT EXISTS related_to SCHEMALESS;
 DEFINE INDEX IF NOT EXISTS raw_msg_source ON raw_message FIELDS source, source_id UNIQUE;
 DEFINE INDEX IF NOT EXISTS raw_msg_sender ON raw_message FIELDS sender;
 
+DEFINE TABLE IF NOT EXISTS meta SCHEMAFULL;
+DEFINE FIELD IF NOT EXISTS key        ON meta TYPE string;
+DEFINE FIELD IF NOT EXISTS value      ON meta TYPE string;
+DEFINE FIELD IF NOT EXISTS updated_at ON meta TYPE string;
+DEFINE INDEX IF NOT EXISTS meta_key   ON meta FIELDS key UNIQUE;
+
 DEFINE TABLE IF NOT EXISTS session SCHEMAFULL;
 DEFINE FIELD IF NOT EXISTS session_id    ON session TYPE string;
 DEFINE FIELD IF NOT EXISTS tier          ON session TYPE string;
@@ -1106,6 +1112,45 @@ pub async fn create_consolidated_edge(
         .await?
         .check()?;
     Ok(())
+}
+
+// ── Meta key-value store ─────────────────────────────────────────────
+
+/// Get a meta value by key.
+pub async fn get_meta(db: &Surreal<Db>, key: &str) -> Result<Option<String>> {
+    #[derive(Deserialize)]
+    struct MetaRow { value: String }
+    let result: Option<MetaRow> = db
+        .query("SELECT value FROM meta WHERE key = $key LIMIT 1")
+        .bind(("key", key.to_string()))
+        .await?
+        .check()?
+        .take(0)?;
+    Ok(result.map(|r| r.value))
+}
+
+/// Set a meta value (upsert by key).
+pub async fn set_meta(db: &Surreal<Db>, key: &str, value: &str) -> Result<()> {
+    let now = chrono::Utc::now().to_rfc3339();
+    db.query("DELETE FROM meta WHERE key = $key; CREATE meta CONTENT { key: $key, value: $value, updated_at: $now }")
+        .bind(("key", key.to_string()))
+        .bind(("value", value.to_string()))
+        .bind(("now", now))
+        .await?
+        .check()?;
+    Ok(())
+}
+
+/// Count unconsolidated raw messages.
+pub async fn count_unconsolidated_messages(db: &Surreal<Db>) -> Result<usize> {
+    #[derive(Deserialize)]
+    struct CountRow { count: usize }
+    let result: Option<CountRow> = db
+        .query("SELECT count() AS count FROM raw_message WHERE consolidated = false GROUP ALL")
+        .await?
+        .check()?
+        .take(0)?;
+    Ok(result.map(|r| r.count).unwrap_or(0))
 }
 
 // ── Session CRUD ─────────────────────────────────────────────────────

@@ -156,6 +156,7 @@ pub fn build_router(
         .route("/messages", get(api_messages))
         .route("/entities", get(api_entities))
         .route("/consolidate", post(api_consolidate))
+        .route("/consolidate/status", get(api_consolidation_status))
         .route("/memories", get(api_list_memories))
         .route("/memories/{topic}", delete(api_delete_memory))
         .route("/groups", get(api_list_groups))
@@ -319,6 +320,25 @@ async fn api_entities(
     }
 
     Ok(Json(json!({ "entities": entity_list })))
+}
+
+async fn api_consolidation_status(
+    State(state): State<SharedState>,
+) -> Result<Json<Value>, AppError> {
+    // Use default consolidation config values for the check
+    let config = crate::config::MemoryConsolidationConfig {
+        enabled: true,
+        interval_hours: 4,
+        ephemeral_ttl_minutes: 60,
+        max_ephemeral_count: 200,
+        dry_run: false,
+        provider: None,
+        model: None,
+        api_key_env: None,
+        base_url: None,
+    };
+    let status = consolidate::check_consolidation_due(&state.db, &config).await?;
+    Ok(Json(serde_json::to_value(status)?))
 }
 
 async fn api_consolidate(

@@ -849,6 +849,11 @@ pub async fn consolidate(
         report.events_deleted = deleted;
     }
 
+    // Record consolidation run timestamp for auto-trigger
+    if report.memories_created > 0 || report.memories_updated > 0 {
+        record_consolidation_run(db).await.ok();
+    }
+
     debug!(
         memories = report.memories_created,
         messages = report.messages_processed,
@@ -1006,4 +1011,115 @@ async fn get_memory_record_id(db: &Surreal<Db>, d_tag: &str) -> Result<String> {
     rows.first()
         .map(|r| r.id.clone())
         .ok_or_else(|| anyhow::anyhow!("Memory not found for d_tag: {d_tag}"))
+}
+
+// ── Auto-trigger ────────────────────────────────────────────────────
+
+/// Status of whether consolidation is due.
+#[derive(Debug, serde::Serialize)]
+pub struct ConsolidationStatus {
+    /// Whether consolidation should run now.
+    pub due: bool,
+    /// Reason why consolidation is or isn't due.
+    pub reason: String,
+    /// Timestamp of last consolidation run (RFC3339), if any.
+    pub last_run: Option<String>,
+    /// Hours since last run.
+    pub hours_since_last_run: Option<f64>,
+    /// Current unconsolidated message count.
+    pub pending_messages: usize,
+    /// Configured interval in hours.
+    pub interval_hours: u32,
+    /// Configured max ephemeral count threshold.
+    pub max_ephemeral_count: usize,
+}
+
+const META_KEY_LAST_CONSOLIDATION: &str = "last_consolidation_run";
+
+/// Check if consolidation is due based on config interval and message count.
+pub async fn check_consolidation_due(
+    db: &Surreal<Db>,
+    config: &crate::config::MemoryConsolidationConfig,
+) -> Result<ConsolidationStatus> {
+    let pending = crate::db::count_unconsolidated_messages(db).await?;
+    let last_run = crate::db::get_meta(db, META_KEY_LAST_CONSOLIDATION).await?;
+
+    // Check if count threshold exceeded
+    if pending >= config.max_ephemeral_count {
+        return Ok(ConsolidationStatus {
+            due: true,
+            reason: format!(
+                "Pending message count ({pending}) exceeds threshold ({})",
+                config.max_ephemeral_count
+            ),
+            last_run: last_run.clone(),
+            hours_since_last_run: last_run.as_deref().and_then(hours_since),
+            pending_messages: pending,
+            interval_hours: config.interval_hours,
+            max_ephemeral_count: config.max_ephemeral_count,
+        });
+    }
+
+    // Check time-based interval
+    let hours_elapsed = last_run.as_deref().and_then(hours_since);
+    let interval_exceeded = match hours_elapsed {
+        Some(h) => h >= config.interval_hours as f64,
+        None => true, // Never run before
+    };
+
+    if interval_exceeded && pending > 0 {
+        let reason = match hours_elapsed {
+            Some(h) => format!(
+                "Interval exceeded ({h:.1}h >= {}h) with {pending} pending messages",
+                config.interval_hours
+            ),
+            None => format!("Never run before, {pending} pending messages"),
+        };
+        return Ok(ConsolidationStatus {
+            due: true,
+            reason,
+            last_run: last_run.clone(),
+            hours_since_last_run: hours_elapsed,
+            pending_messages: pending,
+            interval_hours: config.interval_hours,
+            max_ephemeral_count: config.max_ephemeral_count,
+        });
+    }
+
+    let reason = if pending == 0 {
+        "No pending messages".to_string()
+    } else {
+        format!(
+            "Not yet due ({:.1}h / {}h interval, {pending} / {} messages)",
+            hours_elapsed.unwrap_or(0.0),
+            config.interval_hours,
+            config.max_ephemeral_count
+        )
+    };
+
+    Ok(ConsolidationStatus {
+        due: false,
+        reason,
+        last_run: last_run.clone(),
+        hours_since_last_run: hours_elapsed,
+        pending_messages: pending,
+        interval_hours: config.interval_hours,
+        max_ephemeral_count: config.max_ephemeral_count,
+    })
+}
+
+/// Record that a consolidation run just completed.
+pub async fn record_consolidation_run(db: &Surreal<Db>) -> Result<()> {
+    let now = chrono::Utc::now().to_rfc3339();
+    crate::db::set_meta(db, META_KEY_LAST_CONSOLIDATION, &now).await
+}
+
+/// Calculate hours since an RFC3339 timestamp.
+fn hours_since(timestamp: &str) -> Option<f64> {
+    chrono::DateTime::parse_from_rfc3339(timestamp)
+        .ok()
+        .map(|dt| {
+            let duration = chrono::Utc::now() - dt.with_timezone(&chrono::Utc);
+            duration.num_minutes() as f64 / 60.0
+        })
 }
