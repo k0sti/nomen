@@ -1160,7 +1160,7 @@ pub async fn get_meta(db: &Surreal<Db>, key: &str) -> Result<Option<String>> {
     #[derive(Deserialize)]
     struct MetaRow { value: String }
     let result: Option<MetaRow> = db
-        .query("SELECT value FROM meta WHERE key = $key LIMIT 1")
+        .query("SELECT value FROM `meta` WHERE key = $key LIMIT 1")
         .bind(("key", key.to_string()))
         .await?
         .check()?
@@ -1171,7 +1171,7 @@ pub async fn get_meta(db: &Surreal<Db>, key: &str) -> Result<Option<String>> {
 /// Set a meta value (upsert by key).
 pub async fn set_meta(db: &Surreal<Db>, key: &str, value: &str) -> Result<()> {
     let now = chrono::Utc::now().to_rfc3339();
-    db.query("DELETE FROM meta WHERE key = $key; CREATE meta CONTENT { key: $key, value: $value, updated_at: $now }")
+    db.query("DELETE FROM `meta` WHERE key = $key; CREATE `meta` CONTENT { key: $key, value: $value, updated_at: $now }")
         .bind(("key", key.to_string()))
         .bind(("value", value.to_string()))
         .bind(("now", now))
