@@ -163,7 +163,11 @@ fn db_path() -> std::path::PathBuf {
         .join("db")
 }
 
-pub const SCHEMA: &str = r#"
+/// Base schema (without HNSW index — that's applied dynamically based on config).
+///
+/// Also exported as `SCHEMA` for integration tests.
+pub const SCHEMA: &str = SCHEMA_BASE;
+const SCHEMA_BASE: &str = r#"
 DEFINE TABLE IF NOT EXISTS memory SCHEMAFULL;
 DEFINE FIELD IF NOT EXISTS content    ON memory TYPE string;
 DEFINE FIELD IF NOT EXISTS summary    ON memory TYPE option<string>;
@@ -180,6 +184,8 @@ DEFINE FIELD IF NOT EXISTS d_tag      ON memory TYPE option<string>;
 DEFINE FIELD IF NOT EXISTS created_at ON memory TYPE string;
 DEFINE FIELD IF NOT EXISTS updated_at ON memory TYPE string;
 DEFINE FIELD IF NOT EXISTS ephemeral  ON memory TYPE bool DEFAULT false;
+DEFINE FIELD IF NOT EXISTS consolidated_from ON memory TYPE option<string>;
+DEFINE FIELD IF NOT EXISTS consolidated_at   ON memory TYPE option<string>;
 -- Note: created_at/updated_at remain TYPE string (not datetime) because SurrealDB
 -- datetime serialization requires special handling in Rust serde. RFC3339 strings
 -- still support lexicographic ordering which is sufficient for our queries.
@@ -190,7 +196,6 @@ DEFINE INDEX IF NOT EXISTS memory_d_tag  ON memory FIELDS d_tag UNIQUE;
 DEFINE INDEX IF NOT EXISTS memory_tier   ON memory FIELDS tier;
 DEFINE INDEX IF NOT EXISTS memory_scope  ON memory FIELDS scope;
 DEFINE INDEX IF NOT EXISTS memory_topic  ON memory FIELDS topic;
-DEFINE INDEX IF NOT EXISTS memory_embedding ON memory FIELDS embedding HNSW DIMENSION 1536 DIST COSINE EFC 150 M 12;
 
 DEFINE TABLE IF NOT EXISTS nomen_group SCHEMALESS;
 DEFINE FIELD IF NOT EXISTS name       ON nomen_group TYPE string;
@@ -242,7 +247,13 @@ DEFINE INDEX IF NOT EXISTS session_sid   ON session FIELDS session_id UNIQUE;
 "#;
 
 /// Initialize (or open) the SurrealDB database and apply schema.
+/// Uses default embedding dimensions (1536).
 pub async fn init_db() -> Result<Surreal<Db>> {
+    init_db_with_dimensions(1536).await
+}
+
+/// Initialize (or open) the SurrealDB database with configurable HNSW dimensions.
+pub async fn init_db_with_dimensions(dimensions: usize) -> Result<Surreal<Db>> {
     let path = db_path();
     std::fs::create_dir_all(&path)
         .with_context(|| format!("Failed to create DB directory: {}", path.display()))?;
@@ -254,8 +265,14 @@ pub async fn init_db() -> Result<Surreal<Db>> {
 
     db.use_ns("nomen").use_db("nomen").await?;
 
-    db.query(SCHEMA).await.context("Failed to apply schema")?;
-    debug!("Schema applied");
+    db.query(SCHEMA_BASE).await.context("Failed to apply base schema")?;
+
+    // Apply HNSW index with configurable dimensions
+    let hnsw_sql = format!(
+        "DEFINE INDEX IF NOT EXISTS memory_embedding ON memory FIELDS embedding HNSW DIMENSION {dimensions} DIST COSINE EFC 150 M 12"
+    );
+    db.query(&hnsw_sql).await.context("Failed to apply HNSW index")?;
+    debug!(dimensions, "Schema applied with HNSW dimensions");
 
     Ok(db)
 }
@@ -664,11 +681,123 @@ pub async fn get_unconsolidated_messages(
     db: &Surreal<Db>,
     limit: usize,
 ) -> Result<Vec<RawMessageRecord>> {
+    get_unconsolidated_messages_filtered(db, limit, None, None).await
+}
+
+/// Get unconsolidated messages with optional filters.
+///
+/// - `before`: Only messages created before this RFC3339 timestamp (for --older-than).
+/// - `tier_filter`: Only messages matching this tier/channel pattern.
+pub async fn get_unconsolidated_messages_filtered(
+    db: &Surreal<Db>,
+    limit: usize,
+    before: Option<&str>,
+    _tier_filter: Option<&str>,
+) -> Result<Vec<RawMessageRecord>> {
+    let mut conditions = vec!["consolidated = false".to_string()];
+    if before.is_some() {
+        conditions.push("created_at < $before".to_string());
+    }
+
+    let where_clause = conditions.join(" AND ");
     let sql = format!(
-        "SELECT meta::id(id) AS id, source, source_id ?? '' AS source_id, sender, channel ?? '' AS channel, content, created_at, consolidated FROM raw_message WHERE consolidated = false ORDER BY created_at ASC LIMIT {limit}"
+        "SELECT meta::id(id) AS id, source, source_id ?? '' AS source_id, sender, channel ?? '' AS channel, content, created_at, consolidated FROM raw_message WHERE {where_clause} ORDER BY created_at ASC LIMIT {limit}"
     );
-    let results: Vec<RawMessageRecord> = db.query(&sql).await?.check()?.take(0)?;
+
+    let mut q = db.query(&sql);
+    if let Some(before_val) = before {
+        q = q.bind(("before", before_val.to_string()));
+    }
+
+    let results: Vec<RawMessageRecord> = q.await?.check()?.take(0)?;
     Ok(results)
+}
+
+/// Set consolidation provenance tags on a memory record.
+pub async fn set_consolidation_tags(
+    db: &Surreal<Db>,
+    d_tag: &str,
+    consolidated_from: &str,
+    consolidated_at: &str,
+) -> Result<()> {
+    db.query("UPDATE memory SET consolidated_from = $from, consolidated_at = $at WHERE d_tag = $d_tag")
+        .bind(("d_tag", d_tag.to_string()))
+        .bind(("from", consolidated_from.to_string()))
+        .bind(("at", consolidated_at.to_string()))
+        .await?
+        .check()?;
+    Ok(())
+}
+
+/// Get unconsolidated messages older than a cutoff, optionally filtered to ephemeral only.
+pub async fn get_ephemeral_messages_before(
+    db: &Surreal<Db>,
+    before: &str,
+    limit: usize,
+) -> Result<Vec<RawMessageRecord>> {
+    let sql = format!(
+        "SELECT meta::id(id) AS id, source, source_id ?? '' AS source_id, sender, channel ?? '' AS channel, content, created_at, consolidated FROM raw_message WHERE created_at < $before ORDER BY created_at ASC LIMIT {limit}"
+    );
+    let results: Vec<RawMessageRecord> = db
+        .query(&sql)
+        .bind(("before", before.to_string()))
+        .await?
+        .check()?
+        .take(0)?;
+    Ok(results)
+}
+
+/// Delete ephemeral raw messages older than a cutoff.
+pub async fn delete_ephemeral_before(db: &Surreal<Db>, before: &str) -> Result<usize> {
+    #[derive(Deserialize)]
+    struct CountResult { count: usize }
+    let count_result: Option<CountResult> = db
+        .query("SELECT count() AS count FROM raw_message WHERE created_at < $before GROUP ALL")
+        .bind(("before", before.to_string()))
+        .await?
+        .check()?
+        .take(0)?;
+    let count = count_result.map(|r| r.count).unwrap_or(0);
+    if count > 0 {
+        db.query("DELETE FROM raw_message WHERE created_at < $before")
+            .bind(("before", before.to_string()))
+            .await?
+            .check()?;
+    }
+    Ok(count)
+}
+
+/// Count memories by type (ephemeral vs named).
+pub async fn count_memories_by_type(db: &Surreal<Db>) -> Result<(usize, usize, usize)> {
+    #[derive(Deserialize)]
+    struct CountRow { count: usize }
+
+    // Named memories (have a topic that doesn't start with "consolidated/" or "conv:")
+    let named: Option<CountRow> = db
+        .query("SELECT count() AS count FROM memory WHERE topic NONE { |$t| string::starts_with($t, 'conv:') OR string::starts_with($t, 'consolidated/') } GROUP ALL")
+        .await?
+        .check()?
+        .take(0)?;
+
+    // Total
+    let total: Option<CountRow> = db
+        .query("SELECT count() AS count FROM memory GROUP ALL")
+        .await?
+        .check()?
+        .take(0)?;
+
+    // Unconsolidated raw messages
+    let pending: Option<CountRow> = db
+        .query("SELECT count() AS count FROM raw_message WHERE consolidated = false GROUP ALL")
+        .await?
+        .check()?
+        .take(0)?;
+
+    let total_count = total.map(|r| r.count).unwrap_or(0);
+    let named_count = named.map(|r| r.count).unwrap_or(total_count);
+    let pending_count = pending.map(|r| r.count).unwrap_or(0);
+
+    Ok((total_count, named_count, pending_count))
 }
 
 /// Query messages around a specific source_id: N messages before and after.

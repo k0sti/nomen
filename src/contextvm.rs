@@ -478,7 +478,7 @@ impl ContextVmServer {
     async fn handle_consolidate(&self, _params: &Value) -> Result<ContextVmResponse> {
         let config = consolidate::ConsolidationConfig::default();
         let report =
-            consolidate::consolidate(&self.db, self.embedder.as_ref(), &config).await?;
+            consolidate::consolidate(&self.db, self.embedder.as_ref(), &config, Some(&self.relay)).await?;
 
         Ok(ContextVmResponse::ok(json!({
             "messages_processed": report.messages_processed,

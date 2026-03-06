@@ -36,13 +36,58 @@ pub struct Config {
     /// Group definitions
     #[serde(default)]
     pub groups: Vec<GroupConfig>,
-    /// Consolidation LLM configuration
+    /// Consolidation LLM configuration (top-level [consolidation] — backward compat)
     #[serde(default)]
     pub consolidation: Option<ConsolidationLlmConfig>,
+    /// Memory section with nested consolidation (spec-compliant [memory.consolidation])
+    #[serde(default)]
+    pub memory: Option<MemorySection>,
     /// Messaging configuration
     #[serde(default)]
     pub messaging: Option<MessagingConfig>,
 }
+
+/// The [memory] config section, per spec.
+#[derive(Deserialize, Clone, Default)]
+pub struct MemorySection {
+    /// Consolidation settings per spec: [memory.consolidation]
+    #[serde(default)]
+    pub consolidation: Option<MemoryConsolidationConfig>,
+}
+
+/// Full consolidation config matching the spec [memory.consolidation] section.
+#[derive(Deserialize, Clone)]
+pub struct MemoryConsolidationConfig {
+    /// Whether consolidation is enabled
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    /// Run consolidation every N hours
+    #[serde(default = "default_interval_hours")]
+    pub interval_hours: u32,
+    /// Consolidate messages older than N minutes
+    #[serde(default = "default_ephemeral_ttl_minutes")]
+    pub ephemeral_ttl_minutes: u32,
+    /// Force consolidation above this count
+    #[serde(default = "default_max_ephemeral_count")]
+    pub max_ephemeral_count: usize,
+    /// Dry run mode
+    #[serde(default)]
+    pub dry_run: bool,
+    /// LLM provider (inlined, or fall back to top-level [consolidation])
+    #[serde(default)]
+    pub provider: Option<String>,
+    #[serde(default)]
+    pub model: Option<String>,
+    #[serde(default)]
+    pub api_key_env: Option<String>,
+    #[serde(default)]
+    pub base_url: Option<String>,
+}
+
+fn default_true() -> bool { true }
+fn default_interval_hours() -> u32 { 4 }
+fn default_ephemeral_ttl_minutes() -> u32 { 60 }
+fn default_max_ephemeral_count() -> usize { 200 }
 
 #[derive(Deserialize, Clone)]
 pub struct MessagingConfig {
@@ -55,6 +100,7 @@ fn default_messaging_channel() -> String {
     "nostr".to_string()
 }
 
+/// LLM provider config for consolidation (top-level [consolidation] section).
 #[derive(Deserialize, Clone)]
 pub struct ConsolidationLlmConfig {
     /// Provider: "openrouter", "openai", or "none"
@@ -168,6 +214,34 @@ impl Config {
             }
         }
         out
+    }
+
+    /// Resolve the effective consolidation LLM config.
+    ///
+    /// Checks [memory.consolidation] first (spec-compliant), falls back to
+    /// top-level [consolidation] (backward compat).
+    pub fn consolidation_llm_config(&self) -> Option<ConsolidationLlmConfig> {
+        // Try [memory.consolidation] first
+        if let Some(ref mem) = self.memory {
+            if let Some(ref mc) = mem.consolidation {
+                if mc.provider.is_some() || mc.model.is_some() || mc.api_key_env.is_some() {
+                    return Some(ConsolidationLlmConfig {
+                        provider: mc.provider.clone().unwrap_or_else(default_consolidation_provider),
+                        model: mc.model.clone().unwrap_or_else(default_consolidation_model),
+                        api_key_env: mc.api_key_env.clone().unwrap_or_else(default_consolidation_api_key_env),
+                        base_url: mc.base_url.clone(),
+                    });
+                }
+            }
+        }
+
+        // Fall back to top-level [consolidation]
+        self.consolidation.clone()
+    }
+
+    /// Get the embedding dimensions from config (defaults to 1536).
+    pub fn embedding_dimensions(&self) -> usize {
+        self.embedding.as_ref().map(|e| e.dimensions).unwrap_or(1536)
     }
 
     /// Build an embedder from config. Returns NoopEmbedder if no config or no API key.

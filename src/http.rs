@@ -326,7 +326,7 @@ async fn api_consolidate(
     Json(_req): Json<ConsolidateRequest>,
 ) -> Result<Json<Value>, AppError> {
     let config = consolidate::ConsolidationConfig::default();
-    let report = consolidate::consolidate(&state.db, state.embedder.as_ref(), &config).await?;
+    let report = consolidate::consolidate(&state.db, state.embedder.as_ref(), &config, state.relay.as_ref()).await?;
 
     Ok(Json(json!({
         "messages_processed": report.messages_processed,

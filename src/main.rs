@@ -44,7 +44,17 @@ struct Cli {
 #[derive(Subcommand)]
 enum Command {
     /// List all memory events (fetches directly from relay)
-    List,
+    List {
+        /// Show only named memories (skip ephemeral)
+        #[arg(long)]
+        named: bool,
+        /// Show only ephemeral memories (pending consolidation)
+        #[arg(long)]
+        ephemeral: bool,
+        /// Show consolidation statistics
+        #[arg(long)]
+        stats: bool,
+    },
     /// Show config file path and status
     Config,
     /// Sync memory events from relay to local SurrealDB
@@ -73,6 +83,12 @@ enum Command {
         /// Event ID to delete
         #[arg(long)]
         id: Option<String>,
+        /// Delete ephemeral (raw) messages instead of memories
+        #[arg(long)]
+        ephemeral: bool,
+        /// Delete items older than this duration (e.g. 7d, 24h). Requires --ephemeral
+        #[arg(long)]
+        older_than: Option<String>,
     },
     /// Search memories (hybrid vector + full-text when embeddings are configured)
     Search {
@@ -148,6 +164,15 @@ enum Command {
         /// Max messages to process per run
         #[arg(long, default_value = "50")]
         batch_size: usize,
+        /// Preview what would be consolidated without publishing
+        #[arg(long)]
+        dry_run: bool,
+        /// Only consolidate messages older than this duration (e.g. 30m, 1h, 7d)
+        #[arg(long)]
+        older_than: Option<String>,
+        /// Only consolidate messages matching this tier
+        #[arg(long)]
+        tier: Option<String>,
     },
     /// List extracted entities
     Entities {
@@ -314,14 +339,14 @@ async fn main() -> Result<()> {
     let resolved = resolve_config(&cli)?;
 
     match cli.command {
-        Command::List => {
+        Command::List { named, ephemeral, stats } => {
             if resolved.nsecs.is_empty() {
                 bail!(
                     "No nsec provided. Set it in {} or pass --nsec",
                     Config::path().display()
                 );
             }
-            cmd_list(&resolved.relay, &resolved.nsecs).await?;
+            cmd_list(&resolved.relay, &resolved.nsecs, named, ephemeral, stats).await?;
         }
         Command::Config => {
             cmd_config(&resolved.relay, &resolved.nsecs);
@@ -338,11 +363,15 @@ async fn main() -> Result<()> {
             }
             cmd_store(&resolved.relay, &resolved.nsecs, &topic, &summary, &detail, &tier, confidence).await?;
         }
-        Command::Delete { topic, id } => {
-            if resolved.nsecs.is_empty() {
-                bail!("No nsec provided. Set it in {} or pass --nsec", Config::path().display());
+        Command::Delete { topic, id, ephemeral, older_than } => {
+            if ephemeral {
+                cmd_delete_ephemeral(older_than.as_deref()).await?;
+            } else {
+                if resolved.nsecs.is_empty() {
+                    bail!("No nsec provided. Set it in {} or pass --nsec", Config::path().display());
+                }
+                cmd_delete(&resolved.relay, &resolved.nsecs, topic.as_deref(), id.as_deref()).await?;
             }
-            cmd_delete(&resolved.relay, &resolved.nsecs, topic.as_deref(), id.as_deref()).await?;
         }
         Command::Search { ref query, ref tier, limit, vector_weight, text_weight } => {
             cmd_search(&cli, query, tier.as_deref(), limit, vector_weight, text_weight).await?;
@@ -359,8 +388,8 @@ async fn main() -> Result<()> {
         Command::Messages { source, channel, sender, since, limit, around, context } => {
             cmd_messages(source.as_deref(), channel.as_deref(), sender.as_deref(), since.as_deref(), limit, around.as_deref(), context).await?;
         }
-        Command::Consolidate { min_messages, batch_size } => {
-            cmd_consolidate(&cli, min_messages, batch_size).await?;
+        Command::Consolidate { min_messages, batch_size, dry_run, ref older_than, ref tier } => {
+            cmd_consolidate(&cli, min_messages, batch_size, dry_run, older_than.clone(), tier.clone()).await?;
         }
         Command::Entities { kind } => {
             cmd_entities(kind.as_deref()).await?;
@@ -384,7 +413,56 @@ async fn main() -> Result<()> {
 
 // ── Command: list ───────────────────────────────────────────────────
 
-async fn cmd_list(relay_url: &str, nsecs: &[String]) -> Result<()> {
+async fn cmd_list(relay_url: &str, nsecs: &[String], named: bool, ephemeral: bool, stats: bool) -> Result<()> {
+    // If --stats or --ephemeral, use local DB
+    if stats || ephemeral {
+        let db_handle = db::init_db().await?;
+
+        if stats {
+            let (total, _named_count, pending) = db::count_memories_by_type(&db_handle).await?;
+            println!(
+                "\n{}\n{}",
+                "Memory Statistics".bold(),
+                "═".repeat(40)
+            );
+            println!("  Named memories: {}", total);
+            println!("  Ephemeral (pending): {}", pending.to_string().yellow());
+            println!();
+            return Ok(());
+        }
+
+        if ephemeral {
+            let messages = db::get_unconsolidated_messages(&db_handle, 200).await?;
+            if messages.is_empty() {
+                println!("No ephemeral messages pending consolidation.");
+                return Ok(());
+            }
+            println!(
+                "\n{} ({} pending)\n{}",
+                "Ephemeral Messages".bold(),
+                messages.len(),
+                "═".repeat(60)
+            );
+            for msg in &messages {
+                let channel_display = if msg.channel.is_empty() {
+                    String::new()
+                } else {
+                    format!(" #{}", msg.channel)
+                };
+                println!(
+                    "  [{}] {}{}: {}",
+                    msg.source,
+                    msg.sender.bold(),
+                    channel_display,
+                    if msg.content.len() > 80 { format!("{}...", &msg.content[..80]) } else { msg.content.clone() }
+                );
+                println!("    {}", msg.created_at.dimmed());
+            }
+            println!("\n{}: {} messages\n", "Total".bold(), messages.len());
+            return Ok(());
+        }
+    }
+
     let (all_keys, pubkeys) = parse_keys(nsecs)?;
     debug!("Parsed {} keys", all_keys.len());
 
@@ -404,6 +482,15 @@ async fn cmd_list(relay_url: &str, nsecs: &[String]) -> Result<()> {
         if d_tag.starts_with("snowclaw:config:") {
             continue;
         }
+
+        // If --named, skip ephemeral-looking entries
+        if named {
+            let topic = nomen::memory::parse_d_tag(&d_tag);
+            if topic.starts_with("conv:") || topic.starts_with("consolidated/") {
+                continue;
+            }
+        }
+
         memories.push(parse_event(&event, &all_keys[0]));
     }
 
@@ -653,6 +740,33 @@ async fn cmd_delete(
     Ok(())
 }
 
+// ── Command: delete ephemeral ───────────────────────────────────────
+
+async fn cmd_delete_ephemeral(older_than: Option<&str>) -> Result<()> {
+    let older_than = older_than.ok_or_else(|| {
+        anyhow::anyhow!("--older-than is required with --ephemeral (e.g. --older-than 7d)")
+    })?;
+
+    let secs = consolidate::parse_duration_str(older_than)?;
+    let cutoff = chrono::Utc::now() - chrono::Duration::seconds(secs);
+    let cutoff_str = cutoff.to_rfc3339();
+
+    let db_handle = db::init_db().await?;
+    let count = db::delete_ephemeral_before(&db_handle, &cutoff_str).await?;
+
+    if count == 0 {
+        println!("No ephemeral messages older than {older_than} to delete.");
+    } else {
+        println!(
+            "{}: {} ephemeral messages deleted (older than {older_than})",
+            "Deleted".red().bold(),
+            count
+        );
+    }
+
+    Ok(())
+}
+
 // ── Command: search ─────────────────────────────────────────────────
 
 async fn cmd_search(
@@ -665,7 +779,7 @@ async fn cmd_search(
 ) -> Result<()> {
     let config = load_config(cli)?;
     let embedder = config.build_embedder();
-    let db = db::init_db().await?;
+    let db = db::init_db_with_dimensions(config.embedding_dimensions()).await?;
 
     let opts = search::SearchOptions {
         query: query.to_string(),
@@ -734,7 +848,7 @@ async fn cmd_embed(cli: &Cli, limit: usize) -> Result<()> {
         );
     }
 
-    let db = db::init_db().await?;
+    let db = db::init_db_with_dimensions(config.embedding_dimensions()).await?;
     let missing = db::get_memories_without_embeddings(&db, limit).await?;
 
     if missing.is_empty() {
@@ -978,32 +1092,86 @@ async fn cmd_messages(
 
 // ── Command: consolidate ────────────────────────────────────────────
 
-async fn cmd_consolidate(cli: &Cli, min_messages: usize, batch_size: usize) -> Result<()> {
+async fn cmd_consolidate(
+    cli: &Cli,
+    min_messages: usize,
+    batch_size: usize,
+    dry_run: bool,
+    older_than: Option<String>,
+    tier: Option<String>,
+) -> Result<()> {
     let config = load_config(cli)?;
     let embedder = config.build_embedder();
-    let db = db::init_db().await?;
+    let db_handle = db::init_db_with_dimensions(config.embedding_dimensions()).await?;
+    let resolved = resolve_config(cli)?;
+
+    // Build relay manager for NIP-09 deletion events
+    let relay_manager = if !resolved.nsecs.is_empty() && !dry_run {
+        let (all_keys, _) = parse_keys(&resolved.nsecs)?;
+        let mgr = build_relay_manager(&resolved.relay, &all_keys[0]);
+        mgr.connect().await.ok();
+        Some(mgr)
+    } else {
+        None
+    };
+
+    // Build LLM provider from config (checks [memory.consolidation] then [consolidation])
+    let llm_provider: Box<dyn consolidate::LlmProvider> = config
+        .consolidation_llm_config()
+        .and_then(|c| consolidate::OpenAiLlmProvider::from_config(&c))
+        .map(|p| Box::new(p) as Box<dyn consolidate::LlmProvider>)
+        .unwrap_or_else(|| Box::new(consolidate::NoopLlmProvider));
 
     let consolidation_config = consolidate::ConsolidationConfig {
         batch_size,
         min_messages,
-        llm_provider: Box::new(consolidate::NoopLlmProvider),
+        llm_provider,
+        dry_run,
+        older_than,
+        tier,
     };
 
-    println!("Running consolidation pipeline...");
-    let report = consolidate::consolidate(&db, embedder.as_ref(), &consolidation_config).await?;
+    if dry_run {
+        println!("{} Running consolidation pipeline...", "[DRY RUN]".yellow().bold());
+    } else {
+        println!("Running consolidation pipeline...");
+    }
+
+    let report = consolidate::consolidate(
+        &db_handle,
+        embedder.as_ref(),
+        &consolidation_config,
+        relay_manager.as_ref(),
+    )
+    .await?;
 
     if report.memories_created == 0 {
         println!("Nothing to consolidate (need at least {min_messages} unconsolidated messages).");
     } else {
+        let prefix = if dry_run {
+            format!("{}", "[DRY RUN] Would consolidate".yellow())
+        } else {
+            format!("{}", "Consolidated".green().bold())
+        };
         println!(
             "{}: {} messages → {} memories",
-            "Consolidated".green().bold(),
+            prefix,
             report.messages_processed,
             report.memories_created
         );
+        if report.events_deleted > 0 {
+            println!("  Deleted {} ephemeral events from relay (NIP-09)", report.events_deleted);
+        }
         if !report.channels.is_empty() {
             println!("  Channels: {}", report.channels.join(", "));
         }
+        for group in &report.groups {
+            println!("  {} → {} ({} messages)", group.key.dimmed(), group.topic.bold(), group.message_count);
+        }
+    }
+
+    if let Some(ref mgr) = relay_manager {
+        mgr.disconnect().await;
     }
 
     Ok(())
@@ -1127,7 +1295,7 @@ async fn cmd_serve(
     allowed_npubs: Vec<String>,
 ) -> Result<()> {
     let config = load_config(cli)?;
-    let db = db::init_db().await?;
+    let db = db::init_db_with_dimensions(config.embedding_dimensions()).await?;
 
     let default_channel = config
         .messaging
@@ -1212,7 +1380,7 @@ async fn cmd_serve(
         vm_relay.connect().await?;
 
         let vm_embedder = config.build_embedder();
-        let vm_db = db::init_db().await?;
+        let vm_db = db::init_db_with_dimensions(config.embedding_dimensions()).await?;
         let vm_groups = groups::GroupStore::load(&config.groups, &vm_db).await?;
 
         let vm_server = contextvm::ContextVmServer::new(

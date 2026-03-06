@@ -82,8 +82,9 @@ async fn test_ingest_and_consolidate() -> Result<()> {
         batch_size: 50,
         min_messages: 3,
         llm_provider: Box::new(nomen::consolidate::NoopLlmProvider),
+        ..Default::default()
     };
-    let report = nomen::consolidate::consolidate(&db, &embedder, &config).await?;
+    let report = nomen::consolidate::consolidate(&db, &embedder, &config, None).await?;
     assert_eq!(report.messages_processed, 5);
     assert!(report.memories_created > 0, "Should create at least 1 memory");
 

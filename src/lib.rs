@@ -91,7 +91,7 @@ impl Nomen {
     /// Does **not** connect to any relay — call methods on [`RelayManager`]
     /// separately if relay interaction is needed.
     pub async fn open(config: &Config) -> Result<Self> {
-        let db = db::init_db().await?;
+        let db = db::init_db_with_dimensions(config.embedding_dimensions()).await?;
         let embedder = config.build_embedder();
         let groups = GroupStore::load(&config.groups, &db).await?;
 
@@ -237,8 +237,9 @@ impl Nomen {
             batch_size: opts.batch_size,
             min_messages: opts.min_messages,
             llm_provider: opts.llm_provider.unwrap_or_else(|| Box::new(NoopLlmProvider)),
+            ..Default::default()
         };
-        consolidate::consolidate(&self.db, self.embedder.as_ref(), &config).await
+        consolidate::consolidate(&self.db, self.embedder.as_ref(), &config, self.relay.as_ref()).await
     }
 
     /// Query raw messages with filters.

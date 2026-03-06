@@ -551,7 +551,7 @@ impl McpServer {
     async fn tool_consolidate(&self, _args: &Value) -> Result<String> {
         let config = consolidate::ConsolidationConfig::default();
         let report =
-            consolidate::consolidate(&self.db, self.embedder.as_ref(), &config).await?;
+            consolidate::consolidate(&self.db, self.embedder.as_ref(), &config, self.relay.as_ref()).await?;
 
         if report.memories_created == 0 {
             Ok("Nothing to consolidate.".to_string())
