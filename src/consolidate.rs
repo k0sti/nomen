@@ -22,6 +22,10 @@ pub struct ExtractedMemory {
     pub detail: String,
     pub topic: String,
     pub confidence: f64,
+    /// Importance score (1-10). Higher = more important to remember.
+    pub importance: Option<i32>,
+    /// Whether this memory contradicts existing information (set during merge).
+    pub contradicts_existing: bool,
 }
 
 /// Trait for LLM-powered consolidation. Implementations call an LLM to
@@ -79,6 +83,8 @@ impl LlmProvider for NoopLlmProvider {
             detail,
             topic,
             confidence: 0.5,
+            importance: Some(5),
+            contradicts_existing: false,
         }])
     }
 }
@@ -259,6 +265,10 @@ struct LlmMemory {
     summary: String,
     detail: String,
     confidence: f64,
+    #[serde(default)]
+    importance: Option<i32>,
+    #[serde(default)]
+    contradicts_existing: Option<bool>,
 }
 
 #[async_trait]
@@ -284,9 +294,12 @@ impl LlmProvider for OpenAiLlmProvider {
 
         let system_prompt = "You are a memory consolidation agent. You are merging new information \
 into an existing memory. Return JSON with this exact structure: {\"memories\": [{\"topic\": \"category/subcategory\", \
-\"summary\": \"one-line summary\", \"detail\": \"full detail\", \"confidence\": 0.8}]}. \
+\"summary\": \"one-line summary\", \"detail\": \"full detail\", \"confidence\": 0.8, \"importance\": 7, \
+\"contradicts_existing\": false}]}. \
 Merge the new information into the existing memory. Update what changed. Keep what's still true. \
-Note any conflicts. The topic should remain the same as the existing memory's topic.";
+Set contradicts_existing to true if the new information directly contradicts facts in the existing memory. \
+Set importance 1-10: 1=trivial, 5=normal, 8=important decision, 10=critical fact. \
+The topic should remain the same as the existing memory's topic.";
 
         let user_prompt = format!(
             "Existing memory:\nSummary: {existing_summary}\nDetail: {existing_detail}\n\n\
@@ -341,6 +354,8 @@ Note any conflicts. The topic should remain the same as the existing memory's to
                 detail: m.detail,
                 topic: m.topic,
                 confidence: m.confidence.clamp(0.0, 1.0),
+                importance: m.importance.map(|i| i.clamp(1, 10)),
+                contradicts_existing: m.contradicts_existing.unwrap_or(false),
             })
             .collect())
     }
@@ -363,13 +378,14 @@ Note any conflicts. The topic should remain the same as the existing memory's to
         let system_prompt = "You are a memory consolidation agent. Given a batch of raw messages, \
 extract significant facts, decisions, and context into structured memories. \
 Return JSON with this exact structure: {\"memories\": [{\"topic\": \"category/subcategory\", \
-\"summary\": \"one-line summary\", \"detail\": \"full detail\", \"confidence\": 0.8}]}. \
+\"summary\": \"one-line summary\", \"detail\": \"full detail\", \"confidence\": 0.8, \"importance\": 7}]}. \
 Use semantic topic names following this convention: \
 - user/<name>/<aspect> for per-user knowledge (preferences, timezone, projects) \
 - project/<name>/<aspect> for project knowledge \
 - group/<id>/<aspect> for group context \
 - fact/<domain>/<topic> for general knowledge \
 Only extract genuinely significant information. Set confidence 0.5-1.0 based on how certain the information is. \
+Set importance 1-10: 1=trivial, 5=normal, 8=important decision, 10=critical fact. \
 Return an empty memories array if nothing significant is found.";
 
         let body = serde_json::json!({
@@ -419,6 +435,8 @@ Return an empty memories array if nothing significant is found.";
                 detail: m.detail,
                 topic: m.topic,
                 confidence: m.confidence.clamp(0.0, 1.0),
+                importance: m.importance.map(|i| i.clamp(1, 10)),
+                contradicts_existing: false,
             })
             .collect())
     }
@@ -627,7 +645,7 @@ pub async fn consolidate(
             // Check if a memory with this topic already exists (TODO #2: merge)
             let existing = get_existing_memory(db, &d_tag).await;
 
-            let (final_summary, final_detail, final_confidence, is_merge) = if let Ok(Some(existing_mem)) = existing {
+            let (final_summary, final_detail, final_confidence, final_importance, contradicts, is_merge) = if let Ok(Some(existing_mem)) = existing {
                 // Merge: re-prompt LLM with existing + new
                 debug!(topic = %memory.topic, "Merging into existing memory");
                 let existing_summary = existing_mem.summary.as_deref().unwrap_or("");
@@ -636,15 +654,15 @@ pub async fn consolidate(
                 match config.llm_provider.merge(existing_summary, existing_detail, group_msgs).await {
                     Ok(merged) if !merged.is_empty() => {
                         let m = &merged[0];
-                        (m.summary.clone(), m.detail.clone(), m.confidence, true)
+                        (m.summary.clone(), m.detail.clone(), m.confidence, m.importance, m.contradicts_existing, true)
                     }
                     Ok(_) => {
                         // Merge returned empty, use extracted as-is
-                        (memory.summary.clone(), memory.detail.clone(), memory.confidence, true)
+                        (memory.summary.clone(), memory.detail.clone(), memory.confidence, memory.importance, false, true)
                     }
                     Err(e) => {
                         warn!("LLM merge failed, using extracted memory: {e}");
-                        (memory.summary.clone(), memory.detail.clone(), memory.confidence, true)
+                        (memory.summary.clone(), memory.detail.clone(), memory.confidence, memory.importance, false, true)
                     }
                 }
             } else {
@@ -704,8 +722,11 @@ pub async fn consolidate(
                     continue;
                 }
 
-                (memory.summary.clone(), memory.detail.clone(), memory.confidence, false)
+                (memory.summary.clone(), memory.detail.clone(), memory.confidence, memory.importance, false, false)
             };
+
+            let summary_for_entities = final_summary.clone();
+            let detail_for_entities = final_detail.clone();
 
             let mem = crate::NewMemory {
                 topic: memory.topic.clone(),
@@ -741,11 +762,61 @@ pub async fn consolidate(
             .await
             .ok();
 
+            // Store importance score
+            if let Some(imp) = final_importance {
+                crate::db::set_importance(db, &d_tag, imp).await.ok();
+            }
+
+            // Handle conflict detection: create contradicts edge
+            if contradicts && is_merge {
+                let existing_d_tag = format!("snow:memory:{}", memory.topic);
+                if let Err(e) = crate::db::create_references_edge(
+                    db,
+                    &d_tag,
+                    &existing_d_tag,
+                    "contradicts",
+                ).await {
+                    warn!("Failed to create contradicts edge: {e}");
+                } else {
+                    debug!(topic = %memory.topic, "Created contradicts edge for conflicting merge");
+                }
+            }
+
             // Create consolidated_from edges
             if let Ok(record_id) = get_memory_record_id(db, &d_tag).await {
                 for msg in group_msgs {
                     if let Err(e) = crate::db::create_consolidated_edge(db, &record_id, &msg.id).await {
                         warn!("Failed to create consolidated_from edge: {e}");
+                    }
+                }
+            }
+
+            // Entity extraction from consolidated memory
+            {
+                let entity_text = format!("{} {}", summary_for_entities, detail_for_entities);
+                let extracted_entities = crate::entities::extract_entities_heuristic(&entity_text, &[]);
+                if let Ok(record_id) = get_memory_record_id(db, &d_tag).await {
+                    for entity in &extracted_entities {
+                        match crate::db::store_entity(db, &entity.name, &entity.kind).await {
+                            Ok(entity_id) => {
+                                // Parse entity_id to get just the ID part
+                                let eid = entity_id.split_once(':').map(|(_, id)| id).unwrap_or(&entity_id);
+                                let mid = record_id.split_once(':').map(|(_, id)| id).unwrap_or(&record_id);
+                                if let Err(e) = crate::db::create_mention_edge(db, mid, eid, entity.relevance).await {
+                                    warn!("Failed to create mention edge for entity '{}': {e}", entity.name);
+                                }
+                            }
+                            Err(e) => {
+                                warn!("Failed to store entity '{}': {e}", entity.name);
+                            }
+                        }
+                    }
+                    if !extracted_entities.is_empty() {
+                        debug!(
+                            topic = %memory.topic,
+                            count = extracted_entities.len(),
+                            "Extracted entities from consolidated memory"
+                        );
                     }
                 }
             }

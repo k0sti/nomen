@@ -129,6 +129,7 @@ pub struct HybridSearchRow {
     pub scope: String,
     pub topic: String,
     pub confidence: Option<f64>,
+    pub importance: Option<i32>,
     pub source: String,
     pub model: Option<String>,
     pub version: Option<i64>,
@@ -139,6 +140,7 @@ pub struct HybridSearchRow {
     pub vec_score: Option<f64>,
     pub text_score: Option<f64>,
     pub combined: Option<f64>,
+    pub embedding: Option<Vec<f32>>,
 }
 
 /// Row for memories missing embeddings
@@ -190,6 +192,7 @@ DEFINE FIELD IF NOT EXISTS consolidated_from ON memory TYPE option<string>;
 DEFINE FIELD IF NOT EXISTS consolidated_at   ON memory TYPE option<string>;
 DEFINE FIELD IF NOT EXISTS last_accessed     ON memory TYPE option<string>;
 DEFINE FIELD IF NOT EXISTS access_count      ON memory TYPE int DEFAULT 0;
+DEFINE FIELD IF NOT EXISTS importance        ON memory TYPE option<int>;
 -- Note: created_at/updated_at remain TYPE string (not datetime) because SurrealDB
 -- datetime serialization requires special handling in Rust serde. RFC3339 strings
 -- still support lexicographic ordering which is sufficient for our queries.
@@ -728,6 +731,59 @@ pub async fn set_consolidation_tags(
         .bind(("d_tag", d_tag.to_string()))
         .bind(("from", consolidated_from.to_string()))
         .bind(("at", consolidated_at.to_string()))
+        .await?
+        .check()?;
+    Ok(())
+}
+
+/// Set the importance score on a memory record.
+pub async fn set_importance(db: &Surreal<Db>, d_tag: &str, importance: i32) -> Result<()> {
+    db.query("UPDATE memory SET importance = $importance WHERE d_tag = $d_tag")
+        .bind(("d_tag", d_tag.to_string()))
+        .bind(("importance", importance))
+        .await?
+        .check()?;
+    Ok(())
+}
+
+/// Create a "references" edge between two memories with a relation type.
+pub async fn create_references_edge(
+    db: &Surreal<Db>,
+    from_d_tag: &str,
+    to_d_tag: &str,
+    relation: &str,
+) -> Result<()> {
+    // Resolve d_tags to record IDs
+    #[derive(Deserialize)]
+    struct IdRow {
+        #[serde(deserialize_with = "deserialize_thing_as_string")]
+        id: String,
+    }
+    let from_rows: Vec<IdRow> = db
+        .query("SELECT id FROM memory WHERE d_tag = $d_tag LIMIT 1")
+        .bind(("d_tag", from_d_tag.to_string()))
+        .await?
+        .check()?
+        .take(0)?;
+    let to_rows: Vec<IdRow> = db
+        .query("SELECT id FROM memory WHERE d_tag = $d_tag LIMIT 1")
+        .bind(("d_tag", to_d_tag.to_string()))
+        .await?
+        .check()?
+        .take(0)?;
+
+    let from_id = from_rows.first().map(|r| &r.id).ok_or_else(|| anyhow::anyhow!("Memory not found: {from_d_tag}"))?;
+    let to_id = to_rows.first().map(|r| &r.id).ok_or_else(|| anyhow::anyhow!("Memory not found: {to_d_tag}"))?;
+
+    // Parse table:id format
+    let (from_tb, from_rid) = from_id.split_once(':').unwrap_or(("memory", from_id));
+    let (to_tb, to_rid) = to_id.split_once(':').unwrap_or(("memory", to_id));
+
+    db.query("RELATE $from->references->$to SET relation = $relation, created_at = $now")
+        .bind(("from", surrealdb::sql::Thing::from((from_tb, from_rid))))
+        .bind(("to", surrealdb::sql::Thing::from((to_tb, to_rid))))
+        .bind(("relation", relation.to_string()))
+        .bind(("now", chrono::Utc::now().to_rfc3339()))
         .await?
         .check()?;
     Ok(())

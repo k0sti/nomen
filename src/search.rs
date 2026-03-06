@@ -56,11 +56,14 @@ pub struct SearchResult {
     pub topic: String,
     pub confidence: String,
     pub summary: String,
+    pub detail: String,
     pub created_at: Timestamp,
     pub score: f64,
     pub match_type: MatchType,
     /// The d_tag for access tracking.
     pub d_tag: Option<String>,
+    /// Embedding vector (for aggregation similarity checks).
+    pub embedding: Option<Vec<f32>>,
 }
 
 /// Calculate confidence decay factor based on days since last access.
@@ -128,9 +131,8 @@ pub async fn search(
 
             let vec_score = r.vec_score.unwrap_or(0.0);
             let text_score = r.text_score.unwrap_or(0.0);
-            let combined = r.combined.unwrap_or(0.0);
 
-            // Apply confidence decay (TODO #4)
+            // Apply confidence decay
             let decay = confidence_decay_factor(
                 r.last_accessed.as_deref(),
                 &r.created_at,
@@ -138,8 +140,17 @@ pub async fn search(
             let raw_confidence = r.confidence.unwrap_or(0.5);
             let effective_confidence = raw_confidence * decay;
 
-            // Adjust combined score by decay factor
-            let decayed_score = combined * decay;
+            // Compute recency factor (1.0 for now, decays to 0.0 over MAX_AGE_DAYS)
+            let recency = confidence_decay_factor(Some(&r.created_at), &r.created_at);
+
+            // Importance normalized to 0.0–1.0 (importance 1-10 → 0.1–1.0)
+            let importance_norm = r.importance.unwrap_or(5) as f64 / 10.0;
+
+            // Composite score per spec: semantic×0.4 + text×0.3 + recency×0.15 + importance×0.15
+            let decayed_score = vec_score * 0.4
+                + text_score * 0.3
+                + recency * 0.15
+                + importance_norm * 0.15;
 
             let match_type = if vec_score > 0.0 && text_score > 0.0 {
                 MatchType::Hybrid
@@ -153,11 +164,13 @@ pub async fn search(
                 tier: r.tier,
                 topic: r.topic,
                 confidence: format!("{effective_confidence:.2}"),
-                summary: r.summary.unwrap_or(r.content),
+                summary: r.summary.unwrap_or_else(|| r.content.clone()),
+                detail: r.content,
                 created_at: ts,
                 score: decayed_score,
                 match_type,
                 d_tag: r.d_tag,
+                embedding: r.embedding,
             }
         })
         .collect();
@@ -190,12 +203,14 @@ async fn text_only_search(
         .map(|r| SearchResult {
             tier: r.tier,
             topic: r.topic,
-            confidence: r.confidence,
-            summary: r.summary,
+            confidence: r.confidence.clone(),
+            summary: r.summary.clone(),
+            detail: r.summary,
             created_at: r.created_at,
             score: 0.0,
             match_type: MatchType::Text,
             d_tag: None,
+            embedding: None,
         })
         .collect();
 
