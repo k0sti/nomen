@@ -2,6 +2,7 @@
   import { onDestroy } from 'svelte';
   import MemoryCard from '../components/MemoryCard.svelte';
   import { relay, memories, tierFilter, loading, profile, isLoggedIn, getSigner, ensureConnected, showError } from '../lib/stores';
+  import { nip19, nip44, nip04 } from 'nostr-tools';
   import type { Memory } from '../lib/api';
   import type { Subscription } from '../lib/relay';
 
@@ -26,13 +27,103 @@
     private: $memories.filter((m) => m.tier === 'private').length,
   });
 
+  function bytesToHex(bytes: Uint8Array): string {
+    return Array.from(bytes).map((b) => b.toString(16).padStart(2, '0')).join('');
+  }
+
+  function looksEncrypted(v: string): boolean {
+    if (!v) return false;
+    if (v.startsWith('nip44:') || v.startsWith('nip04:')) return true;
+    if (v.startsWith('{') || v.startsWith('[')) return false;
+    // Heuristic for encoded ciphertext blobs
+    return v.length > 80 && /^[A-Za-z0-9+/=:_-]+$/.test(v);
+  }
+
+  async function tryDecryptWithNsec(cipherText: string, sourcePubkey: string, nsec: string): Promise<string | null> {
+    try {
+      const decoded = nip19.decode(nsec);
+      if (decoded.type !== 'nsec') return null;
+      const secret = decoded.data as Uint8Array;
+
+      const is44 = cipherText.startsWith('nip44:');
+      const is04 = cipherText.startsWith('nip04:');
+      const body = is44 || is04 ? cipherText.slice(6) : cipherText;
+
+      // Try NIP-44 first
+      try {
+        const convKey = nip44.getConversationKey(secret, sourcePubkey);
+        const plain = nip44.decrypt(body, convKey);
+        if (plain) return plain;
+      } catch {}
+
+      // Then NIP-04
+      try {
+        const plain = await nip04.decrypt(bytesToHex(secret), sourcePubkey, body);
+        if (plain) return plain;
+      } catch {}
+
+      return null;
+    } catch {
+      return null;
+    }
+  }
+
+  async function decryptPrivateMemories(ms: Memory[], r: any): Promise<Memory[]> {
+    if (!$profile) return ms;
+    const cfg = await r.fetchAppData($profile.pubkey, 'nomen:config:agents').catch(() => null);
+    if (!cfg) return ms;
+
+    let agentNsecs: Record<string, string> = {};
+    try {
+      const parsed = JSON.parse(cfg.content);
+      for (const a of parsed.agents || []) {
+        if (a?.npub && a?.nsec) {
+          const pk = nip19.decode(a.npub).data as string;
+          agentNsecs[pk] = a.nsec;
+        }
+      }
+    } catch {
+      return ms;
+    }
+
+    const out: Memory[] = [];
+    for (const m of ms) {
+      if (m.tier !== 'private') {
+        out.push(m);
+        continue;
+      }
+      const nsec = agentNsecs[m.source];
+      if (!nsec) {
+        out.push(m);
+        continue;
+      }
+
+      let summary = m.summary;
+      let detail = m.detail;
+
+      if (looksEncrypted(summary)) {
+        const dec = await tryDecryptWithNsec(summary, m.source, nsec);
+        if (dec) summary = dec;
+      }
+      if (looksEncrypted(detail)) {
+        const dec = await tryDecryptWithNsec(detail, m.source, nsec);
+        if (dec) detail = dec;
+      }
+
+      out.push({ ...m, summary, detail });
+    }
+
+    return out;
+  }
+
   async function loadMemories() {
     loading.set(true);
     try {
       const r = await ensureConnected();
 
       const result = await r.listMemories($profile!.pubkey);
-      memories.set(result);
+      const decrypted = await decryptPrivateMemories(result, r);
+      memories.set(decrypted);
 
       // Live subscription for new memories
       sub = r.subscribeMemories($profile!.pubkey, (m: Memory) => {

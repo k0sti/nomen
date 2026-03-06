@@ -179,11 +179,13 @@ function parseMemory(e: NostrEvent): Memory {
     topic: getTag('snow:topic') || parsed.topic || '',
     summary: parsed.summary || '',
     detail: parsed.detail || '',
-    tier: getTag('snow:tier') || 'public',
-    confidence: parseFloat(getTag('snow:confidence') || '0.8'),
+    tier: getTag('snow:tier') || parsed.tier || 'public',
+    scope: getTag('snow:scope') || getTag('h') || parsed.scope || '',
+    confidence: parseFloat(getTag('snow:confidence') || String(parsed.confidence || '0.8')),
     source: e.pubkey,
+    model: parsed.model || '',
     created_at: new Date(e.created_at * 1000).toISOString(),
-    version: parseInt(getTag('snow:version') || '1', 10),
+    version: parseInt(getTag('snow:version') || String(parsed.version || '1'), 10),
   };
 }
 

@@ -2,10 +2,36 @@
   import TierBadge from './TierBadge.svelte';
   import type { Memory } from '../lib/api';
   import { expandedMemory } from '../lib/stores';
+  import { nip19 } from 'nostr-tools';
+  import { fetchProfileMetadata, compressNpub } from '../lib/nostr';
+  import { fetchProfileFromRelay } from '../lib/relay';
 
   let { memory, ondelete }: { memory: Memory; ondelete?: (memory: Memory) => void } = $props();
 
   const isExpanded = $derived($expandedMemory === memory.d_tag);
+  let sourceMeta = $state<Record<string, any> | null>(null);
+
+  const sourceNpub = $derived.by(() => {
+    try {
+      return memory.source && memory.source.length === 64 ? nip19.npubEncode(memory.source) : memory.source;
+    } catch {
+      return memory.source;
+    }
+  });
+
+  const sourceShort = $derived(sourceNpub ? compressNpub(sourceNpub) : 'unknown');
+  const sourceLabel = $derived(sourceMeta?.display_name || sourceMeta?.displayName || sourceMeta?.name || sourceShort);
+
+  $effect(() => {
+    if (!memory.source || memory.source.length !== 64) return;
+    let cancelled = false;
+    (async () => {
+      const relayMeta = await fetchProfileFromRelay(memory.source).catch(() => null);
+      const meta = relayMeta || await fetchProfileMetadata(memory.source).catch(() => null);
+      if (!cancelled) sourceMeta = meta;
+    })();
+    return () => { cancelled = true; };
+  });
 
   function toggle() {
     expandedMemory.set(isExpanded ? null : memory.d_tag);
@@ -43,6 +69,24 @@
           <TierBadge tier={memory.tier} scope={memory.scope} />
         </div>
         <p class="text-sm text-gray-400 mt-1 {isExpanded ? '' : 'line-clamp-2'}">{memory.summary}</p>
+        {#if memory.tier === 'private' || memory.tier === 'group'}
+          <div class="mt-2 flex items-center gap-2 text-[11px] text-gray-500">
+            {#if memory.tier === 'private'}
+              <span class="inline-flex items-center gap-1">🔒 private</span>
+              <span>•</span>
+              {#if sourceMeta?.picture}
+                <img src={sourceMeta.picture} alt="" class="w-3.5 h-3.5 rounded-full object-cover" />
+              {:else}
+                <span>👤</span>
+              {/if}
+              <span>{sourceLabel}</span>
+              <span class="font-mono">{sourceShort}</span>
+            {:else}
+              <span class="inline-flex items-center gap-1">👥 group</span>
+              <span class="font-mono">{memory.scope || 'unknown'}</span>
+            {/if}
+          </div>
+        {/if}
       </div>
       <div class="text-right shrink-0">
         <div class="text-xs text-gray-500">{formatDate(memory.created_at)}</div>
