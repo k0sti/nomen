@@ -870,7 +870,9 @@ async fn get_existing_memory(db: &Surreal<Db>, d_tag: &str) -> Result<Option<Exi
 struct ExistingMemory {
     content: String,
     summary: Option<String>,
+    #[allow(dead_code)]
     version: i64,
+    #[allow(dead_code)]
     confidence: Option<f64>,
 }
 
