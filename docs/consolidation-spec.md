@@ -355,16 +355,16 @@ Output: { "messages_processed": 47, "memories_created": 5 }
 
 - [x] **Tier derivation from source context** — Currently defaults to `public`. Should be `private` for DM sources, `group` for group sources.
 - [x] **Merge into existing memories** — When topic d-tag already exists, merge instead of creating duplicate. Requires fetching existing + re-prompting LLM.
-- [ ] **Conflict detection** — Flag contradictions between new and existing memories. Create `contradicts` graph edges.
+- [x] **Conflict detection** — Flag contradictions between new and existing memories. Create `contradicts` graph edges.
 - [x] **Access tracking** — `last_accessed` and `access_count` fields on memory records. Updated on search hits.
 - [x] **Confidence decay** — Time-based decay factor in retrieval scoring.
 - [x] **Pruning command** — `nomen prune` to delete unaccessed/low-confidence memories.
-- [ ] **Importance scoring at creation** — LLM assigns importance (1-10) during extraction, stored alongside confidence.
+- [x] **Importance scoring at creation** — LLM assigns importance (1-10) during extraction, stored alongside confidence.
 - [x] **Deduplication pass** — Embedding similarity check before creating new memories to catch near-duplicates.
-- [ ] **Entity extraction during consolidation** — Extract entities from consolidated content, create `mentions` edges.
-- [ ] **Auto-trigger** — Cron/heartbeat-based automatic consolidation when `enabled = true` and interval elapsed.
+- [x] **Entity extraction during consolidation** — Extract entities from consolidated content, create `mentions` edges.
+- [x] **Auto-trigger** — `check_consolidation_due()` checks interval_hours and max_ephemeral_count. HTTP GET `/consolidate/status`. Meta table tracks last run.
 - [x] **Cross-group consolidation guard** — Prevent private ephemeral memories from leaking into group-tier named memories.
-- [ ] **Aggregated search results** — Post-retrieval merging of semantically similar hits into coherent summaries.
+- [x] **Aggregated search results** — Post-retrieval merging of semantically similar hits (>0.85 cosine) into coherent summaries. CLI `--aggregate` flag.
 
 ## 12. Future: Dream Cycle
 
