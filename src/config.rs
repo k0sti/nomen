@@ -1,10 +1,10 @@
 use std::path::PathBuf;
 
 use anyhow::{Context, Result};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 /// Group configuration entry from config.toml [[groups]] section.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct GroupConfig {
     /// Dot-separated hierarchical id, e.g. "atlantislabs.engineering"
     pub id: String,
@@ -21,7 +21,7 @@ pub struct GroupConfig {
     pub relay: Option<String>,
 }
 
-#[derive(Deserialize, Default)]
+#[derive(Deserialize, Serialize, Default)]
 pub struct Config {
     #[serde(default)]
     pub relay: Option<String>,
@@ -30,6 +30,9 @@ pub struct Config {
     /// Single nsec shorthand
     #[serde(default)]
     pub nsec: Option<String>,
+    /// Default writer identity: "guardian" or "agent:N"
+    #[serde(default)]
+    pub default_writer: Option<String>,
     /// Embedding provider configuration
     #[serde(default)]
     pub embedding: Option<EmbeddingConfig>,
@@ -45,10 +48,13 @@ pub struct Config {
     /// Messaging configuration
     #[serde(default)]
     pub messaging: Option<MessagingConfig>,
+    /// HTTP server configuration
+    #[serde(default)]
+    pub server: Option<ServerConfig>,
 }
 
 /// The [memory] config section, per spec.
-#[derive(Deserialize, Clone, Default)]
+#[derive(Deserialize, Serialize, Clone, Default)]
 pub struct MemorySection {
     /// Consolidation settings per spec: [memory.consolidation]
     #[serde(default)]
@@ -56,7 +62,7 @@ pub struct MemorySection {
 }
 
 /// Full consolidation config matching the spec [memory.consolidation] section.
-#[derive(Deserialize, Clone)]
+#[derive(Deserialize, Serialize, Clone)]
 pub struct MemoryConsolidationConfig {
     /// Whether consolidation is enabled
     #[serde(default = "default_true")]
@@ -89,7 +95,7 @@ fn default_interval_hours() -> u32 { 4 }
 fn default_ephemeral_ttl_minutes() -> u32 { 60 }
 fn default_max_ephemeral_count() -> usize { 200 }
 
-#[derive(Deserialize, Clone)]
+#[derive(Deserialize, Serialize, Clone)]
 pub struct MessagingConfig {
     /// Default delivery channel (e.g. "nostr", "telegram"). Defaults to "nostr".
     #[serde(default = "default_messaging_channel")]
@@ -101,7 +107,7 @@ fn default_messaging_channel() -> String {
 }
 
 /// LLM provider config for consolidation (top-level [consolidation] section).
-#[derive(Deserialize, Clone)]
+#[derive(Deserialize, Serialize, Clone)]
 pub struct ConsolidationLlmConfig {
     /// Provider: "openrouter", "openai", or "none"
     #[serde(default = "default_consolidation_provider")]
@@ -129,7 +135,7 @@ fn default_consolidation_api_key_env() -> String {
     "OPENROUTER_API_KEY".to_string()
 }
 
-#[derive(Deserialize, Clone)]
+#[derive(Deserialize, Serialize, Clone)]
 pub struct EmbeddingConfig {
     /// Provider: "openai", "openrouter", or "none"
     #[serde(default = "default_provider")]
@@ -169,6 +175,21 @@ fn default_dimensions() -> usize {
 
 fn default_batch_size() -> usize {
     100
+}
+
+/// HTTP server configuration [server] section.
+#[derive(Deserialize, Serialize, Clone)]
+pub struct ServerConfig {
+    /// Whether the HTTP server is enabled
+    #[serde(default)]
+    pub enabled: bool,
+    /// Listen address (e.g. "127.0.0.1:3000")
+    #[serde(default = "default_listen")]
+    pub listen: String,
+}
+
+fn default_listen() -> String {
+    "127.0.0.1:3000".to_string()
 }
 
 impl Default for EmbeddingConfig {
