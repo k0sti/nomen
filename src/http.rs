@@ -336,20 +336,32 @@ async fn api_entities(
 async fn api_consolidation_status(
     State(state): State<SharedState>,
 ) -> Result<Json<Value>, AppError> {
-    // Use default consolidation config values for the check
-    let config = crate::config::MemoryConsolidationConfig {
-        enabled: true,
-        interval_hours: 4,
-        ephemeral_ttl_minutes: 60,
-        max_ephemeral_count: 200,
-        dry_run: false,
-        provider: None,
-        model: None,
-        api_key_env: None,
-        base_url: None,
-    };
-    let status = consolidate::check_consolidation_due(&state.db, &config).await?;
-    Ok(Json(serde_json::to_value(status)?))
+    let cfg = state.config.read().await;
+    let consol_config = cfg.memory.as_ref()
+        .and_then(|m| m.consolidation.clone())
+        .unwrap_or(crate::config::MemoryConsolidationConfig {
+            enabled: true,
+            interval_hours: 4,
+            ephemeral_ttl_minutes: 60,
+            max_ephemeral_count: 200,
+            dry_run: false,
+            provider: None,
+            model: None,
+            api_key_env: None,
+            base_url: None,
+        });
+    drop(cfg);
+
+    let status = consolidate::check_consolidation_due(&state.db, &consol_config).await?;
+
+    // Enrich with config values for the frontend
+    let mut val = serde_json::to_value(&status)?;
+    if let Some(obj) = val.as_object_mut() {
+        obj.insert("enabled".to_string(), json!(consol_config.enabled));
+        obj.insert("ephemeral_ttl_minutes".to_string(), json!(consol_config.ephemeral_ttl_minutes));
+    }
+
+    Ok(Json(val))
 }
 
 async fn api_consolidate(
@@ -430,5 +442,156 @@ async fn api_send(
         "event_id": result.event_id,
         "accepted": result.accepted,
         "rejected": result.rejected,
+    })))
+}
+
+// ── Settings dashboard endpoints ─────────────────────────────────
+
+fn strip_config_secrets(config: &Config) -> Value {
+    let embedding = config.embedding.as_ref().map(|e| {
+        json!({
+            "provider": e.provider,
+            "model": e.model,
+            "dimensions": e.dimensions,
+        })
+    });
+
+    // Resolve consolidation config
+    let consolidation = config.memory.as_ref()
+        .and_then(|m| m.consolidation.as_ref())
+        .map(|c| {
+            json!({
+                "enabled": c.enabled,
+                "interval_hours": c.interval_hours,
+                "ephemeral_ttl_minutes": c.ephemeral_ttl_minutes,
+                "max_ephemeral_count": c.max_ephemeral_count,
+                "provider": c.provider,
+                "model": c.model,
+                "dry_run": c.dry_run,
+            })
+        })
+        .or_else(|| config.consolidation.as_ref().map(|c| {
+            json!({
+                "enabled": true,
+                "provider": c.provider,
+                "model": c.model,
+            })
+        }));
+
+    let groups: Vec<Value> = config.groups.iter().map(|g| {
+        json!({
+            "id": g.id,
+            "name": g.name,
+            "member_count": g.members.len(),
+        })
+    }).collect();
+
+    json!({
+        "relay": config.relay,
+        "embedding": embedding,
+        "consolidation": consolidation,
+        "groups": groups,
+        "config_path": Config::path().to_string_lossy(),
+    })
+}
+
+async fn api_get_config(
+    State(state): State<SharedState>,
+) -> Result<Json<Value>, AppError> {
+    let config = state.config.read().await;
+    Ok(Json(strip_config_secrets(&config)))
+}
+
+async fn api_reload_config(
+    State(state): State<SharedState>,
+) -> Result<Json<Value>, AppError> {
+    let new_config = Config::load()?;
+    let stripped = strip_config_secrets(&new_config);
+    let mut config = state.config.write().await;
+    *config = new_config;
+    Ok(Json(stripped))
+}
+
+async fn api_stats(
+    State(state): State<SharedState>,
+) -> Result<Json<Value>, AppError> {
+    let (total, named, pending) = db::count_memories_by_type(&state.db).await?;
+    let entities = db::list_entities(&state.db, None).await?.len();
+    let groups = groups::list_groups(&state.db).await?.len();
+    let last_consolidation = db::get_meta(&state.db, "last_consolidation_run").await?;
+    let last_prune = db::get_meta(&state.db, "last_prune_run").await?;
+
+    // Estimate db size from the data directory
+    let db_size_bytes = estimate_db_size();
+
+    Ok(Json(json!({
+        "total_memories": total,
+        "named_memories": named,
+        "ephemeral_messages": pending,
+        "entities": entities,
+        "groups": groups,
+        "last_consolidation": last_consolidation,
+        "last_prune": last_prune,
+        "db_size_bytes": db_size_bytes,
+    })))
+}
+
+fn estimate_db_size() -> u64 {
+    let db_dir = dirs::home_dir()
+        .unwrap_or_default()
+        .join(".nomen")
+        .join("db");
+    if !db_dir.exists() {
+        return 0;
+    }
+    walkdir(db_dir)
+}
+
+fn walkdir(path: std::path::PathBuf) -> u64 {
+    let mut total = 0u64;
+    if let Ok(entries) = std::fs::read_dir(&path) {
+        for entry in entries.flatten() {
+            if let Ok(meta) = entry.metadata() {
+                if meta.is_file() {
+                    total += meta.len();
+                } else if meta.is_dir() {
+                    total += walkdir(entry.path());
+                }
+            }
+        }
+    }
+    total
+}
+
+async fn api_prune(
+    State(state): State<SharedState>,
+    Json(req): Json<PruneRequest>,
+) -> Result<Json<Value>, AppError> {
+    let days = req.days.unwrap_or(90);
+    let dry_run = req.dry_run.unwrap_or(true);
+
+    let report = db::prune_memories(&state.db, days, dry_run).await?;
+
+    // Record last prune time if not dry run
+    if !dry_run {
+        let _ = db::set_meta(&state.db, "last_prune_run", &chrono::Utc::now().to_rfc3339()).await;
+    }
+
+    let pruned_items: Vec<Value> = report.pruned.iter().map(|m| {
+        let age_days = chrono::DateTime::parse_from_rfc3339(&m.created_at)
+            .map(|dt| (chrono::Utc::now() - dt.with_timezone(&chrono::Utc)).num_days())
+            .unwrap_or(0);
+        json!({
+            "topic": m.topic,
+            "confidence": m.confidence,
+            "age_days": age_days,
+        })
+    }).collect();
+
+    Ok(Json(json!({
+        "memories_pruned": report.memories_pruned,
+        "raw_messages_pruned": report.raw_messages_pruned,
+        "dry_run": report.dry_run,
+        "pruned": pruned_items,
     })))
 }

@@ -1379,6 +1379,7 @@ async fn cmd_serve(
             relay: relay_manager,
             groups: group_store,
             default_channel,
+            config: std::sync::Arc::new(tokio::sync::RwLock::new(config)),
         };
 
         // Resolve landing dir: explicit flag > web/dist-landing relative to binary > cwd
