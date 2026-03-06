@@ -106,16 +106,19 @@ export function getAuthStatus(): Observable<boolean> {
 // ── Request helpers ──────────────────────────────────────────────
 
 async function requestEvents(filters: any[], timeoutMs = 15000): Promise<NostrEvent[]> {
-  const relay = getRelay();
+  const r = getRelay();
   const events: NostrEvent[] = [];
+
+  console.log('[relay] requestEvents', JSON.stringify(filters), 'connected:', r.connected, 'authenticated:', r.authenticated);
 
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
+      console.warn('[relay] requestEvents timeout, got', events.length, 'events');
       sub.unsubscribe();
-      resolve(events); // resolve with whatever we got
+      resolve(events);
     }, timeoutMs);
 
-    const sub = relay.request(filters).subscribe({
+    const sub = r.request(filters).subscribe({
       next: (event) => {
         if (typeof event === 'object' && event && 'id' in event) {
           events.push(event as NostrEvent);
@@ -123,10 +126,12 @@ async function requestEvents(filters: any[], timeoutMs = 15000): Promise<NostrEv
         }
       },
       complete: () => {
+        console.log('[relay] requestEvents complete, got', events.length, 'events');
         clearTimeout(timer);
         resolve(events);
       },
       error: (err) => {
+        console.error('[relay] requestEvents error:', err.message || err);
         clearTimeout(timer);
         reject(err);
       },
@@ -361,18 +366,9 @@ export class NomenRelay {
 
   async authenticate(signer: Signer): Promise<void> {
     setSigner(signer);
-    // Wait for authentication to complete (up to 10s)
-    const relay = getRelay();
-    if (relay.authenticated) return;
-
-    try {
-      await firstValueFrom(
-        relay.authenticated$.pipe(rxFilter(auth => auth)),
-        { defaultValue: false }
-      );
-    } catch {
-      // Timeout or error — requests will retry with auth anyway
-    }
+    // Don't wait here — applesauce-relay's request()/subscription() have
+    // built-in waitForAuth that pauses until authenticated$ is true.
+    // The auto-auth via challenge$ subscription handles the actual AUTH flow.
   }
 
   async listMemories(pubkey?: string): Promise<Memory[]> { return listMemories(pubkey); }
