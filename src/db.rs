@@ -840,7 +840,7 @@ pub async fn count_memories_by_type(db: &Surreal<Db>) -> Result<(usize, usize, u
 
     // Named memories (have a topic that doesn't start with "consolidated/" or "conv:")
     let named: Option<CountRow> = db
-        .query("SELECT count() AS count FROM memory WHERE topic NONE { |$t| string::starts_with($t, 'conv:') OR string::starts_with($t, 'consolidated/') } GROUP ALL")
+        .query("SELECT count() AS count FROM memory WHERE topic != NONE AND NOT (string::starts_with(topic, 'conv:') OR string::starts_with(topic, 'consolidated/')) GROUP ALL")
         .await?
         .check()?
         .take(0)?;
