@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  
   import { profile, signer, relay, ensureConnected, showError, showInfo } from '../lib/stores';
   import { nip19 } from 'nostr-tools';
   import { compressNpub, fetchProfileMetadata } from '../lib/nostr';
@@ -27,8 +27,8 @@
   let loadingConfig = $state(false);
   let discoverLoading = $state(false);
 
-  onMount(() => {
-    if ($profile) {
+  $effect(() => {
+    if ($profile && agents.length === 0 && !loadingConfig) {
       loadConfig();
     }
   });

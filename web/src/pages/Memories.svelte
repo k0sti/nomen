@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount, onDestroy } from 'svelte';
+  import { onDestroy } from 'svelte';
   import MemoryCard from '../components/MemoryCard.svelte';
   import { relay, memories, tierFilter, loading, profile, isLoggedIn, getSigner, ensureConnected, showError } from '../lib/stores';
   import type { Memory } from '../lib/api';
@@ -26,17 +26,16 @@
     private: $memories.filter((m) => m.tier === 'private').length,
   });
 
-  onMount(async () => {
-    if (!$profile) return;
+  async function loadMemories() {
     loading.set(true);
     try {
       const r = await ensureConnected();
 
-      const result = await r.listMemories($profile.pubkey);
+      const result = await r.listMemories($profile!.pubkey);
       memories.set(result);
 
       // Live subscription for new memories
-      sub = r.subscribeMemories($profile.pubkey, (m: Memory) => {
+      sub = r.subscribeMemories($profile!.pubkey, (m: Memory) => {
         memories.update((ms) => {
           const idx = ms.findIndex((x) => x.d_tag === m.d_tag);
           if (idx >= 0) {
@@ -52,6 +51,13 @@
     } finally {
       loading.set(false);
     }
+  }
+
+  // React to async profile restore after refresh
+  $effect(() => {
+    if (!$profile) return;
+    if ($memories.length > 0) return; // already loaded
+    loadMemories();
   });
 
   onDestroy(() => {

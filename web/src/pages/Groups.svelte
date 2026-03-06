@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  
   import GroupTree from '../components/GroupTree.svelte';
   import GroupMembers from '../components/GroupMembers.svelte';
   import { relay, groups, loading, profile, isLoggedIn, getSigner, ensureConnected, showError } from '../lib/stores';
@@ -8,18 +8,22 @@
 
   const selected = $derived($groups.find(g => g.id === selectedGroup) ?? null);
 
-  onMount(async () => {
-    if (!$profile) return;
+  async function loadGroups() {
     loading.set(true);
     try {
       const r = await ensureConnected();
-
       const result = await r.listGroups();
       groups.set(result);
     } catch (err: any) {
       showError('Failed to load groups: ' + (err.message || err));
     } finally {
       loading.set(false);
+    }
+  }
+
+  $effect(() => {
+    if ($profile && $groups.length === 0 && !$loading) {
+      loadGroups();
     }
   });
 </script>

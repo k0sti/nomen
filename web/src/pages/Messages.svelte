@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  
   import MessageItem from '../components/MessageItem.svelte';
   import { relay, messages, channelFilter, loading, profile, isLoggedIn, groups, getSigner, ensureConnected, showError } from '../lib/stores';
 
@@ -21,8 +21,10 @@
     consolidated: $messages.filter(m => m.consolidated).length,
   });
 
-  onMount(async () => {
-    if (!$profile) return;
+  let initialLoaded = $state(false);
+
+  async function loadInitial() {
+    initialLoaded = true;
     loading.set(true);
     try {
       const r = await ensureConnected();
@@ -41,6 +43,12 @@
       showError('Failed to load messages: ' + (err.message || err));
     } finally {
       loading.set(false);
+    }
+  }
+
+  $effect(() => {
+    if ($profile && !initialLoaded) {
+      loadInitial();
     }
   });
 
