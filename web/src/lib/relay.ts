@@ -164,7 +164,10 @@ async function publishEvent(event: NostrEvent, timeoutMs = 10000): Promise<strin
 
 function isMemoryEvent(e: NostrEvent): boolean {
   const dTag = e.tags.find(t => t[0] === 'd')?.[1];
-  return dTag?.startsWith('snow:memory:') ?? false;
+  if (!dTag) return false;
+  // Exclude config events
+  if (dTag.startsWith('nomen:config:') || dTag.startsWith('snowclaw:config:')) return false;
+  return true;
 }
 
 function parseMemory(e: NostrEvent): Memory {
