@@ -22,6 +22,13 @@ Memories exist in three tiers with different visibility:
 
 Guardian and agent identities are first-class — configure multiple nsecs to read across agents while controlling who writes.
 
+**Two kinds of groups:**
+
+- **Named groups** — defined in config with id, name, and NIP-29 relay mapping. Dot-separated hierarchy: `atlantislabs.engineering.infra` is a subgroup of `atlantislabs.engineering`
+- **Npub sets** — ad-hoc groups defined as a set of member pubkeys, scoped per tier
+
+Both support hierarchical querying — a search scoped to `atlantislabs` includes memories from `atlantislabs.engineering` and deeper subgroups.
+
 ### Semantic Search & Knowledge Graph
 
 - **Hybrid search** — HNSW vector similarity (1536-dim embeddings) + BM25 full-text, weighted and composable
