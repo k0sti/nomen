@@ -3,6 +3,7 @@
   import { profile, signer, relay, ensureConnected, showError, showInfo } from '../lib/stores';
   import { nip19, getPublicKey } from 'nostr-tools';
   import { compressNpub, fetchProfileMetadata } from '../lib/nostr';
+  import { fetchProfileFromRelay } from '../lib/relay';
   import type { NostrProfile } from '../lib/nostr';
   import ProfileCard from '../components/ProfileCard.svelte';
 
@@ -67,7 +68,11 @@
     for (const entry of entries) {
       try {
         const { data: pubkey } = nip19.decode(entry.npub);
-        const meta = await fetchProfileMetadata(pubkey as string);
+        // Try zooid relay first, then public relays
+        let meta = await fetchProfileFromRelay(pubkey as string);
+        if (!meta) {
+          meta = await fetchProfileMetadata(pubkey as string);
+        }
         if (meta) {
           entry.meta = meta;
           entry.profile = {

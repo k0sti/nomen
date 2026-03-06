@@ -305,6 +305,18 @@ export async function listMembers(): Promise<{ pubkey: string; meta: Record<stri
 // Keep old name as alias for backward compatibility
 export const listProfiles = listMembers;
 
+// ── Single profile fetch from this relay ─────────────────────────
+
+export async function fetchProfileFromRelay(pubkey: string): Promise<Record<string, any> | null> {
+  const events = await requestEvents([{ kinds: [0], authors: [pubkey], limit: 1 }]);
+  if (events.length === 0) return null;
+  try {
+    return JSON.parse(events[0].content);
+  } catch {
+    return null;
+  }
+}
+
 // ── Group operations ─────────────────────────────────────────────
 
 export async function listGroups(): Promise<Group[]> {
