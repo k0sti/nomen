@@ -16,7 +16,6 @@ path = "src/main.rs"
 [features]
 default = []
 migrate = ["rusqlite"]
-snowclaw = ["snow-memory"]
 
 [dependencies]
 # Nostr
@@ -67,9 +66,6 @@ async-trait = "0.1"
 
 # SQLite migration (optional)
 rusqlite = { version = "0.37", features = ["bundled"], optional = true }
-
-# Snowclaw collective memory types (optional)
-snow-memory = { path = "../snowclaw/crates/snow-memory", optional = true }
 
 [dev-dependencies]
 tempfile = "3"

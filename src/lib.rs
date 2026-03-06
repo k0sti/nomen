@@ -20,9 +20,6 @@ pub mod session;
 #[cfg(feature = "migrate")]
 pub mod migrate;
 
-#[cfg(feature = "snowclaw")]
-pub mod snowclaw_adapter;
-
 // Binary-only modules — not part of the public library API.
 #[doc(hidden)]
 pub mod display;
