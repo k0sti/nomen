@@ -180,11 +180,14 @@ enum Command {
         #[arg(long)]
         kind: Option<String>,
     },
-    /// Prune old consolidated raw messages
+    /// Prune unused/low-confidence memories and old raw messages
     Prune {
-        /// Delete consolidated messages older than N days
-        #[arg(long, default_value = "30")]
+        /// Delete items older than N days
+        #[arg(long, default_value = "90")]
         days: u64,
+        /// Preview what would be pruned without deleting
+        #[arg(long)]
+        dry_run: bool,
     },
     /// Send a message to a recipient (npub, group, or public)
     Send {
@@ -394,8 +397,8 @@ async fn main() -> Result<()> {
         Command::Entities { kind } => {
             cmd_entities(kind.as_deref()).await?;
         }
-        Command::Prune { days } => {
-            cmd_prune(days).await?;
+        Command::Prune { days, dry_run } => {
+            cmd_prune(days, dry_run).await?;
         }
         Command::Send { ref content, ref to, ref channel } => {
             if resolved.nsecs.is_empty() {
@@ -1219,24 +1222,70 @@ async fn cmd_entities(kind_filter: Option<&str>) -> Result<()> {
 
 // ── Command: prune ──────────────────────────────────────────────────
 
-async fn cmd_prune(days: u64) -> Result<()> {
-    let db = db::init_db().await?;
+async fn cmd_prune(days: u64, dry_run: bool) -> Result<()> {
+    let db_handle = db::init_db().await?;
 
+    if dry_run {
+        println!("{} Pruning memories (older than {} days)...", "[DRY RUN]".yellow().bold(), days);
+    } else {
+        println!("Pruning memories (older than {} days)...", days);
+    }
+
+    // Prune named memories based on access patterns and confidence
+    let prunable = db::find_prunable_memories(&db_handle, days).await?;
+
+    if prunable.is_empty() {
+        println!("No memories eligible for pruning.");
+    } else {
+        println!("\n{} memories eligible for pruning:", prunable.len());
+        for mem in &prunable {
+            let confidence_str = mem.confidence
+                .map(|c| format!("{c:.2}"))
+                .unwrap_or("?".to_string());
+            let access_str = mem.access_count
+                .map(|c| c.to_string())
+                .unwrap_or("0".to_string());
+            println!(
+                "  {} (confidence: {}, accesses: {}, created: {})",
+                mem.topic.bold(),
+                confidence_str,
+                access_str,
+                &mem.created_at[..10]
+            );
+        }
+
+        if !dry_run {
+            let d_tags: Vec<String> = prunable
+                .iter()
+                .filter_map(|m| m.d_tag.clone())
+                .collect();
+            let deleted = db::delete_memories_by_dtags(&db_handle, &d_tags).await?;
+            println!(
+                "\n{}: {} memories pruned",
+                "Pruned".green().bold(),
+                deleted
+            );
+        } else {
+            println!("\n{}: Would prune {} memories", "[DRY RUN]".yellow().bold(), prunable.len());
+        }
+    }
+
+    // Also prune old consolidated raw messages
     let cutoff = chrono::Utc::now() - chrono::Duration::days(days as i64);
     let cutoff_str = cutoff.to_rfc3339();
+    let raw_count = db::count_old_messages(&db_handle, &cutoff_str).await?;
 
-    println!("Pruning consolidated raw messages older than {} days...", days);
-    let count = db::prune_old_messages(&db, &cutoff_str).await?;
-
-    if count == 0 {
-        println!("No messages to prune.");
-    } else {
-        println!(
-            "{}: {} consolidated messages deleted (older than {})",
-            "Pruned".green().bold(),
-            count,
-            cutoff.format("%Y-%m-%d")
-        );
+    if raw_count > 0 {
+        if dry_run {
+            println!("{}: Would also prune {} consolidated raw messages", "[DRY RUN]".yellow().bold(), raw_count);
+        } else {
+            let pruned = db::prune_old_messages(&db_handle, &cutoff_str).await?;
+            println!(
+                "{}: {} consolidated raw messages pruned",
+                "Pruned".green().bold(),
+                pruned
+            );
+        }
     }
 
     Ok(())

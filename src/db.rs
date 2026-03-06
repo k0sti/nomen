@@ -134,6 +134,8 @@ pub struct HybridSearchRow {
     pub version: Option<i64>,
     pub d_tag: Option<String>,
     pub created_at: String,
+    #[serde(default, deserialize_with = "deserialize_option_string")]
+    pub last_accessed: Option<String>,
     pub vec_score: Option<f64>,
     pub text_score: Option<f64>,
     pub combined: Option<f64>,
@@ -186,6 +188,8 @@ DEFINE FIELD IF NOT EXISTS updated_at ON memory TYPE string;
 DEFINE FIELD IF NOT EXISTS ephemeral  ON memory TYPE bool DEFAULT false;
 DEFINE FIELD IF NOT EXISTS consolidated_from ON memory TYPE option<string>;
 DEFINE FIELD IF NOT EXISTS consolidated_at   ON memory TYPE option<string>;
+DEFINE FIELD IF NOT EXISTS last_accessed     ON memory TYPE option<string>;
+DEFINE FIELD IF NOT EXISTS access_count      ON memory TYPE int DEFAULT 0;
 -- Note: created_at/updated_at remain TYPE string (not datetime) because SurrealDB
 -- datetime serialization requires special handling in Rust serde. RFC3339 strings
 -- still support lexicographic ordering which is sufficient for our queries.
@@ -872,6 +876,84 @@ pub async fn prune_old_messages(db: &Surreal<Db>, before: &str) -> Result<usize>
             .check()?;
     }
     Ok(count)
+}
+
+// ── Access tracking ─────────────────────────────────────────────────
+
+/// Update access tracking for a memory identified by d_tag.
+pub async fn update_access_tracking(db: &Surreal<Db>, d_tag: &str) -> Result<()> {
+    db.query("UPDATE memory SET last_accessed = $now, access_count += 1 WHERE d_tag = $d_tag")
+        .bind(("d_tag", d_tag.to_string()))
+        .bind(("now", chrono::Utc::now().to_rfc3339()))
+        .await?
+        .check()?;
+    Ok(())
+}
+
+/// Batch update access tracking for multiple d_tags.
+pub async fn update_access_tracking_batch(db: &Surreal<Db>, d_tags: &[String]) -> Result<()> {
+    for d_tag in d_tags {
+        update_access_tracking(db, d_tag).await.ok();
+    }
+    Ok(())
+}
+
+// ── Memory pruning ──────────────────────────────────────────────────
+
+/// Record for pruning candidates.
+#[derive(Debug, Deserialize)]
+pub struct PrunableMemory {
+    #[serde(default, deserialize_with = "deserialize_option_string")]
+    pub d_tag: Option<String>,
+    pub topic: String,
+    pub confidence: Option<f64>,
+    pub access_count: Option<i64>,
+    pub created_at: String,
+    #[serde(default, deserialize_with = "deserialize_option_string")]
+    pub last_accessed: Option<String>,
+}
+
+/// Find memories eligible for pruning based on age and access patterns.
+///
+/// Pruning rules (from spec):
+/// - access_count = 0 AND age > max_days
+/// - confidence < 0.3 AND age > 30 days
+/// - access_count = 0 AND confidence < 0.5 AND age > 30 days
+pub async fn find_prunable_memories(
+    db: &Surreal<Db>,
+    max_days: u64,
+) -> Result<Vec<PrunableMemory>> {
+    let cutoff = chrono::Utc::now() - chrono::Duration::days(max_days as i64);
+    let cutoff_str = cutoff.to_rfc3339();
+    let cutoff_30d = (chrono::Utc::now() - chrono::Duration::days(30)).to_rfc3339();
+
+    let sql = "SELECT d_tag, topic, confidence, access_count, created_at, last_accessed \
+               FROM memory WHERE \
+               (access_count = 0 AND created_at < $cutoff) OR \
+               (confidence IS NOT NONE AND confidence < 0.3 AND created_at < $cutoff_30d) OR \
+               (access_count = 0 AND confidence IS NOT NONE AND confidence < 0.5 AND created_at < $cutoff_30d)";
+
+    let results: Vec<PrunableMemory> = db
+        .query(sql)
+        .bind(("cutoff", cutoff_str))
+        .bind(("cutoff_30d", cutoff_30d))
+        .await?
+        .check()?
+        .take(0)?;
+    Ok(results)
+}
+
+/// Delete memories by their d_tags.
+pub async fn delete_memories_by_dtags(db: &Surreal<Db>, d_tags: &[String]) -> Result<usize> {
+    let mut deleted = 0;
+    for d_tag in d_tags {
+        db.query("DELETE FROM memory WHERE d_tag = $d_tag")
+            .bind(("d_tag", d_tag.clone()))
+            .await?
+            .check()?;
+        deleted += 1;
+    }
+    Ok(deleted)
 }
 
 // ── Entity CRUD ─────────────────────────────────────────────────────

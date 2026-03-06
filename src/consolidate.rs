@@ -29,6 +29,19 @@ pub struct ExtractedMemory {
 #[async_trait]
 pub trait LlmProvider: Send + Sync {
     async fn consolidate(&self, messages: &[RawMessageRecord]) -> Result<Vec<ExtractedMemory>>;
+
+    /// Merge new information into an existing memory.
+    /// Default implementation just returns the new extraction as-is.
+    async fn merge(
+        &self,
+        existing_summary: &str,
+        existing_detail: &str,
+        messages: &[RawMessageRecord],
+    ) -> Result<Vec<ExtractedMemory>> {
+        // Default: just consolidate the new messages (no merge logic)
+        let _ = (existing_summary, existing_detail);
+        self.consolidate(messages).await
+    }
 }
 
 /// Noop LLM provider — creates a simple summary from message content
@@ -121,6 +134,64 @@ fn sanitize_topic_component(s: &str) -> String {
     result.trim_matches('-').to_string()
 }
 
+/// Derive the memory tier from a group of source messages.
+///
+/// - DM messages (source "nostr" with sender npub, no group channel) → "private"
+/// - Group messages (channel matches a group pattern) → "group"
+/// - Public/CLI/other → "public"
+fn derive_tier_from_messages(messages: &[RawMessageRecord]) -> String {
+    // Check sources — if any message is from a DM-like source, treat as private
+    let has_dm = messages.iter().any(|m| {
+        // nostr DMs have source "nostr" and either empty channel or "dm" channel
+        (m.source == "nostr" && (m.channel.is_empty() || m.channel == "dm"))
+            || m.source == "telegram_dm"
+            || m.source == "dm"
+    });
+
+    let has_group = messages.iter().any(|m| {
+        // Group messages have a non-empty channel that isn't "dm" or "general"
+        !m.channel.is_empty()
+            && m.channel != "dm"
+            && m.channel != "general"
+            && (m.source == "nostr" || m.source == "telegram" || m.source.starts_with("group"))
+    });
+
+    if has_dm {
+        "private".to_string()
+    } else if has_group {
+        "group".to_string()
+    } else {
+        "public".to_string()
+    }
+}
+
+/// Enforce cross-group consolidation guard: private sources must never produce
+/// group or public tier memories. Returns the tier, potentially downgraded.
+fn enforce_tier_guard(derived_tier: &str, source_tier: &str) -> String {
+    match source_tier {
+        "private" => {
+            // Private sources can only produce private memories
+            if derived_tier != "private" {
+                warn!(
+                    derived = derived_tier,
+                    "Cross-group guard: downgrading tier to private (source is private)"
+                );
+            }
+            "private".to_string()
+        }
+        "group" => {
+            // Group sources can produce group or private, but not public
+            if derived_tier == "public" {
+                warn!("Cross-group guard: downgrading tier to group (source is group)");
+                "group".to_string()
+            } else {
+                derived_tier.to_string()
+            }
+        }
+        _ => derived_tier.to_string(),
+    }
+}
+
 /// OpenAI/OpenRouter-compatible LLM provider for real consolidation.
 pub struct OpenAiLlmProvider {
     client: reqwest::Client,
@@ -192,6 +263,88 @@ struct LlmMemory {
 
 #[async_trait]
 impl LlmProvider for OpenAiLlmProvider {
+    async fn merge(
+        &self,
+        existing_summary: &str,
+        existing_detail: &str,
+        messages: &[RawMessageRecord],
+    ) -> Result<Vec<ExtractedMemory>> {
+        if messages.is_empty() {
+            return Ok(vec![]);
+        }
+
+        let mut transcript = String::new();
+        for msg in messages {
+            let channel = if msg.channel.is_empty() { "general" } else { &msg.channel };
+            transcript.push_str(&format!(
+                "[{}] #{} {}: {}\n",
+                msg.created_at, channel, msg.sender, msg.content
+            ));
+        }
+
+        let system_prompt = "You are a memory consolidation agent. You are merging new information \
+into an existing memory. Return JSON with this exact structure: {\"memories\": [{\"topic\": \"category/subcategory\", \
+\"summary\": \"one-line summary\", \"detail\": \"full detail\", \"confidence\": 0.8}]}. \
+Merge the new information into the existing memory. Update what changed. Keep what's still true. \
+Note any conflicts. The topic should remain the same as the existing memory's topic.";
+
+        let user_prompt = format!(
+            "Existing memory:\nSummary: {existing_summary}\nDetail: {existing_detail}\n\n\
+             New messages:\n{transcript}\n\n\
+             Merge the new information into the existing memory."
+        );
+
+        let body = serde_json::json!({
+            "model": self.model,
+            "messages": [
+                { "role": "system", "content": system_prompt },
+                { "role": "user", "content": user_prompt }
+            ],
+            "temperature": 0.3,
+            "response_format": { "type": "json_object" }
+        });
+
+        let url = format!("{}/chat/completions", self.base_url);
+        let resp = self
+            .client
+            .post(&url)
+            .header("Authorization", format!("Bearer {}", self.api_key))
+            .header("Content-Type", "application/json")
+            .json(&body)
+            .send()
+            .await?;
+
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let text = resp.text().await.unwrap_or_default();
+            anyhow::bail!("LLM API error {status}: {text}");
+        }
+
+        let chat_resp: ChatResponse = resp.json().await?;
+        let content = chat_resp
+            .choices
+            .first()
+            .map(|c| c.message.content.as_str())
+            .unwrap_or("{}");
+
+        let extracted: LlmExtracted = serde_json::from_str(content)
+            .unwrap_or_else(|e| {
+                warn!("Failed to parse LLM merge response as JSON: {e}");
+                LlmExtracted { memories: vec![] }
+            });
+
+        Ok(extracted
+            .memories
+            .into_iter()
+            .map(|m| ExtractedMemory {
+                summary: m.summary,
+                detail: m.detail,
+                topic: m.topic,
+                confidence: m.confidence.clamp(0.0, 1.0),
+            })
+            .collect())
+    }
+
     async fn consolidate(&self, messages: &[RawMessageRecord]) -> Result<Vec<ExtractedMemory>> {
         if messages.is_empty() {
             return Ok(vec![]);
@@ -439,6 +592,23 @@ pub async fn consolidate(
 
         let extracted = config.llm_provider.consolidate(group_msgs).await?;
 
+        // Derive tier from source messages (TODO #1)
+        let derived_tier = derive_tier_from_messages(group_msgs);
+        // Apply cross-group consolidation guard (TODO #7)
+        let most_restrictive_source = if group_msgs.iter().any(|m| {
+            m.source == "dm" || m.source == "telegram_dm"
+                || (m.source == "nostr" && (m.channel.is_empty() || m.channel == "dm"))
+        }) {
+            "private"
+        } else if group_msgs.iter().any(|m| {
+            !m.channel.is_empty() && m.channel != "dm" && m.channel != "general"
+        }) {
+            "group"
+        } else {
+            "public"
+        };
+        let tier = enforce_tier_guard(&derived_tier, most_restrictive_source);
+
         for memory in &extracted {
             let group_summary = GroupSummary {
                 key: format!("{}:{}", key.identity, key.window),
@@ -452,12 +622,97 @@ pub async fn consolidate(
                 continue;
             }
 
+            let d_tag = format!("snow:memory:{}", memory.topic);
+
+            // Check if a memory with this topic already exists (TODO #2: merge)
+            let existing = get_existing_memory(db, &d_tag).await;
+
+            let (final_summary, final_detail, final_confidence, is_merge) = if let Ok(Some(existing_mem)) = existing {
+                // Merge: re-prompt LLM with existing + new
+                debug!(topic = %memory.topic, "Merging into existing memory");
+                let existing_summary = existing_mem.summary.as_deref().unwrap_or("");
+                let existing_detail = &existing_mem.content;
+
+                match config.llm_provider.merge(existing_summary, existing_detail, group_msgs).await {
+                    Ok(merged) if !merged.is_empty() => {
+                        let m = &merged[0];
+                        (m.summary.clone(), m.detail.clone(), m.confidence, true)
+                    }
+                    Ok(_) => {
+                        // Merge returned empty, use extracted as-is
+                        (memory.summary.clone(), memory.detail.clone(), memory.confidence, true)
+                    }
+                    Err(e) => {
+                        warn!("LLM merge failed, using extracted memory: {e}");
+                        (memory.summary.clone(), memory.detail.clone(), memory.confidence, true)
+                    }
+                }
+            } else {
+                // No existing memory — check for near-duplicates via embedding (TODO #6)
+                let mut is_dedup_merge = false;
+                if embedder.dimensions() > 0 {
+                    let text = format!("{} {}", memory.summary, memory.detail);
+                    if let Ok(emb) = embedder.embed_one(&text).await {
+                        if let Ok(similar) = find_similar_memory(db, &emb, 0.92).await {
+                            if let Some(sim_dtag) = similar {
+                                debug!(
+                                    topic = %memory.topic,
+                                    similar_dtag = %sim_dtag,
+                                    "Found near-duplicate memory, merging"
+                                );
+                                // Fetch the similar memory and merge
+                                if let Ok(Some(sim_mem)) = get_existing_memory(db, &sim_dtag).await {
+                                    let sim_summary = sim_mem.summary.as_deref().unwrap_or("");
+                                    match config.llm_provider.merge(sim_summary, &sim_mem.content, group_msgs).await {
+                                        Ok(merged) if !merged.is_empty() => {
+                                            let m = &merged[0];
+                                            is_dedup_merge = true;
+                                            // Store using the similar memory's d_tag
+                                            let mem = crate::NewMemory {
+                                                topic: sim_dtag.strip_prefix("snow:memory:").unwrap_or(&memory.topic).to_string(),
+                                                summary: m.summary.clone(),
+                                                detail: m.detail.clone(),
+                                                tier: tier.clone(),
+                                                confidence: m.confidence,
+                                                source: Some("consolidation".to_string()),
+                                                model: Some("nomen/consolidation".to_string()),
+                                            };
+                                            let stored_dtag = crate::Nomen::store_direct(db, embedder, mem).await?;
+                                            // Bump version
+                                            bump_memory_version(db, &stored_dtag).await.ok();
+                                            crate::db::set_consolidation_tags(
+                                                db, &stored_dtag,
+                                                &group_msgs.len().to_string(),
+                                                &now_timestamp.to_string(),
+                                            ).await.ok();
+                                            report.memories_updated += 1;
+                                        }
+                                        _ => {}
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                if is_dedup_merge {
+                    // Track channel for reporting
+                    let channel = group_msgs.first().map(|m| m.channel.as_str()).unwrap_or("general");
+                    if !channel.is_empty() && !report.channels.contains(&channel.to_string()) {
+                        report.channels.push(channel.to_string());
+                    }
+                    continue;
+                }
+
+                (memory.summary.clone(), memory.detail.clone(), memory.confidence, false)
+            };
+
             let mem = crate::NewMemory {
                 topic: memory.topic.clone(),
-                summary: memory.summary.clone(),
-                detail: memory.detail.clone(),
-                tier: "public".to_string(),
-                confidence: memory.confidence,
+                summary: final_summary,
+                detail: final_detail,
+                tier: tier.clone(),
+                confidence: final_confidence,
                 source: Some("consolidation".to_string()),
                 model: Some("nomen/consolidation".to_string()),
             };
@@ -467,7 +722,14 @@ pub async fn consolidate(
             let consolidated_at = now_timestamp.to_string();
 
             let d_tag = crate::Nomen::store_direct(db, embedder, mem).await?;
-            report.memories_created += 1;
+
+            if is_merge {
+                // Bump version for merged memories (TODO #2)
+                bump_memory_version(db, &d_tag).await.ok();
+                report.memories_updated += 1;
+            } else {
+                report.memories_created += 1;
+            }
 
             // Update the memory record with consolidation tags
             crate::db::set_consolidation_tags(
@@ -578,6 +840,81 @@ async fn publish_deletion_events(
     }
 
     Ok(deleted)
+}
+
+/// Fetch an existing memory record by d_tag for merge checks.
+async fn get_existing_memory(db: &Surreal<Db>, d_tag: &str) -> Result<Option<ExistingMemory>> {
+    #[derive(Deserialize)]
+    struct Row {
+        content: String,
+        #[serde(default, deserialize_with = "crate::db::deserialize_option_string")]
+        summary: Option<String>,
+        version: i64,
+        confidence: Option<f64>,
+    }
+    let rows: Vec<Row> = db
+        .query("SELECT content, summary, version, confidence FROM memory WHERE d_tag = $d_tag LIMIT 1")
+        .bind(("d_tag", d_tag.to_string()))
+        .await?
+        .check()?
+        .take(0)?;
+    Ok(rows.into_iter().next().map(|r| ExistingMemory {
+        content: r.content,
+        summary: r.summary,
+        version: r.version,
+        confidence: r.confidence,
+    }))
+}
+
+/// Existing memory data for merge operations.
+struct ExistingMemory {
+    content: String,
+    summary: Option<String>,
+    version: i64,
+    confidence: Option<f64>,
+}
+
+/// Bump the version field on a memory record.
+async fn bump_memory_version(db: &Surreal<Db>, d_tag: &str) -> Result<()> {
+    db.query("UPDATE memory SET version = version + 1 WHERE d_tag = $d_tag")
+        .bind(("d_tag", d_tag.to_string()))
+        .await?
+        .check()?;
+    Ok(())
+}
+
+/// Find a similar existing memory by embedding cosine similarity.
+/// Returns the d_tag of the most similar memory if similarity > threshold.
+async fn find_similar_memory(
+    db: &Surreal<Db>,
+    embedding: &[f32],
+    threshold: f64,
+) -> Result<Option<String>> {
+    #[derive(Deserialize)]
+    struct SimRow {
+        #[serde(default, deserialize_with = "crate::db::deserialize_option_string")]
+        d_tag: Option<String>,
+        similarity: Option<f64>,
+    }
+    let rows: Vec<SimRow> = db
+        .query(
+            "SELECT d_tag, vector::similarity::cosine(embedding, $vec) AS similarity \
+             FROM memory WHERE embedding IS NOT NONE \
+             ORDER BY similarity DESC LIMIT 1"
+        )
+        .bind(("vec", embedding.to_vec()))
+        .await?
+        .check()?
+        .take(0)?;
+
+    if let Some(row) = rows.first() {
+        if let (Some(ref dtag), Some(sim)) = (&row.d_tag, row.similarity) {
+            if sim >= threshold {
+                return Ok(Some(dtag.clone()));
+            }
+        }
+    }
+    Ok(None)
 }
 
 /// Get the SurrealDB record ID for a memory by its d_tag.

@@ -1,7 +1,7 @@
 // Svelte stores for state management — relay-first architecture
 
 import { writable, derived, get } from 'svelte/store';
-import { NomenRelay } from './relay';
+import { NomenRelay, setSigner as setRelaySigner } from './relay';
 import { NomenApi } from './api';
 import type { NostrProfile, NostrSigner } from './nostr';
 import type { Memory, Message, Group, Entity, SearchResult } from './api';
@@ -15,14 +15,26 @@ relayUrl.subscribe((v) => localStorage.setItem('nomen:relayUrl', v));
 apiBaseUrl.subscribe((v) => localStorage.setItem('nomen:apiBaseUrl', v));
 
 // ── Relay & API instances ────────────────────────────────────────
-const initialRelay = new NomenRelay();
-initialRelay.onConnectionChange = (connected) => relayConnected.set(connected);
-export const relay = writable<NomenRelay>(initialRelay);
+const nomenRelay = new NomenRelay();
+nomenRelay.onConnectionChange = (connected) => relayConnected.set(connected);
+export const relay = writable<NomenRelay>(nomenRelay);
 export const api = derived(apiBaseUrl, ($url) => new NomenApi($url));
 
 // ── Auth ──────────────────────────────────────────────────────────
 export const profile = writable<NostrProfile | null>(null);
 export const signer = writable<NostrSigner | null>(null);
+
+// Keep relay layer in sync with signer changes
+signer.subscribe((s) => {
+  if (s) {
+    setRelaySigner({
+      getPublicKey: () => s.getPublicKey(),
+      signEvent: (event: any) => s.signEvent(event),
+    });
+  } else {
+    setRelaySigner(null);
+  }
+});
 export const isLoggedIn = derived(profile, ($p) => $p !== null);
 export const showLoginModal = writable(false);
 export const showProfileModal = writable(false);
