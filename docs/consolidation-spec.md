@@ -28,16 +28,16 @@ Named Memories (low volume, high value, topic-keyed)
 
 Stored in the `raw_message` table. Created by `nomen ingest` or auto-save from agent frameworks.
 
-- **D-tag pattern:** `snow:memory:conv:*`, `snow:memory:group:<id>:*`
+- **D-tag pattern:** `conv:*`, `group:<id>:*`
 - **Lifecycle:** Short — consumed by consolidation, then deleted
 - **Source:** Auto-save, ingest command, webhook
 
 ### Named Memories (consolidated)
 
-Stored in the `memory` table as NIP-78 kind 30078 events. Created by consolidation or direct `nomen store`.
+Stored in the `memory` table as kind 31234 events. Created by consolidation or direct `nomen store`.
 
-- **D-tag pattern:** `snow:memory:<namespace>/<topic>`
-- **Lifecycle:** Long-lived — updated in place via NIP-78 replaceable semantics
+- **D-tag pattern:** `<namespace>/<topic>`
+- **Lifecycle:** Long-lived — updated in place via replaceable event semantics (kind 31234)
 - **Source:** Consolidation pipeline, agent's `memory_store` tool, manual CLI
 
 ## 3. Topic Namespace Convention
@@ -141,19 +141,19 @@ Return empty array if nothing significant.
 
 ### Stage 4: Storage
 
-Each extracted memory becomes a NIP-78 kind 30078 event:
+Each extracted memory becomes a kind 31234 replaceable event:
 
 ```json
 {
-  "kind": 30078,
+  "kind": 31234,
   "content": "{\"summary\":\"k0 prefers concise responses\",\"detail\":\"...\"}",
   "tags": [
-    ["d", "snow:memory:user/k0/preferences"],
-    ["snow:tier", "private"],
-    ["snow:model", "anthropic/claude-sonnet-4-6"],
-    ["snow:confidence", "0.88"],
-    ["snow:source", "<agent-pubkey>"],
-    ["snow:version", "1"],
+    ["d", "user/k0/preferences"],
+    ["tier", "private"],
+    ["model", "anthropic/claude-sonnet-4-6"],
+    ["confidence", "0.88"],
+    ["source", "<agent-pubkey>"],
+    ["version", "1"],
     ["snow:consolidated_from", "7"],
     ["snow:consolidated_at", "1753000000"],
     ["t", "user"],
@@ -169,8 +169,8 @@ Each extracted memory becomes a NIP-78 kind 30078 event:
 
 **Deduplication:** Before creating a new memory, check if a memory with the same topic d-tag already exists. If it does:
 1. Merge the new information into the existing memory
-2. Increment `snow:version`
-3. Republish (NIP-78 replaces by d-tag)
+2. Increment `version`
+3. Republish (kind 31234 replaces by d-tag)
 
 This is the **update path** — the most important part of keeping memories current without duplicating.
 

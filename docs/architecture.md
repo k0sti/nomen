@@ -5,7 +5,7 @@
 
 ## Overview
 
-Nomen is a Rust CLI and library for Nostr-native agent memory. Memories are NIP-78 events (kind 30078) on Nostr relays, cached locally in SurrealDB with hybrid vector + BM25 search.
+Nomen is a Rust CLI and library for Nostr-native agent memory. Memories are custom kind 31234 events on Nostr relays, cached locally in SurrealDB with hybrid vector + BM25 search.
 
 ## Data Flow
 
@@ -30,7 +30,7 @@ src/
 ├── lib.rs            (284)  Nomen struct, public API
 ├── db.rs             (918)  SurrealDB schema, queries, CRUD
 ├── search.rs         (154)  Hybrid vector + BM25 search
-├── relay.rs          (223)  Nostr relay sync (NIP-78)
+├── relay.rs          (223)  Nostr relay sync
 ├── memory.rs         (141)  Memory parsing from Nostr events
 ├── send.rs           (249)  Send messages (DM, group, public)
 ├── session.rs        (232)  Session ID resolution → tier/scope
@@ -70,7 +70,7 @@ Single embedded database. Multi-model: documents, vectors (HNSW), full-text (BM2
 
 - HNSW vector index on `memory.embedding` (1536 dims, cosine)
 - BM25 full-text on `memory.content`
-- Unique index on `memory.d_tag` (NIP-78 replaceable key)
+- Unique index on `memory.d_tag` (replaceable key (kind 31234))
 
 ### Graph Edges
 
@@ -205,7 +205,7 @@ NIP-44 encrypted request/response events for pure-Nostr agents. No MCP/HTTP depe
 
 ## Relay Sync
 
-- **Source of truth:** Nostr relay (NIP-78, kind 30078)
+- **Source of truth:** Nostr relay (kind 31234)
 - **Sync:** `nomen sync` fetches events, upserts into SurrealDB by d-tag
 - **Publish:** `nomen store` creates local record + publishes to relay
 - **Dedup:** d-tag uniqueness, latest timestamp wins

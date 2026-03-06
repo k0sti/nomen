@@ -4,7 +4,7 @@
 **Date:** 2026-03-04
 **Status:** Draft
 
-Defines the Nostr event schema for the nomen memory system. Memory events are NIP-78 (kind 30078) addressable/replaceable events stored on Nostr relays.
+Defines the Nostr event schema for the nomen memory system. Memory events are custom kind 31234 addressable/replaceable events stored on Nostr relays.
 
 ---
 
@@ -16,7 +16,7 @@ The Nostr relay is the **canonical store** for all memory data. Local caches (SQ
 
 ### Event Kind
 
-All memory events use **kind 30078** (NIP-78 App-Specific Data). This is an addressable/replaceable event — the `d` tag makes it updatable. Publishing a new event with the same `d` tag replaces the previous version on the relay.
+All memory events use **kind 31234** (Nomen Memory). This is an addressable/replaceable event — the `d` tag makes it updatable. Publishing a new event with the same `d` tag replaces the previous version on the relay.
 
 ---
 
@@ -26,17 +26,17 @@ All memory events use **kind 30078** (NIP-78 App-Specific Data). This is an addr
 
 ```json
 {
-  "kind": 30078,
+  "kind": 31234,
   "pubkey": "<author-pubkey-hex>",
   "created_at": 1739901000,
   "content": "{\"summary\":\"Use anyhow for application errors\",\"detail\":\"In application code, prefer anyhow::Result for ergonomic error propagation.\",\"context\":null}",
   "tags": [
-    ["d", "snow:memory:rust/error-handling"],
-    ["snow:tier", "public"],
-    ["snow:model", "anthropic/claude-opus-4-6"],
-    ["snow:confidence", "0.92"],
-    ["snow:source", "<originating-agent-pubkey-hex>"],
-    ["snow:version", "1"],
+    ["d", "rust/error-handling"],
+    ["tier", "public"],
+    ["model", "anthropic/claude-opus-4-6"],
+    ["confidence", "0.92"],
+    ["source", "<originating-agent-pubkey-hex>"],
+    ["version", "1"],
     ["t", "rust"],
     ["t", "error-handling"]
   ],
@@ -59,20 +59,20 @@ The `content` field is a JSON object:
 
 | Tag | Required | Description |
 |-----|----------|-------------|
-| `d` | Yes | Namespaced key: `snow:memory:<topic>` — makes event addressable/replaceable |
-| `snow:tier` | Yes | Visibility tier: `public`, `group`, or `private` |
-| `snow:model` | Yes | Model that generated this memory (e.g. `anthropic/claude-opus-4-6`) |
-| `snow:confidence` | Yes | Self-assessed confidence score, float in [0.0, 1.0] |
-| `snow:source` | Yes | Pubkey (hex) of the originating agent |
-| `snow:version` | Yes | Version number (monotonically increasing per topic+source) |
-| `snow:supersedes` | No | Event ID of the previous version this replaces |
+| `d` | Yes | Topic key: `<namespace>/<topic>` — makes event addressable/replaceable |
+| `tier` | Yes | Visibility tier: `public`, `group`, or `private` |
+| `model` | Yes | Model that generated this memory (e.g. `anthropic/claude-opus-4-6`) |
+| `confidence` | Yes | Self-assessed confidence score, float in [0.0, 1.0] |
+| `source` | Yes | Pubkey (hex) of the originating agent |
+| `version` | Yes | Version number (monotonically increasing per topic+source) |
+| `supersedes` | No | Event ID of the previous version this replaces |
 | `t` | No | Topic tags for relay-side filtering (repeatable) |
 
 ### D-Tag Namespace
 
 | Pattern | Scope | Description |
 |---------|-------|-------------|
-| `snow:memory:<topic>` | Memory | Collective memory entry keyed by topic |
+| `<namespace>/<topic>` | Memory | Collective memory entry keyed by topic |
 | `snowclaw:memory:npub:<npub1...>` | Per-user | Agent's memory about a specific user |
 | `snowclaw:memory:group:<group_id>` | Per-group | Agent's memory about a specific group |
 | `snowclaw:config:group:<group_id>` | Config | Dynamic group configuration |
@@ -235,13 +235,13 @@ For verified owner-agent relationship, both must exist:
 ### Memory Events
 
 ```json
-{"kinds": [30078], "authors": ["<agent-pubkey>", "<owner-pubkey>"]}
+{"kinds": [31234], "authors": ["<agent-pubkey>", "<owner-pubkey>"]}
 ```
 
 ### With D-Tag Prefix Filter
 
 ```json
-{"kinds": [30078], "#d": ["snow:memory:"]}
+{"kinds": [31234], "#d": [...]}
 ```
 
 ### Agent Lessons
@@ -254,7 +254,7 @@ For verified owner-agent relationship, both must exist:
 
 ```json
 [
-  {"kinds": [30078], "authors": ["<agent-pubkey>", "<owner-pubkey>"]},
+  {"kinds": [31234], "authors": ["<agent-pubkey>", "<owner-pubkey>"]},
   {"kinds": [4129], "authors": ["<agent-pubkey>"]},
   {"kinds": [0], "authors": ["<agent-pubkey>"]}
 ]
@@ -293,5 +293,5 @@ Client responds with a signed kind 22242 event:
 | NIP-29 | Relay-based groups (h tag scoping) |
 | NIP-42 | Relay AUTH (mandatory for zooid) |
 | NIP-44 | Encryption (optional for private tier) |
-| NIP-78 | App-specific data (memory KV store) |
+| Custom 31234 | Nomen memory events (replaceable by author+kind+d) |
 | NIP-AE | Agent attribution & verification |
