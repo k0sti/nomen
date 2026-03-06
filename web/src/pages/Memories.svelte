@@ -78,6 +78,36 @@
   function setTierFilter(tier: string) {
     tierFilter.set($tierFilter === tier ? '' : tier);
   }
+
+  // ── Create memory form ─────────────────────────────────────────
+  let showCreateForm = $state(false);
+  let newTopic = $state('');
+  let newSummary = $state('');
+  let newDetail = $state('');
+  let newTier = $state('public');
+  let creating = $state(false);
+
+  async function createMemory() {
+    if (!newTopic.trim() || !newSummary.trim()) return;
+    creating = true;
+    try {
+      const signer = getSigner();
+      await $relay.storeMemory(newTopic.trim(), newSummary.trim(), newDetail.trim(), newTier, signer);
+      // Reload memories to include the new one
+      const result = await $relay.listMemories($profile!.pubkey);
+      memories.set(result);
+      // Reset form
+      newTopic = '';
+      newSummary = '';
+      newDetail = '';
+      newTier = 'public';
+      showCreateForm = false;
+    } catch (err: any) {
+      showError('Failed to create memory: ' + (err.message || err));
+    } finally {
+      creating = false;
+    }
+  }
 </script>
 
 <div class="max-w-4xl mx-auto space-y-6">
@@ -88,7 +118,51 @@
         {stats.total} memories &mdash; {stats.public} public, {stats.group} group, {stats.private} private
       </p>
     </div>
+    {#if $isLoggedIn}
+      <button
+        onclick={() => showCreateForm = !showCreateForm}
+        class="px-4 py-2 min-h-11 rounded-lg border border-accent-600/50 bg-accent-600/10 hover:bg-accent-600/20 text-accent-400 text-sm font-medium transition-colors duration-150"
+      >
+        {showCreateForm ? 'Cancel' : '+ New Memory'}
+      </button>
+    {/if}
   </div>
+
+  {#if showCreateForm}
+    <div class="p-4 rounded-lg border border-gray-700 bg-gray-900/50 space-y-3">
+      <div class="grid grid-cols-2 gap-3">
+        <label class="block">
+          <span class="text-xs text-gray-400">Topic</span>
+          <input type="text" bind:value={newTopic} placeholder="e.g. project/nomen/overview" class="mt-1 w-full px-3 py-2 bg-gray-900 border border-gray-700 rounded-lg text-sm text-gray-200 focus:border-accent-500" />
+        </label>
+        <label class="block">
+          <span class="text-xs text-gray-400">Tier</span>
+          <select bind:value={newTier} class="mt-1 w-full px-3 py-2 bg-gray-900 border border-gray-700 rounded-lg text-sm text-gray-200 focus:border-accent-500">
+            <option value="public">Public</option>
+            <option value="group">Group</option>
+            <option value="private">Private</option>
+          </select>
+        </label>
+      </div>
+      <label class="block">
+        <span class="text-xs text-gray-400">Summary</span>
+        <input type="text" bind:value={newSummary} placeholder="One-line summary..." class="mt-1 w-full px-3 py-2 bg-gray-900 border border-gray-700 rounded-lg text-sm text-gray-200 focus:border-accent-500" />
+      </label>
+      <label class="block">
+        <span class="text-xs text-gray-400">Detail (optional)</span>
+        <textarea bind:value={newDetail} rows="3" placeholder="Full detail..." class="mt-1 w-full px-3 py-2 bg-gray-900 border border-gray-700 rounded-lg text-sm text-gray-200 resize-y focus:border-accent-500"></textarea>
+      </label>
+      <div class="flex justify-end">
+        <button
+          onclick={createMemory}
+          disabled={creating || !newTopic.trim() || !newSummary.trim()}
+          class="px-4 py-2 rounded-lg bg-accent-600 hover:bg-accent-500 disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm font-medium transition-colors duration-150"
+        >
+          {creating ? 'Creating...' : 'Create Memory'}
+        </button>
+      </div>
+    </div>
+  {/if}
 
   <div class="flex items-center gap-3">
     <input

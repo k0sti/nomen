@@ -15,7 +15,9 @@ relayUrl.subscribe((v) => localStorage.setItem('nomen:relayUrl', v));
 apiBaseUrl.subscribe((v) => localStorage.setItem('nomen:apiBaseUrl', v));
 
 // ── Relay & API instances ────────────────────────────────────────
-export const relay = writable<NomenRelay>(new NomenRelay());
+const initialRelay = new NomenRelay();
+initialRelay.onConnectionChange = (connected) => relayConnected.set(connected);
+export const relay = writable<NomenRelay>(initialRelay);
 export const api = derived(apiBaseUrl, ($url) => new NomenApi($url));
 
 // ── Auth ──────────────────────────────────────────────────────────

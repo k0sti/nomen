@@ -36,6 +36,11 @@ export class NomenRelay {
   private bufferedAuthChallenge: string | null = null;
   private _signer: Signer | null = null;
   private okHandlers = new Map<string, { resolve: (id: string) => void; reject: (err: Error) => void }>();
+  private reconnectAttempts = 0;
+  private maxReconnectAttempts = 10;
+  private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  private shouldReconnect = false;
+  onConnectionChange?: (connected: boolean) => void;
 
   constructor(relay: string = 'wss://zooid.atlantislabs.space') {
     this.relay = relay;
@@ -47,6 +52,7 @@ export class NomenRelay {
 
   async connect(): Promise<void> {
     if (this.ws && this.connected) return;
+    this.shouldReconnect = true;
 
     return new Promise((resolve, reject) => {
       const timeout = setTimeout(() => {
@@ -58,7 +64,9 @@ export class NomenRelay {
 
       this.ws.onopen = () => {
         this.connected = true;
+        this.reconnectAttempts = 0;
         clearTimeout(timeout);
+        this.onConnectionChange?.(true);
         // Flush queued messages
         for (const msg of this.messageQueue) {
           this.ws!.send(msg);
@@ -77,10 +85,40 @@ export class NomenRelay {
       };
 
       this.ws.onclose = () => {
+        const wasConnected = this.connected;
         this.connected = false;
         this.authenticated = false;
+        if (wasConnected) {
+          this.onConnectionChange?.(false);
+        }
+        this.scheduleReconnect();
       };
     });
+  }
+
+  private scheduleReconnect() {
+    if (!this.shouldReconnect) return;
+    if (this.reconnectAttempts >= this.maxReconnectAttempts) return;
+
+    const delay = Math.min(1000 * Math.pow(2, this.reconnectAttempts), 30000);
+    this.reconnectAttempts++;
+
+    this.reconnectTimer = setTimeout(async () => {
+      try {
+        await this.connect();
+        // Re-authenticate if we had a signer
+        if (this._signer) {
+          await this.authenticate(this._signer);
+        }
+        // Re-subscribe all active subscriptions
+        for (const [subId] of this.subs) {
+          // Subscriptions need to be re-established by the caller
+          // The onConnectionChange callback enables this
+        }
+      } catch {
+        // connect() will trigger another onclose -> scheduleReconnect
+      }
+    }, delay);
   }
 
   async authenticate(signer: Signer): Promise<void> {
@@ -229,7 +267,7 @@ export class NomenRelay {
     return crypto.randomUUID().slice(0, 8);
   }
 
-  private request(filter: Record<string, any>, timeoutMs = 15000): Promise<NostrEvent[]> {
+  private requestOnce(filter: Record<string, any>, timeoutMs = 15000): Promise<NostrEvent[]> {
     return new Promise((resolve, reject) => {
       const subId = this.genSubId();
       const timeout = setTimeout(() => {
@@ -248,6 +286,22 @@ export class NomenRelay {
 
       this.send(JSON.stringify(['REQ', subId, filter]));
     });
+  }
+
+  private async request(filter: Record<string, any>, timeoutMs = 15000): Promise<NostrEvent[]> {
+    try {
+      return await this.requestOnce(filter, timeoutMs);
+    } catch (err: any) {
+      // Auto-retry once on auth-required: re-authenticate and try again
+      if (err.message?.includes('auth-required') && this._signer) {
+        this.authenticated = false;
+        await this.authenticate(this._signer);
+        // Small delay to let relay process the AUTH
+        await new Promise(r => setTimeout(r, 200));
+        return await this.requestOnce(filter, timeoutMs);
+      }
+      throw err;
+    }
   }
 
   private async publish(event: NostrEvent, timeoutMs = 10000): Promise<string> {
@@ -441,6 +495,11 @@ export class NomenRelay {
   // ── Disconnect ────────────────────────────────────────────────
 
   disconnect() {
+    this.shouldReconnect = false;
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
     // Close all subscriptions
     for (const subId of this.subs.keys()) {
       this.send(JSON.stringify(['CLOSE', subId]));
@@ -454,6 +513,7 @@ export class NomenRelay {
     this.ws = null;
     this.connected = false;
     this.authenticated = false;
+    this.onConnectionChange?.(false);
   }
 
   // ── Parsers ───────────────────────────────────────────────────

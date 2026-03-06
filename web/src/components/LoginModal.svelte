@@ -100,7 +100,7 @@
       const ac = new AbortController();
       abortController = ac;
 
-      const result = await waitForNostrConnect(session, ac.signal);
+      const result = await waitForNostrConnect(session);
       connectStatus = 'connected';
       profile.set(result.profile);
       signer.set(result.signer);

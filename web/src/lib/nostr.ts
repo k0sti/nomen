@@ -1,9 +1,10 @@
-// Nostr authentication: NIP-07 extension + NIP-46 remote signing (Nostr Connect / Amber)
+// Nostr authentication using applesauce-signers + profile fetching
 
 import { nip19 } from 'nostr-tools';
-import { generateSecretKey, getPublicKey } from 'nostr-tools/pure';
-import { BunkerSigner, createNostrConnectURI } from 'nostr-tools/nip46';
-import type { EventTemplate, VerifiedEvent } from 'nostr-tools/core';
+import type { EventTemplate, VerifiedEvent, NostrEvent, Filter } from 'nostr-tools';
+import { ExtensionSigner } from 'applesauce-signers';
+import { NostrConnectSigner, type NostrConnectAppMetadata } from 'applesauce-signers/signers/nostr-connect-signer';
+import { SimpleSigner } from 'applesauce-signers/signers/simple-signer';
 
 export interface NostrProfile {
   pubkey: string;
@@ -32,21 +33,16 @@ export function compressNpub(npub: string): string {
   return `${npub.slice(0, 14)}...${npub.slice(-4)}`;
 }
 
-// Create a NIP-07 signer wrapper
-export function createNip07Signer(): NostrSigner {
-  const ext = (window as any).nostr;
-  if (!ext) throw new Error('No NIP-07 extension found');
-  return {
-    getPublicKey: () => ext.getPublicKey(),
-    signEvent: (event: EventTemplate) => ext.signEvent(event),
-  };
-}
-
-// Login with NIP-07 web extension
+// Login with NIP-07 web extension (using applesauce ExtensionSigner)
 export async function loginWithNip07(): Promise<{ profile: NostrProfile; signer: NostrSigner }> {
-  const signer = createNip07Signer();
-  const pubkey = await signer.getPublicKey();
+  const extSigner = new ExtensionSigner();
+  const pubkey = await extSigner.getPublicKey();
   const npub = nip19.npubEncode(pubkey);
+
+  const signer: NostrSigner = {
+    getPublicKey: () => extSigner.getPublicKey(),
+    signEvent: (event: EventTemplate) => extSigner.signEvent(event),
+  };
 
   const profile: NostrProfile = {
     pubkey,
@@ -72,42 +68,103 @@ export async function loginWithNip07(): Promise<{ profile: NostrProfile; signer:
 // NIP-46 Nostr Connect session
 export interface NostrConnectSession {
   uri: string;
-  secret: string;
-  clientSecretKey: Uint8Array;
+  connectSigner: NostrConnectSigner;
   relay: string;
 }
 
-// Generate a Nostr Connect session (URI + ephemeral keypair)
-export function createNostrConnectSession(relay: string): NostrConnectSession {
-  const clientSecretKey = generateSecretKey();
-  const clientPubkey = getPublicKey(clientSecretKey);
-  const secret = Array.from(crypto.getRandomValues(new Uint8Array(16)))
-    .map((b) => b.toString(16).padStart(2, '0'))
-    .join('');
+// Simple WebSocket-based subscription method for NostrConnectSigner
+function createSubscriptionMethod(relays: string[]) {
+  return (subRelays: string[], filters: Filter[]) => {
+    const targetRelays = subRelays.length > 0 ? subRelays : relays;
+    return {
+      subscribe: (observer: { next?: (e: NostrEvent) => void; error?: (err: any) => void; complete?: () => void }) => {
+        const connections: WebSocket[] = [];
+        for (const url of targetRelays) {
+          try {
+            const ws = new WebSocket(url);
+            connections.push(ws);
+            ws.onopen = () => {
+              for (const filter of filters) {
+                const subId = crypto.randomUUID().slice(0, 8);
+                ws.send(JSON.stringify(['REQ', subId, filter]));
+              }
+            };
+            ws.onmessage = (evt) => {
+              try {
+                const data = JSON.parse(evt.data);
+                if (data[0] === 'EVENT' && data[2]) {
+                  observer.next?.(data[2] as NostrEvent);
+                }
+              } catch { /* ignore */ }
+            };
+            ws.onerror = () => observer.error?.(new Error(`WebSocket error: ${url}`));
+          } catch (err) {
+            observer.error?.(err);
+          }
+        }
+        return {
+          unsubscribe: () => {
+            for (const ws of connections) {
+              try { ws.close(); } catch { /* ignore */ }
+            }
+          },
+        };
+      },
+    };
+  };
+}
 
-  const uri = createNostrConnectURI({
-    clientPubkey,
-    relays: [relay],
-    secret,
-    name: 'Nomen',
+// Simple WebSocket-based publish method for NostrConnectSigner
+function createPublishMethod(relays: string[]) {
+  return async (pubRelays: string[], event: NostrEvent) => {
+    const targetRelays = pubRelays.length > 0 ? pubRelays : relays;
+    for (const url of targetRelays) {
+      try {
+        const ws = new WebSocket(url);
+        await new Promise<void>((resolve, reject) => {
+          const timeout = setTimeout(() => { ws.close(); reject(new Error('timeout')); }, 5000);
+          ws.onopen = () => {
+            ws.send(JSON.stringify(['EVENT', event]));
+            clearTimeout(timeout);
+            setTimeout(() => { ws.close(); resolve(); }, 500);
+          };
+          ws.onerror = () => { clearTimeout(timeout); reject(new Error('error')); };
+        });
+      } catch { /* try next relay */ }
+    }
+  };
+}
+
+// Generate a Nostr Connect session (using applesauce NostrConnectSigner)
+export function createNostrConnectSession(relay: string): NostrConnectSession {
+  const clientSigner = new SimpleSigner();
+  const relays = [relay];
+
+  const connectSigner = new NostrConnectSigner({
+    relays,
+    signer: clientSigner,
+    subscriptionMethod: createSubscriptionMethod(relays),
+    publishMethod: createPublishMethod(relays),
   });
 
-  return { uri, secret, clientSecretKey, relay };
+  const metadata: NostrConnectAppMetadata = {
+    name: 'Nomen',
+    url: window.location.origin,
+  };
+
+  const uri = connectSigner.getNostrConnectURI(metadata);
+
+  return { uri, connectSigner, relay };
 }
 
 // Wait for remote signer to connect via NIP-46
 export async function waitForNostrConnect(
   session: NostrConnectSession,
-  abortSignal?: AbortSignal,
 ): Promise<{ profile: NostrProfile; signer: NostrSigner }> {
-  const bunkerSigner = await BunkerSigner.fromURI(
-    session.clientSecretKey,
-    session.uri,
-    undefined,
-    abortSignal ?? 120_000, // 2 minute timeout
-  );
+  await session.connectSigner.open();
+  await session.connectSigner.waitForSigner();
 
-  const pubkey = await bunkerSigner.getPublicKey();
+  const pubkey = await session.connectSigner.getPublicKey();
   const npub = nip19.npubEncode(pubkey);
 
   const profile: NostrProfile = {
@@ -117,18 +174,18 @@ export async function waitForNostrConnect(
   };
 
   const signer: NostrSigner = {
-    getPublicKey: () => bunkerSigner.getPublicKey(),
-    signEvent: (event: EventTemplate) => bunkerSigner.signEvent(event),
-    close: () => bunkerSigner.close(),
+    getPublicKey: () => session.connectSigner.getPublicKey(),
+    signEvent: (event: EventTemplate) => session.connectSigner.signEvent(event),
+    close: () => session.connectSigner.close(),
   };
 
   // Store session info for reconnection
   sessionStorage.setItem(
     'nomen:nip46',
     JSON.stringify({
-      clientSecretKey: Array.from(session.clientSecretKey),
+      clientKey: Array.from(session.connectSigner.signer.key),
       relay: session.relay,
-      remotePubkey: pubkey,
+      remotePubkey: session.connectSigner.remote,
     }),
   );
 
@@ -153,19 +210,22 @@ export async function restoreNip46Session(): Promise<{ profile: NostrProfile; si
   if (!stored) return null;
 
   try {
-    const { clientSecretKey, relay, remotePubkey } = JSON.parse(stored);
-    const sk = new Uint8Array(clientSecretKey);
+    const { clientKey, relay, remotePubkey } = JSON.parse(stored);
+    const clientSigner = new SimpleSigner(new Uint8Array(clientKey));
+    const relays = [relay];
 
-    const bunkerSigner = BunkerSigner.fromBunker(sk, {
-      pubkey: remotePubkey,
-      relays: [relay],
-      secret: null,
+    const connectSigner = new NostrConnectSigner({
+      relays,
+      signer: clientSigner,
+      remote: remotePubkey,
+      subscriptionMethod: createSubscriptionMethod(relays),
+      publishMethod: createPublishMethod(relays),
     });
 
-    // Verify connection works
-    await bunkerSigner.ping();
+    await connectSigner.open();
+    await connectSigner.requireConnection();
 
-    const pubkey = await bunkerSigner.getPublicKey();
+    const pubkey = await connectSigner.getPublicKey();
     const npub = nip19.npubEncode(pubkey);
 
     const profile: NostrProfile = {
@@ -175,9 +235,9 @@ export async function restoreNip46Session(): Promise<{ profile: NostrProfile; si
     };
 
     const signer: NostrSigner = {
-      getPublicKey: () => bunkerSigner.getPublicKey(),
-      signEvent: (event: EventTemplate) => bunkerSigner.signEvent(event),
-      close: () => bunkerSigner.close(),
+      getPublicKey: () => connectSigner.getPublicKey(),
+      signEvent: (event: EventTemplate) => connectSigner.signEvent(event),
+      close: () => connectSigner.close(),
     };
 
     try {
@@ -333,7 +393,6 @@ export async function fetchProfilesBatch(
   const results = new Map<string, Record<string, any>>();
   const uncached: string[] = [];
 
-  // Check cache first
   for (const pk of pubkeys) {
     const cached = getCachedProfile(pk);
     if (cached) {
@@ -345,7 +404,6 @@ export async function fetchProfilesBatch(
 
   if (uncached.length === 0) return results;
 
-  // Try each public relay until we've resolved all pubkeys
   for (const url of PUBLIC_PROFILE_RELAYS) {
     if (uncached.length === 0) break;
     const remaining = uncached.filter((pk) => !results.has(pk));
@@ -375,7 +433,7 @@ function fetchKind0FromRelay(
     const timestamps = new Map<string, number>();
     const timeout = setTimeout(() => {
       ws.close();
-      resolve(results); // return whatever we got
+      resolve(results);
     }, 8000);
 
     ws.onopen = () => {
@@ -466,7 +524,6 @@ export async function fetchProfileEventsBatch(
       for (const [pk, event] of fetched) {
         results.set(pk, event);
         remaining.delete(pk);
-        // Also populate profile cache
         try {
           setCachedProfile(pk, JSON.parse(event.content));
         } catch { /* skip malformed */ }

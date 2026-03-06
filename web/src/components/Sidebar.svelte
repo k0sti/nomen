@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { currentPage } from '../lib/stores';
+  import { currentPage, relayConnected } from '../lib/stores';
   import type { Page } from '../lib/stores';
 
   const navItems: { page: Page; label: string; iconPath: string }[] = [
@@ -44,7 +44,11 @@
     {/each}
   </div>
 
-  <div class="p-4 border-t border-gray-800 text-xs text-gray-600">
-    Nomen v0.1.0
+  <div class="p-4 border-t border-gray-800">
+    <div class="flex items-center gap-2 text-xs text-gray-600">
+      <span class="inline-block w-2 h-2 rounded-full {$relayConnected ? 'bg-green-500' : 'bg-gray-600'}"></span>
+      <span>{$relayConnected ? 'Connected' : 'Disconnected'}</span>
+    </div>
+    <div class="text-xs text-gray-700 mt-1">Nomen v0.1.0</div>
   </div>
 </nav>

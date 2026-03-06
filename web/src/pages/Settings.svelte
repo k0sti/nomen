@@ -3,14 +3,19 @@
   import { NomenRelay } from '../lib/relay';
 
   let saved = $state(false);
+  let nip46Relays = $state(localStorage.getItem('nomen:nip46Relays') || 'wss://relay.nsec.app');
 
   function save() {
     // Recreate relay instance if URL changed
     if ($relay.url !== $relayUrl) {
       $relay.disconnect();
-      relay.set(new NomenRelay($relayUrl));
+      const newRelay = new NomenRelay($relayUrl);
+      newRelay.onConnectionChange = (connected) => relayConnected.set(connected);
+      relay.set(newRelay);
       relayConnected.set(false);
     }
+    // Save NIP-46 relay list
+    localStorage.setItem('nomen:nip46Relays', nip46Relays.trim());
     saved = true;
     setTimeout(() => saved = false, 2000);
   }
@@ -39,6 +44,17 @@
       <input
         type="text"
         bind:value={$apiBaseUrl}
+        class="mt-1 w-full px-4 py-2.5 bg-gray-900 border border-gray-700 rounded-lg text-sm text-gray-200 focus:border-accent-500 focus:outline-none"
+      />
+    </label>
+
+    <label class="block">
+      <span class="text-sm font-medium text-gray-300">NIP-46 Relay</span>
+      <span class="text-xs text-gray-600 ml-2">Relay for Nostr Connect / remote signing</span>
+      <input
+        type="text"
+        bind:value={nip46Relays}
+        placeholder="wss://relay.nsec.app"
         class="mt-1 w-full px-4 py-2.5 bg-gray-900 border border-gray-700 rounded-lg text-sm text-gray-200 focus:border-accent-500 focus:outline-none"
       />
     </label>

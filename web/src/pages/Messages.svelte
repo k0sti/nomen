@@ -1,7 +1,7 @@
 <script lang="ts">
   
   import MessageItem from '../components/MessageItem.svelte';
-  import { relay, messages, channelFilter, loading, profile, isLoggedIn, groups, getSigner, ensureConnected, showError } from '../lib/stores';
+  import { relay, messages, channelFilter, loading, profile, isLoggedIn, groups, api, getSigner, ensureConnected, showError, showInfo } from '../lib/stores';
 
   let senderFilter = $state('');
   let selectedGroup = $state('');
@@ -64,6 +64,22 @@
       loading.set(false);
     }
   }
+
+  let consolidating = $state(false);
+
+  async function triggerConsolidate() {
+    consolidating = true;
+    try {
+      const report = await $api.consolidate({
+        channel: $channelFilter || undefined,
+      });
+      showInfo(`Consolidated ${report.messages_processed} messages into ${report.memories_created} memories`);
+    } catch (err: any) {
+      showError('Consolidation failed: ' + (err.message || err));
+    } finally {
+      consolidating = false;
+    }
+  }
 </script>
 
 <div class="max-w-4xl mx-auto space-y-6">
@@ -103,6 +119,14 @@
           <option value={ch}>#{ch}</option>
         {/each}
       </select>
+      <button
+        onclick={triggerConsolidate}
+        disabled={consolidating || $messages.length === 0}
+        class="px-4 py-2 min-h-11 rounded-lg border border-accent-600/50 bg-accent-600/10 hover:bg-accent-600/20 text-accent-400 text-sm font-medium transition-colors duration-150 disabled:opacity-30 disabled:cursor-not-allowed"
+        title="Run server-side consolidation to create memories from messages"
+      >
+        {consolidating ? 'Consolidating...' : 'Consolidate'}
+      </button>
     </div>
 
     {#if $loading}
