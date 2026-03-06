@@ -76,6 +76,44 @@ export interface ConsolidateOpts {
   since?: string;
 }
 
+export interface SystemStats {
+  total_memories: number;
+  named_memories: number;
+  ephemeral_messages: number;
+  entities: number;
+  groups: number;
+  last_consolidation: string | null;
+  last_prune: string | null;
+  db_size_bytes: number;
+}
+
+export interface ConsolidationStatus {
+  due: boolean;
+  reason: string;
+  last_run: string | null;
+  hours_since_last_run: number | null;
+  pending_messages: number;
+  interval_hours: number;
+  max_ephemeral_count: number;
+  enabled: boolean;
+  ephemeral_ttl_minutes: number;
+}
+
+export interface PruneResult {
+  memories_pruned: number;
+  raw_messages_pruned: number;
+  dry_run: boolean;
+  pruned: { topic: string; confidence: number | null; age_days: number }[];
+}
+
+export interface NomenConfig {
+  relay: string | null;
+  embedding: { provider: string; model: string; dimensions: number } | null;
+  consolidation: Record<string, unknown> | null;
+  groups: { id: string; name: string; member_count: number }[];
+  config_path: string;
+}
+
 export class NomenApi {
   private baseUrl: string;
 
@@ -132,6 +170,26 @@ export class NomenApi {
 
   async consolidate(opts?: ConsolidateOpts): Promise<ConsolidateReport> {
     return this.postJson('/consolidate', { ...opts });
+  }
+
+  async getConfig(): Promise<NomenConfig> {
+    return this.getJson('/config');
+  }
+
+  async reloadConfig(): Promise<NomenConfig> {
+    return this.postJson('/config/reload', {});
+  }
+
+  async getStats(): Promise<SystemStats> {
+    return this.getJson('/stats');
+  }
+
+  async getConsolidationStatus(): Promise<ConsolidationStatus> {
+    return this.getJson('/consolidate/status');
+  }
+
+  async prune(days: number, dryRun: boolean): Promise<PruneResult> {
+    return this.postJson('/prune', { days, dry_run: dryRun });
   }
 }
 
