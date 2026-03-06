@@ -76,6 +76,13 @@ export interface ConsolidateOpts {
   since?: string;
 }
 
+export interface CreateGroupOpts {
+  id: string;
+  name: string;
+  members?: string[];
+  nostr_group?: string;
+}
+
 export interface SystemStats {
   total_memories: number;
   named_memories: number;
@@ -170,6 +177,15 @@ export class NomenApi {
 
   async consolidate(opts?: ConsolidateOpts): Promise<ConsolidateReport> {
     return this.postJson('/consolidate', { ...opts });
+  }
+
+  async getGroups(): Promise<Group[]> {
+    const data = await this.getJson<{ groups: Group[] }>('/groups');
+    return data.groups;
+  }
+
+  async createGroup(opts: CreateGroupOpts): Promise<{ created: string }> {
+    return this.postJson('/groups', opts as unknown as Record<string, unknown>);
   }
 
   async getConfig(): Promise<NomenConfig> {

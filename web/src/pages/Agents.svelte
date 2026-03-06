@@ -6,6 +6,7 @@
   import { fetchProfileFromRelay } from '../lib/relay';
   import type { NostrProfile } from '../lib/nostr';
   import ProfileCard from '../components/ProfileCard.svelte';
+  import ProfileList from '../components/ProfileList.svelte';
 
   const CONFIG_D_TAG = 'nomen:config:agents';
 
@@ -344,32 +345,34 @@
           No agents configured yet. Add one below.
         </div>
       {:else}
-        <div class="space-y-2">
-          {#each agents as agent (agent.npub)}
-            <button class="w-full text-left" onclick={() => openAgent(agent)}>
-              <ProfileCard
-                pubkey={agent.profile?.pubkey || (() => { try { return nip19.decode(agent.npub).data as string; } catch { return ''; } })()}
-                name={agent.profile?.name}
-                displayName={agent.profile?.displayName}
-                picture={agent.profile?.picture}
-                about={agent.profile?.about}
-                isBot={isBot(agent)}
-                role={`link: ${getLinkStatus(agent)}` + (agent.nsec ? ' 🔑' : '')}
-              >
-                <button
-                  onclick={(e) => { e.stopPropagation(); removeAgent(agent.npub); }}
-                  class="w-9 h-9 flex items-center justify-center rounded-lg text-gray-600 hover:text-red-400 hover:bg-red-900/20 transition-colors duration-150"
-                  title="Remove agent"
-                  aria-label="Remove agent"
-                >
-                  <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
-                  </svg>
-                </button>
-              </ProfileCard>
+        <ProfileList
+          entries={agents.map((agent) => ({
+            key: agent.npub,
+            pubkey: agent.profile?.pubkey || (() => { try { return nip19.decode(agent.npub).data as string; } catch { return ''; } })(),
+            name: agent.profile?.name,
+            displayName: agent.profile?.displayName,
+            picture: agent.profile?.picture,
+            about: agent.profile?.about,
+            isBot: isBot(agent),
+            role: `link: ${getLinkStatus(agent)}` + (agent.nsec ? ' 🔑' : ''),
+            raw: agent,
+          }))}
+          onselect={(entry) => openAgent(entry.raw)}
+          emptyText="No agents configured yet. Add one below."
+        >
+          <svelte:fragment slot="actions" let:entry>
+            <button
+              onclick={(e) => { e.stopPropagation(); removeAgent(entry.raw.npub); }}
+              class="w-9 h-9 flex items-center justify-center rounded-lg text-gray-600 hover:text-red-400 hover:bg-red-900/20 transition-colors duration-150"
+              title="Remove agent"
+              aria-label="Remove agent"
+            >
+              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+              </svg>
             </button>
-          {/each}
-        </div>
+          </svelte:fragment>
+        </ProfileList>
       {/if}
     </section>
 

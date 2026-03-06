@@ -2,7 +2,7 @@
 
   import GroupTree from '../components/GroupTree.svelte';
   import GroupMembers from '../components/GroupMembers.svelte';
-  import { relay, groups, loading, profile, isLoggedIn, getSigner, ensureConnected, showError, showInfo } from '../lib/stores';
+  import { api, groups, loading, profile, isLoggedIn, showError, showInfo } from '../lib/stores';
 
   let selectedGroup = $state<string | null>(null);
 
@@ -16,8 +16,7 @@
   async function loadGroups() {
     loading.set(true);
     try {
-      const r = await ensureConnected();
-      const result = await r.listGroups();
+      const result = await $api.getGroups();
       groups.set(result);
     } catch (err: any) {
       showError('Failed to load groups: ' + (err.message || err));
@@ -33,12 +32,15 @@
   });
 
   async function createGroup() {
-    if (!newGroupName.trim()) return;
+    const name = newGroupName.trim();
+    if (!name) return;
     creating = true;
     try {
-      // NIP-29 group creation is relay-managed — this is a placeholder
-      // In practice, groups are created via relay admin commands
-      showInfo('Group creation requires relay admin access (NIP-29). Contact your relay operator.');
+      const id = name.toLowerCase().replace(/[^a-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '');
+      await $api.createGroup({ id, name });
+      await loadGroups();
+      showInfo(`Group created: ${id}`);
+      selectedGroup = id;
       showCreateForm = false;
       newGroupName = '';
     } catch (err: any) {
@@ -71,7 +73,7 @@
         <span class="text-xs text-gray-400">Group Name</span>
         <input type="text" bind:value={newGroupName} placeholder="e.g. my-team" class="mt-1 w-full px-3 py-2 bg-gray-900 border border-gray-700 rounded-lg text-sm text-gray-200 focus:border-accent-500" />
       </label>
-      <p class="text-xs text-gray-500">NIP-29 groups are managed by the relay. This will request group creation from the relay operator.</p>
+      <p class="text-xs text-gray-500">Creates a local group record in Nomen (id auto-derived from name).</p>
       <div class="flex justify-end">
         <button
           onclick={createGroup}

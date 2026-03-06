@@ -2,7 +2,9 @@
   
   import { profile, signer, relay, ensureConnected } from '../lib/stores';
   import { nip19 } from 'nostr-tools';
+  import { fetchProfilesBatch } from '../lib/nostr';
   import ProfileCard from '../components/ProfileCard.svelte';
+  import ProfileList from '../components/ProfileList.svelte';
 
   const CONFIG_D_TAG = 'nomen:config:agents';
 
@@ -48,15 +50,26 @@
     try {
       const r = await ensureConnected();
       const profiles = await r.listProfiles();
+      // Fill missing profile metadata from public relays
+      const missing = profiles.filter((p) => !p.meta || Object.keys(p.meta).length === 0).map((p) => p.pubkey);
+      if (missing.length > 0) {
+        const batch = await fetchProfilesBatch(missing);
+        for (const p of profiles) {
+          if ((!p.meta || Object.keys(p.meta).length === 0) && batch.has(p.pubkey)) {
+            p.meta = batch.get(p.pubkey) || {};
+            p.hasProfile = true;
+          }
+        }
+      }
+
       // Sort: profiles first, then bots last, alphabetical within each group
       members = profiles.sort((a, b) => {
-        // Profiles first
         if (a.hasProfile !== b.hasProfile) return a.hasProfile ? -1 : 1;
         const aIsBot = a.meta.bot === true;
         const bIsBot = b.meta.bot === true;
         if (aIsBot !== bIsBot) return aIsBot ? 1 : -1;
-        const aName = (a.meta.display_name || a.meta.displayName || a.meta.name || '').toLowerCase();
-        const bName = (b.meta.display_name || b.meta.displayName || b.meta.name || '').toLowerCase();
+        const aName = (a.meta.display_name || a.meta.displayName || a.meta.name || a.pubkey).toLowerCase();
+        const bName = (b.meta.display_name || b.meta.displayName || b.meta.name || b.pubkey).toLowerCase();
         return aName.localeCompare(bName);
       });
     } catch (e: any) {
@@ -118,26 +131,26 @@
       <p class="text-gray-400">No profiles found on this relay.</p>
     </div>
   {:else}
-    <div class="space-y-2">
-      {#each members as member (member.pubkey)}
-        <button class="w-full text-left" onclick={() => selectedMember = member}>
-          <ProfileCard
-            pubkey={member.pubkey}
-            name={member.meta.name}
-            displayName={member.meta.display_name || member.meta.displayName}
-            picture={member.meta.picture}
-            about={member.meta.about}
-            nip05={member.meta.nip05}
-            isBot={member.meta.bot === true}
-            isAgent={isAgent(member.pubkey)}
-            isYou={isYou(member.pubkey)}
-            ownerPubkey={getOwnerPubkey(member.meta)}
-            agentCount={getAgentCount(member.meta)}
-            role={member.hasProfile ? 'profile' : undefined}
-          />
-        </button>
-      {/each}
-    </div>
+    <ProfileList
+      entries={members.map((member) => ({
+        key: member.pubkey,
+        pubkey: member.pubkey,
+        name: member.meta.name,
+        displayName: member.meta.display_name || member.meta.displayName,
+        picture: member.meta.picture,
+        about: member.meta.about,
+        nip05: member.meta.nip05,
+        isBot: member.meta.bot === true,
+        isAgent: isAgent(member.pubkey),
+        isYou: isYou(member.pubkey),
+        ownerPubkey: getOwnerPubkey(member.meta),
+        agentCount: getAgentCount(member.meta),
+        role: member.hasProfile ? 'profile' : undefined,
+        raw: member,
+      }))}
+      onselect={(entry) => selectedMember = entry.raw}
+      emptyText="No members found"
+    />
   {/if}
 </div>
 
