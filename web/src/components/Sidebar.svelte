@@ -13,25 +13,26 @@
   ];
 </script>
 
-<nav class="w-56 bg-gray-900 border-r border-gray-800 flex flex-col shrink-0" aria-label="Main navigation">
-  <div class="p-4 border-b border-gray-800">
-    <a href="/" class="flex items-center gap-2 hover:opacity-80 transition-opacity">
+<nav class="w-14 md:w-56 bg-gray-900 border-r border-gray-800 flex flex-col shrink-0" aria-label="Main navigation">
+  <div class="p-2 md:p-4 border-b border-gray-800">
+    <a href="/" class="flex items-center gap-2 hover:opacity-80 transition-opacity justify-center md:justify-start">
       <svg class="w-7 h-7 text-accent-400" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24">
         <path stroke-linecap="round" stroke-linejoin="round" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
       </svg>
-      <span class="font-bold text-lg text-gray-100">Nomen</span>
+      <span class="font-bold text-lg text-gray-100 hidden md:inline">Nomen</span>
     </a>
-    <p class="text-xs text-gray-500 mt-1">Agent Memory System</p>
+    <p class="text-xs text-gray-500 mt-1 hidden md:block">Agent Memory System</p>
   </div>
 
   <div class="flex-1 py-2">
     {#each navItems as item}
       <button
-        class="w-full flex items-center gap-3 px-4 py-3 min-h-11 text-sm transition-colors duration-150 {$currentPage === item.page
+        class="w-full flex items-center gap-3 px-2 md:px-4 py-3 min-h-11 text-sm transition-colors duration-150 justify-center md:justify-start {$currentPage === item.page
           ? 'bg-accent-500/10 text-accent-400 border-r-2 border-accent-500'
           : 'text-gray-400 hover:text-gray-200 hover:bg-gray-800/50 active:bg-gray-800'}"
         onclick={() => currentPage.set(item.page)}
         aria-current={$currentPage === item.page ? 'page' : undefined}
+        title={item.label}
       >
         <svg class="w-5 h-5 shrink-0" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" d={item.iconPath} />
@@ -39,16 +40,16 @@
             <path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
           {/if}
         </svg>
-        <span>{item.label}</span>
+        <span class="hidden md:inline">{item.label}</span>
       </button>
     {/each}
   </div>
 
-  <div class="p-4 border-t border-gray-800">
-    <div class="flex items-center gap-2 text-xs text-gray-600">
+  <div class="p-2 md:p-4 border-t border-gray-800">
+    <div class="flex items-center gap-2 text-xs text-gray-600 justify-center md:justify-start">
       <span class="inline-block w-2 h-2 rounded-full {$relayConnected ? 'bg-green-500' : 'bg-gray-600'}"></span>
-      <span>{$relayConnected ? 'Connected' : 'Disconnected'}</span>
+      <span class="hidden md:inline">{$relayConnected ? 'Connected' : 'Disconnected'}</span>
     </div>
-    <div class="text-xs text-gray-700 mt-1">Nomen v0.1.0</div>
+    <div class="text-xs text-gray-700 mt-1 hidden md:block">Nomen v0.1.0</div>
   </div>
 </nav>
