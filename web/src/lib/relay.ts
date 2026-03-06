@@ -279,10 +279,10 @@ export class NomenRelay {
 
   // ── Memory operations ─────────────────────────────────────────
 
-  async listMemories(pubkey: string): Promise<Memory[]> {
+  async listMemories(_pubkey?: string): Promise<Memory[]> {
+    // Fetch all memory events on this relay (not filtered by author)
     const events = await this.request({
       kinds: [30078],
-      authors: [pubkey],
       limit: 500,
     });
 
@@ -291,7 +291,7 @@ export class NomenRelay {
       .map((e) => this.parseMemory(e));
   }
 
-  subscribeMemories(pubkey: string, callback: (m: Memory) => void): Subscription {
+  subscribeMemories(_pubkey: string | undefined, callback: (m: Memory) => void): Subscription {
     const subId = this.genSubId();
 
     this.subs.set(subId, (event: NostrEvent) => {
@@ -304,7 +304,7 @@ export class NomenRelay {
       JSON.stringify([
         'REQ',
         subId,
-        { kinds: [30078], authors: [pubkey], since: Math.floor(Date.now() / 1000) },
+        { kinds: [30078], since: Math.floor(Date.now() / 1000) },
       ])
     );
 
