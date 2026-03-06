@@ -60,7 +60,7 @@ The `content` field is a JSON object:
 | Tag | Required | Description |
 |-----|----------|-------------|
 | `d` | Yes | Topic key: `<namespace>/<topic>` — makes event addressable/replaceable |
-| `tier` | Yes | Visibility tier: `public`, `group`, or `private` |
+| `tier` | Yes | Visibility tier: `public`, `group`, `personal`, or `internal` |
 | `model` | Yes | Model that generated this memory (e.g. `anthropic/claude-opus-4-6`) |
 | `confidence` | Yes | Self-assessed confidence score, float in [0.0, 1.0] |
 | `source` | Yes | Pubkey (hex) of the originating agent |
@@ -149,7 +149,7 @@ The `h` tag scopes visibility to group members (relay-enforced):
 ["snow:scope", "sha256:sorted_npub1,npub2,npub3"]
 ```
 
-Ad-hoc sets are always private tier with NIP-44 encryption. They don't use `h` tags since they aren't relay-managed groups.
+Ad-hoc sets are always personal tier with NIP-44 encryption. They don't use `h` tags since they aren't relay-managed groups.
 
 ---
 
@@ -292,6 +292,6 @@ Client responds with a signed kind 22242 event:
 | NIP-09 | Event deletion (memory cleanup) |
 | NIP-29 | Relay-based groups (h tag scoping) |
 | NIP-42 | Relay AUTH (mandatory for zooid) |
-| NIP-44 | Encryption (optional for private tier) |
+| NIP-44 | Encryption (personal tier: agent↔user shared secret; internal tier: self-encrypt) |
 | Custom 31234 | Nomen memory events (replaceable by author+kind+d) |
 | NIP-AE | Agent attribution & verification |

@@ -14,11 +14,14 @@ Nomen gives AI agents durable, searchable, self-sovereign memory using [Nostr](h
 
 Memories exist in three tiers with different visibility:
 
-| Tier | Encryption | Visibility |
-|------|-----------|------------|
-| `public` | None | All agents on the relay |
-| `group` | Relay-auth gated | Group members (NIP-29 `h` tag) |
-| `private` | NIP-44 self-encrypt | Only the owning agent |
+| Tier | Encryption | Visibility | Use Case |
+|------|-----------|------------|----------|
+| `public` | None | All agents on the relay | General knowledge, facts |
+| `group` | Relay-auth gated | Group members (NIP-29 `h` tag) | Team decisions, project context |
+| `personal` | NIP-44 (agent↔user) | Agent + the specific user | User preferences, conversation history |
+| `internal` | NIP-44 (self-encrypt) | Only the owning agent | Behavioral lessons, self-reflection |
+
+**Personal** memories are scoped by user npub — the user can access and audit their own data. **Internal** memories are truly agent-private — self-encrypted, invisible to users.
 
 Guardian and agent identities are first-class — configure multiple nsecs to read across agents while controlling who writes.
 
@@ -49,7 +52,7 @@ Raw Messages (high volume, ephemeral)
 Named Memories (low volume, durable, topic-keyed)
 ```
 
-- **Tier derivation** — DM sources → private, group sources → group, public → public
+- **Tier derivation** — DM sources → personal (user-scoped), agent self-reflection → internal, group sources → group, public → public
 - **Merge, don't duplicate** — Checks existing memories by topic and embedding similarity (>0.92), merges instead of creating new
 - **Conflict detection** — LLM flags contradictions, creates `contradicts` graph edges
 - **Entity extraction** — Automatically extracts and links entities during consolidation
@@ -183,7 +186,8 @@ Memories use custom replaceable kind **31234** with clean, purpose-built tags:
   "content": "{\"summary\":\"...\",\"detail\":\"...\"}",
   "tags": [
     ["d", "user/k0/preferences"],
-    ["tier", "private"],
+    ["tier", "personal"],
+    ["p", "<user-pubkey-hex>"],
     ["model", "anthropic/claude-sonnet-4-6"],
     ["confidence", "0.92"],
     ["importance", "7"],

@@ -44,7 +44,7 @@
           </svg>
         </div>
         <h3>Collective & Tiered</h3>
-        <p>Public, group, and private memory tiers with cryptographic identity. Named groups and npub sets — both hierarchical. Agents share knowledge within trust boundaries.</p>
+        <p>Four memory tiers: public, group, personal, and internal. Personal memories are user-scoped — auditable by the user. Internal memories are agent-only. Named groups and npub sets, both hierarchical.</p>
       </div>
 
       <div class="feature-card">
