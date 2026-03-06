@@ -183,6 +183,9 @@ enum Command {
         /// Directory for static web UI files (default: web/dist relative to binary)
         #[arg(long)]
         static_dir: Option<PathBuf>,
+        /// Directory for landing page files (default: web/dist-landing relative to binary)
+        #[arg(long)]
+        landing_dir: Option<PathBuf>,
         /// Also start Context-VM (Nostr-native request/response listener)
         #[arg(long)]
         context_vm: bool,
@@ -371,8 +374,8 @@ async fn main() -> Result<()> {
             }
             cmd_send(&resolved.relay, &resolved.nsecs, &to, &content, channel.as_deref(), &cli).await?;
         }
-        Command::Serve { stdio, http: ref http_addr, ref static_dir, context_vm, ref allowed_npubs } => {
-            cmd_serve(&cli, stdio, http_addr.clone(), static_dir.clone(), context_vm, allowed_npubs.clone()).await?;
+        Command::Serve { stdio, http: ref http_addr, ref static_dir, ref landing_dir, context_vm, ref allowed_npubs } => {
+            cmd_serve(&cli, stdio, http_addr.clone(), static_dir.clone(), landing_dir.clone(), context_vm, allowed_npubs.clone()).await?;
         }
     }
 
@@ -1119,6 +1122,7 @@ async fn cmd_serve(
     stdio: bool,
     http_addr: Option<String>,
     static_dir: Option<PathBuf>,
+    landing_dir: Option<PathBuf>,
     context_vm: bool,
     allowed_npubs: Vec<String>,
 ) -> Result<()> {
@@ -1175,7 +1179,19 @@ async fn cmd_serve(
             default_channel,
         };
 
-        return nomen::http::serve(&bind_addr, http_state, resolved_static).await;
+        // Resolve landing dir: explicit flag > web/dist-landing relative to binary > cwd
+        let resolved_landing = landing_dir.or_else(|| {
+            if let Ok(exe) = std::env::current_exe() {
+                let dir = exe.parent()?.join("web/dist-landing");
+                if dir.is_dir() {
+                    return Some(dir);
+                }
+            }
+            let cwd = PathBuf::from("web/dist-landing");
+            if cwd.is_dir() { Some(cwd) } else { None }
+        });
+
+        return nomen::http::serve(&bind_addr, http_state, resolved_static, resolved_landing).await;
     }
 
     // Default: stdio MCP mode (for backwards compat when neither --stdio nor --http given)

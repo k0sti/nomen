@@ -142,7 +142,11 @@ impl<E: Into<anyhow::Error>> From<E> for AppError {
 
 // ── Router ───────────────────────────────────────────────────────
 
-pub fn build_router(state: AppState, static_dir: Option<PathBuf>) -> Router {
+pub fn build_router(
+    state: AppState,
+    static_dir: Option<PathBuf>,
+    landing_dir: Option<PathBuf>,
+) -> Router {
     let shared = Arc::new(state);
 
     let api = Router::new()
@@ -160,15 +164,16 @@ pub fn build_router(state: AppState, static_dir: Option<PathBuf>) -> Router {
         .layer(CorsLayer::permissive())
         .with_state(shared.clone());
 
-    let mut app = Router::new()
-        .nest("/memory/api", api)
-        .route("/", get(|| async { Redirect::permanent("/memory/") }));
+    let mut app = Router::new().nest("/memory/api", api);
 
     // Serve static files at /memory/ if the directory exists
     if let Some(dir) = static_dir {
         if dir.is_dir() {
             info!("Serving static files from {}", dir.display());
-            let serve = ServeDir::new(&dir).append_index_html_on_directories(true);
+            let index_path = dir.join("index.html");
+            let serve = ServeDir::new(&dir)
+                .append_index_html_on_directories(true)
+                .fallback(tower_http::services::ServeFile::new(&index_path));
             app = app.nest_service("/memory", serve);
         } else {
             tracing::warn!(
@@ -178,12 +183,34 @@ pub fn build_router(state: AppState, static_dir: Option<PathBuf>) -> Router {
         }
     }
 
+    // Serve landing page at / if the directory exists, otherwise redirect to /memory/
+    if let Some(ref dir) = landing_dir {
+        if dir.is_dir() {
+            info!("Serving landing page from {}", dir.display());
+            let serve = ServeDir::new(dir).append_index_html_on_directories(true);
+            app = app.fallback_service(serve);
+        } else {
+            tracing::warn!(
+                "Landing directory {} not found, falling back to redirect",
+                dir.display()
+            );
+            app = app.route("/", get(|| async { Redirect::permanent("/memory/") }));
+        }
+    } else {
+        app = app.route("/", get(|| async { Redirect::permanent("/memory/") }));
+    }
+
     app
 }
 
 /// Start the HTTP server on the given address.
-pub async fn serve(addr: &str, state: AppState, static_dir: Option<PathBuf>) -> Result<()> {
-    let app = build_router(state, static_dir);
+pub async fn serve(
+    addr: &str,
+    state: AppState,
+    static_dir: Option<PathBuf>,
+    landing_dir: Option<PathBuf>,
+) -> Result<()> {
+    let app = build_router(state, static_dir, landing_dir);
 
     let listener = tokio::net::TcpListener::bind(addr).await?;
     info!("HTTP server listening on {addr}");

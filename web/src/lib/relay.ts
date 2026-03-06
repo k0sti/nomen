@@ -2,7 +2,6 @@
 
 import { type EventTemplate, type NostrEvent } from 'nostr-tools';
 import type { Memory, Message, Group } from './api';
-import { fetchProfileEventsBatch } from './nostr';
 
 type Signer = {
   getPublicKey(): Promise<string>;
@@ -418,7 +417,7 @@ export class NomenRelay {
   // ── Profiles (kind 0) ───────────────────────────────────────
 
   async listProfiles(): Promise<{ pubkey: string; meta: Record<string, any>; created_at: number }[]> {
-    // Step 1: Query kind 0 profiles already on zooid
+    // Step 1: Query kind 0 profiles on this relay
     const kind0Events = await this.request({ kinds: [0], limit: 500 });
     const profileMap = new Map<string, { meta: Record<string, any>; created_at: number }>();
     for (const e of kind0Events) {
@@ -430,46 +429,10 @@ export class NomenRelay {
       } catch { /* skip malformed */ }
     }
 
-    // Step 2: Discover active pubkeys from other events (kind 9, 30078, etc.)
-    const activityEvents = await this.request({ limit: 500 });
-    const activityTimestamps = new Map<string, number>();
-    for (const e of activityEvents) {
-      const existing = activityTimestamps.get(e.pubkey) || 0;
-      if (e.created_at > existing) {
-        activityTimestamps.set(e.pubkey, e.created_at);
-      }
-    }
-
-    // Step 3: Find pubkeys with activity but no kind 0 on zooid
-    const missingPubkeys = [...activityTimestamps.keys()].filter((pk) => !profileMap.has(pk));
-
-    // Step 4: Fetch missing profiles from public relays and mirror to zooid
-    if (missingPubkeys.length > 0) {
-      const fetched = await fetchProfileEventsBatch(missingPubkeys);
-      for (const [pk, event] of fetched) {
-        try {
-          profileMap.set(pk, {
-            meta: JSON.parse(event.content),
-            created_at: event.created_at,
-          });
-        } catch { /* skip malformed */ }
-        // Mirror the original signed kind 0 event to zooid
-        try {
-          await this.publish(event);
-        } catch { /* best-effort mirror */ }
-      }
-    }
-
-    // Step 5: Build result — include all pubkeys (with or without profiles)
-    const allPubkeys = new Set([...profileMap.keys(), ...activityTimestamps.keys()]);
+    // Return only pubkeys that have a kind 0 profile on this relay
     const profiles: { pubkey: string; meta: Record<string, any>; created_at: number }[] = [];
-    for (const pubkey of allPubkeys) {
-      const p = profileMap.get(pubkey);
-      profiles.push({
-        pubkey,
-        meta: p?.meta || {},
-        created_at: p?.created_at || activityTimestamps.get(pubkey) || 0,
-      });
+    for (const [pubkey, p] of profileMap) {
+      profiles.push({ pubkey, meta: p.meta, created_at: p.created_at });
     }
 
     return profiles;

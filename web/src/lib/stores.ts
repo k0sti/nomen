@@ -92,8 +92,11 @@ const validPages: Page[] = ['memories', 'search', 'messages', 'members', 'groups
 
 function getPageFromHash(): Page {
   const hash = window.location.hash.replace('#/', '').replace('#', '');
-  if (!hash) return 'landing';
-  return validPages.includes(hash as Page) ? (hash as Page) : 'landing';
+  if (!hash) {
+    // No hash — default to memories page
+    return 'memories';
+  }
+  return validPages.includes(hash as Page) ? (hash as Page) : 'memories';
 }
 
 export const currentPage = writable<Page>(getPageFromHash());

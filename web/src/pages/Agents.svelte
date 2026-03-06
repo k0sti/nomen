@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { profile, signer, relay, ensureConnected, showError } from '../lib/stores';
+  import { profile, signer, relay, ensureConnected, showError, showInfo } from '../lib/stores';
   import { nip19 } from 'nostr-tools';
   import { compressNpub, fetchProfileMetadata } from '../lib/nostr';
   import type { NostrProfile } from '../lib/nostr';
@@ -39,15 +39,21 @@
     try {
       const r = await ensureConnected();
       const event = await r.fetchAppData($profile.pubkey, CONFIG_D_TAG);
+      console.log('[Agents] loadConfig: fetchAppData returned', event ? `event ${event.id}` : 'null');
       if (event) {
         const data = JSON.parse(event.content);
         agents = (data.agents || []) as AgentEntry[];
+        console.log('[Agents] loadConfig: loaded', agents.length, 'agents');
         // Resolve profiles in background
         resolveProfiles(agents);
         discoverAgents();
+      } else {
+        console.log('[Agents] loadConfig: no config event found for d-tag', CONFIG_D_TAG);
+        discoverAgents();
       }
-    } catch {
-      // No config yet, that's fine
+    } catch (e: any) {
+      console.error('[Agents] loadConfig error:', e);
+      showError('Failed to load agent config: ' + (e.message || e));
     } finally {
       loadingConfig = false;
     }
@@ -201,15 +207,23 @@
   }
 
   async function saveConfig() {
-    if (!$signer) return;
+    if (!$signer) {
+      showError('Cannot save: not logged in');
+      console.error('[Agents] saveConfig: no signer available');
+      return;
+    }
     saving = true;
     try {
       const content = JSON.stringify({
         agents: agents.map(a => ({ npub: a.npub, role: a.role, added: a.added })),
       });
       const r = await ensureConnected();
-      await r.publishAppData(CONFIG_D_TAG, content, $signer);
+      console.log('[Agents] saveConfig: publishing to d-tag', CONFIG_D_TAG, 'with', agents.length, 'agents');
+      const eventId = await r.publishAppData(CONFIG_D_TAG, content, $signer);
+      console.log('[Agents] saveConfig: published OK, event id:', eventId);
+      showInfo('Agent config saved');
     } catch (e: any) {
+      console.error('[Agents] saveConfig error:', e);
       showError('Failed to save agent config: ' + (e.message || e));
     } finally {
       saving = false;
@@ -236,7 +250,7 @@
   <div class="flex items-center justify-between">
     <h1 class="text-2xl font-bold text-gray-100">Agents</h1>
     {#if saving}
-      <span class="text-xs text-gray-500">Saving...</span>
+      <span class="text-xs text-yellow-400 animate-pulse">Saving...</span>
     {/if}
   </div>
 
