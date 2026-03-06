@@ -1,7 +1,7 @@
 // Svelte stores for state management — relay-first architecture
 
 import { writable, derived, get } from 'svelte/store';
-import { NomenRelay, relay as applesauceRelay, getConnectionStatus, ensureAuthenticated } from './relay';
+import { NomenRelay } from './relay';
 import { NomenApi } from './api';
 import type { NostrProfile, NostrSigner } from './nostr';
 import type { Memory, Message, Group, Entity, SearchResult } from './api';
@@ -15,9 +15,9 @@ relayUrl.subscribe((v) => localStorage.setItem('nomen:relayUrl', v));
 apiBaseUrl.subscribe((v) => localStorage.setItem('nomen:apiBaseUrl', v));
 
 // ── Relay & API instances ────────────────────────────────────────
-const nomenRelayWrapper = new NomenRelay();
-nomenRelayWrapper.onConnectionChange = (connected) => relayConnected.set(connected);
-export const relay = writable<NomenRelay>(nomenRelayWrapper);
+const initialRelay = new NomenRelay();
+initialRelay.onConnectionChange = (connected) => relayConnected.set(connected);
+export const relay = writable<NomenRelay>(initialRelay);
 export const api = derived(apiBaseUrl, ($url) => new NomenApi($url));
 
 // ── Auth ──────────────────────────────────────────────────────────
@@ -66,20 +66,8 @@ if (typeof window !== 'undefined') {
 export async function ensureConnected(): Promise<NomenRelay> {
   const r = get(relay);
   const s = get(signer);
-
-  // Wait for connection
   await r.connect();
-
-  // Authenticate if signer is available
-  if (s) {
-    // Convert NostrSigner to AuthSigner format
-    const authSigner = {
-      getPublicKey: () => s.getPublicKey(),
-      signEvent: (event: any) => s.signEvent(event),
-    };
-    await ensureAuthenticated(authSigner);
-  }
-
+  if (s) await r.authenticate(s);
   relayConnected.set(true);
   return r;
 }
@@ -91,13 +79,7 @@ async function mirrorProfileToZooid(pubkey: string, signerInstance: import('./no
     if (!event) return;
     const relayInstance = get(relay);
     await relayInstance.connect();
-
-    // Convert NostrSigner to AuthSigner format
-    const authSigner = {
-      getPublicKey: () => signerInstance.getPublicKey(),
-      signEvent: (event: any) => signerInstance.signEvent(event),
-    };
-    await ensureAuthenticated(authSigner);
+    await relayInstance.authenticate(signerInstance);
     await relayInstance.publishEvent(event);
     relayConnected.set(true);
   } catch {
