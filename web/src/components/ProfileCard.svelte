@@ -74,6 +74,8 @@
         <span class="text-[10px] px-1.5 py-0.5 rounded border transition-colors duration-150
           {role === 'guardian'
             ? 'bg-purple-900/30 border-purple-800/50 text-purple-400'
+            : role === 'profile'
+            ? 'bg-teal-900/30 border-teal-800/50 text-teal-400'
             : 'bg-accent-600/10 border-accent-600/30 text-accent-400'}">
           {role}
         </span>

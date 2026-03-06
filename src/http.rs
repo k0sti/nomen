@@ -13,10 +13,12 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use surrealdb::engine::local::Db;
 use surrealdb::Surreal;
+use tokio::sync::RwLock;
 use tower_http::cors::CorsLayer;
 use tower_http::services::ServeDir;
 use tracing::info;
 
+use crate::config::Config;
 use crate::consolidate;
 use crate::db;
 use crate::embed::Embedder;
@@ -35,6 +37,7 @@ pub struct AppState {
     pub relay: Option<crate::relay::RelayManager>,
     pub groups: GroupStore,
     pub default_channel: String,
+    pub config: Arc<RwLock<Config>>,
 }
 
 type SharedState = Arc<AppState>;
@@ -120,6 +123,12 @@ pub struct SendRequest {
     pub channel: Option<String>,
 }
 
+#[derive(Deserialize)]
+pub struct PruneRequest {
+    pub days: Option<u64>,
+    pub dry_run: Option<bool>,
+}
+
 // ── Error helper ─────────────────────────────────────────────────
 
 struct AppError(anyhow::Error);
@@ -162,6 +171,10 @@ pub fn build_router(
         .route("/groups", get(api_list_groups))
         .route("/groups", post(api_create_group))
         .route("/send", post(api_send))
+        .route("/config", get(api_get_config))
+        .route("/config/reload", post(api_reload_config))
+        .route("/stats", get(api_stats))
+        .route("/prune", post(api_prune))
         .layer(CorsLayer::permissive())
         .with_state(shared.clone());
 

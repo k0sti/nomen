@@ -963,7 +963,7 @@ pub async fn update_access_tracking_batch(db: &Surreal<Db>, d_tags: &[String]) -
 // ── Memory pruning ──────────────────────────────────────────────────
 
 /// Record for pruning candidates.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, serde::Serialize)]
 pub struct PrunableMemory {
     #[serde(default, deserialize_with = "deserialize_option_string")]
     pub d_tag: Option<String>,
@@ -1016,6 +1016,43 @@ pub async fn delete_memories_by_dtags(db: &Surreal<Db>, d_tags: &[String]) -> Re
         deleted += 1;
     }
     Ok(deleted)
+}
+
+/// Result of a prune operation.
+#[derive(Debug, serde::Serialize)]
+pub struct PruneReport {
+    pub memories_pruned: usize,
+    pub raw_messages_pruned: usize,
+    pub dry_run: bool,
+    pub pruned: Vec<PrunableMemory>,
+}
+
+/// Shared prune logic callable from CLI and HTTP.
+pub async fn prune_memories(db: &Surreal<Db>, days: u64, dry_run: bool) -> Result<PruneReport> {
+    let prunable = find_prunable_memories(db, days).await?;
+
+    let memories_pruned = if !dry_run && !prunable.is_empty() {
+        let d_tags: Vec<String> = prunable.iter().filter_map(|m| m.d_tag.clone()).collect();
+        delete_memories_by_dtags(db, &d_tags).await?
+    } else {
+        prunable.len()
+    };
+
+    // Also prune old consolidated raw messages
+    let cutoff = chrono::Utc::now() - chrono::Duration::days(days as i64);
+    let cutoff_str = cutoff.to_rfc3339();
+    let raw_messages_pruned = if dry_run {
+        count_old_messages(db, &cutoff_str).await?
+    } else {
+        prune_old_messages(db, &cutoff_str).await?
+    };
+
+    Ok(PruneReport {
+        memories_pruned,
+        raw_messages_pruned,
+        dry_run,
+        pruned: prunable,
+    })
 }
 
 // ── Entity CRUD ─────────────────────────────────────────────────────

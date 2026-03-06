@@ -261,11 +261,12 @@ export async function deleteMemory(eventId: string, signer: Signer, dTag?: strin
 
 // ── Profile operations ───────────────────────────────────────────
 
-export async function listProfiles(): Promise<{ pubkey: string; meta: Record<string, any>; created_at: number }[]> {
-  const events = await requestEvents([{ kinds: [0], limit: 500 }]);
+export async function listMembers(): Promise<{ pubkey: string; meta: Record<string, any>; created_at: number; hasProfile: boolean }[]> {
+  // Step 1: Get all kind 0 profiles on this relay
+  const profileEvents = await requestEvents([{ kinds: [0], limit: 500 }]);
   const profileMap = new Map<string, { meta: Record<string, any>; created_at: number }>();
 
-  for (const e of events) {
+  for (const e of profileEvents) {
     try {
       const existing = profileMap.get(e.pubkey);
       if (!existing || e.created_at > existing.created_at) {
@@ -274,10 +275,35 @@ export async function listProfiles(): Promise<{ pubkey: string; meta: Record<str
     } catch { /* skip malformed */ }
   }
 
-  return Array.from(profileMap.entries()).map(([pubkey, p]) => ({
-    pubkey, meta: p.meta, created_at: p.created_at,
-  }));
+  // Step 2: Discover all pubkeys that have sent events (messages, memories, etc.)
+  const activityEvents = await requestEvents([{ limit: 500 }]);
+  const activityMap = new Map<string, number>(); // pubkey -> latest timestamp
+  for (const e of activityEvents) {
+    const existing = activityMap.get(e.pubkey) || 0;
+    if (e.created_at > existing) {
+      activityMap.set(e.pubkey, e.created_at);
+    }
+  }
+
+  // Step 3: Merge — all unique pubkeys, with profile if available
+  const allPubkeys = new Set([...profileMap.keys(), ...activityMap.keys()]);
+  const results: { pubkey: string; meta: Record<string, any>; created_at: number; hasProfile: boolean }[] = [];
+
+  for (const pubkey of allPubkeys) {
+    const profile = profileMap.get(pubkey);
+    results.push({
+      pubkey,
+      meta: profile?.meta || {},
+      created_at: profile?.created_at || activityMap.get(pubkey) || 0,
+      hasProfile: !!profile,
+    });
+  }
+
+  return results;
 }
+
+// Keep old name as alias for backward compatibility
+export const listProfiles = listMembers;
 
 // ── Group operations ─────────────────────────────────────────────
 
@@ -371,7 +397,7 @@ export class NomenRelay {
   subscribeMemories(pubkey: string | undefined, callback: (m: Memory) => void): Subscription { return subscribeMemories(pubkey, callback); }
   async storeMemory(topic: string, summary: string, detail: string, tier: string, signer: Signer): Promise<string> { return storeMemory(topic, summary, detail, tier, signer); }
   async deleteMemory(eventId: string, signer: Signer, dTag?: string): Promise<void> { return deleteMemory(eventId, signer, dTag); }
-  async listProfiles(): Promise<{ pubkey: string; meta: Record<string, any>; created_at: number }[]> { return listProfiles(); }
+  async listProfiles(): Promise<{ pubkey: string; meta: Record<string, any>; created_at: number; hasProfile: boolean }[]> { return listMembers(); }
   async listGroups(): Promise<Group[]> { return listGroups(); }
   async getGroupMessages(groupId: string, limit?: number): Promise<Message[]> { return getGroupMessages(groupId, limit); }
   async fetchAppData(pubkey: string, dTag: string): Promise<NostrEvent | null> { return fetchAppData(pubkey, dTag); }

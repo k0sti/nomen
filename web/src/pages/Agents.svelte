@@ -1,7 +1,7 @@
 <script lang="ts">
   
   import { profile, signer, relay, ensureConnected, showError, showInfo } from '../lib/stores';
-  import { nip19 } from 'nostr-tools';
+  import { nip19, getPublicKey } from 'nostr-tools';
   import { compressNpub, fetchProfileMetadata } from '../lib/nostr';
   import type { NostrProfile } from '../lib/nostr';
   import ProfileCard from '../components/ProfileCard.svelte';
@@ -145,14 +145,23 @@
     try {
       let npub = input;
       let pubkey: string;
+      let nsec: string | undefined;
 
-      if (input.startsWith('npub1')) {
+      if (input.startsWith('nsec1')) {
+        // Derive npub from nsec
+        const { type, data } = nip19.decode(input);
+        if (type !== 'nsec') throw new Error('Invalid nsec');
+        const secretKey = data as Uint8Array;
+        pubkey = getPublicKey(secretKey);
+        npub = nip19.npubEncode(pubkey);
+        nsec = input;
+      } else if (input.startsWith('npub1')) {
         const { data } = nip19.decode(input);
         pubkey = data as string;
       } else {
         // Try NIP-05 resolution
         const [name, domain] = input.split('@');
-        if (!domain) throw new Error('Enter an npub or NIP-05 (user@domain)');
+        if (!domain) throw new Error('Enter an npub, nsec, or NIP-05 (user@domain)');
         const res = await fetch(`https://${domain}/.well-known/nostr.json?name=${encodeURIComponent(name)}`);
         const json = await res.json();
         pubkey = json.names?.[name];
@@ -165,7 +174,7 @@
         return;
       }
 
-      const entry: AgentEntry = { npub, role: 'agent', added: Math.floor(Date.now() / 1000) };
+      const entry: AgentEntry = { npub, role: 'agent', added: Math.floor(Date.now() / 1000), nsec };
       const meta = await fetchProfileMetadata(pubkey);
       if (meta) {
         entry.meta = meta;
@@ -328,7 +337,7 @@
                 picture={agent.profile?.picture}
                 about={agent.profile?.about}
                 isBot={isBot(agent)}
-                role={agent.role}
+                role={agent.nsec ? `${agent.role} 🔑` : agent.role}
               >
                 <button
                   onclick={(e) => { e.stopPropagation(); toggleRole(agent.npub); }}
@@ -365,7 +374,7 @@
           <input
             type="text"
             bind:value={addInput}
-            placeholder="npub1... or user@domain.com"
+            placeholder="npub1... or nsec1... or user@domain.com"
             class="flex-1 px-3 py-2.5 min-h-11 bg-gray-900 border border-gray-700 rounded-lg text-sm text-gray-200 placeholder-gray-600 focus:border-accent-500 transition-colors duration-150"
             onkeydown={(e) => e.key === 'Enter' && resolveInput()}
           />

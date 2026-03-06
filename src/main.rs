@@ -1236,14 +1236,13 @@ async fn cmd_prune(days: u64, dry_run: bool) -> Result<()> {
         println!("Pruning memories (older than {} days)...", days);
     }
 
-    // Prune named memories based on access patterns and confidence
-    let prunable = db::find_prunable_memories(&db_handle, days).await?;
+    let report = db::prune_memories(&db_handle, days, dry_run).await?;
 
-    if prunable.is_empty() {
+    if report.pruned.is_empty() {
         println!("No memories eligible for pruning.");
     } else {
-        println!("\n{} memories eligible for pruning:", prunable.len());
-        for mem in &prunable {
+        println!("\n{} memories eligible for pruning:", report.pruned.len());
+        for mem in &report.pruned {
             let confidence_str = mem.confidence
                 .map(|c| format!("{c:.2}"))
                 .unwrap_or("?".to_string());
@@ -1259,37 +1258,18 @@ async fn cmd_prune(days: u64, dry_run: bool) -> Result<()> {
             );
         }
 
-        if !dry_run {
-            let d_tags: Vec<String> = prunable
-                .iter()
-                .filter_map(|m| m.d_tag.clone())
-                .collect();
-            let deleted = db::delete_memories_by_dtags(&db_handle, &d_tags).await?;
-            println!(
-                "\n{}: {} memories pruned",
-                "Pruned".green().bold(),
-                deleted
-            );
+        if dry_run {
+            println!("\n{}: Would prune {} memories", "[DRY RUN]".yellow().bold(), report.memories_pruned);
         } else {
-            println!("\n{}: Would prune {} memories", "[DRY RUN]".yellow().bold(), prunable.len());
+            println!("\n{}: {} memories pruned", "Pruned".green().bold(), report.memories_pruned);
         }
     }
 
-    // Also prune old consolidated raw messages
-    let cutoff = chrono::Utc::now() - chrono::Duration::days(days as i64);
-    let cutoff_str = cutoff.to_rfc3339();
-    let raw_count = db::count_old_messages(&db_handle, &cutoff_str).await?;
-
-    if raw_count > 0 {
+    if report.raw_messages_pruned > 0 {
         if dry_run {
-            println!("{}: Would also prune {} consolidated raw messages", "[DRY RUN]".yellow().bold(), raw_count);
+            println!("{}: Would also prune {} consolidated raw messages", "[DRY RUN]".yellow().bold(), report.raw_messages_pruned);
         } else {
-            let pruned = db::prune_old_messages(&db_handle, &cutoff_str).await?;
-            println!(
-                "{}: {} consolidated raw messages pruned",
-                "Pruned".green().bold(),
-                pruned
-            );
+            println!("{}: {} consolidated raw messages pruned", "Pruned".green().bold(), report.raw_messages_pruned);
         }
     }
 

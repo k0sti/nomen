@@ -10,6 +10,7 @@
     pubkey: string;
     meta: Record<string, any>;
     created_at: number;
+    hasProfile: boolean;
   }
 
   let members = $state<MemberEntry[]>([]);
@@ -47,8 +48,10 @@
     try {
       const r = await ensureConnected();
       const profiles = await r.listProfiles();
-      // Sort: humans first, then bots/agents, alphabetical within each group
+      // Sort: profiles first, then bots last, alphabetical within each group
       members = profiles.sort((a, b) => {
+        // Profiles first
+        if (a.hasProfile !== b.hasProfile) return a.hasProfile ? -1 : 1;
         const aIsBot = a.meta.bot === true;
         const bIsBot = b.meta.bot === true;
         if (aIsBot !== bIsBot) return aIsBot ? 1 : -1;
@@ -96,7 +99,7 @@
 <div class="space-y-6">
   <div class="flex items-center justify-between">
     <h1 class="text-2xl font-bold text-gray-100">Members</h1>
-    <span class="text-sm text-gray-500">{members.length} profiles</span>
+    <span class="text-sm text-gray-500">{members.length} members</span>
   </div>
 
   {#if loading}
@@ -130,6 +133,7 @@
             isYou={isYou(member.pubkey)}
             ownerPubkey={getOwnerPubkey(member.meta)}
             agentCount={getAgentCount(member.meta)}
+            role={member.hasProfile ? 'profile' : undefined}
           />
         </button>
       {/each}
