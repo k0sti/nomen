@@ -25,24 +25,64 @@ export const queryStore = new QueryStore(eventStore);
 
 let currentSigner: AuthSigner | null = null;
 
-// Subscribe relay events to event store
-relay.request([{}]).subscribe((event) => {
-  if (typeof event === 'object' && event && 'id' in event) {
-    eventStore.add(event as NostrEvent);
-  }
-});
+// Feed events into event store from subscriptions (done in requestToPromise/subscriptions)
 
 // ── Auth helpers ─────────────────────────────────────────────────
 
 export async function ensureAuthenticated(signer: AuthSigner): Promise<void> {
   currentSigner = signer;
 
-  // Wait for relay to be connected first
-  await firstValueFrom(relay.connected$.pipe(filter(connected => connected)));
+  if (relay.authenticated) return;
 
-  // Authenticate if not already authenticated
-  if (!await isAuthenticated()) {
-    await firstValueFrom(relay.authenticate(signer));
+  // Step 1: Trigger connection by subscribing to connected$
+  // (applesauce-relay connects lazily)
+  if (!relay.connected) {
+    // Make a dummy subscription that triggers the WebSocket connection
+    const sub = relay.connected$.subscribe();
+    // The watchTower observable drives connection — trigger it via req
+    const triggerSub = relay.req([{ kinds: [0], limit: 1 }]).subscribe({
+      error: () => {}, // expected to fail with auth-required
+    });
+    // Wait for connection
+    try {
+      const timeout = new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error('Connection timeout')), 10000)
+      );
+      await Promise.race([
+        firstValueFrom(relay.connected$.pipe(filter(c => c))),
+        timeout,
+      ]);
+    } catch {
+      console.warn('[relay] Connection timeout, proceeding anyway');
+    }
+    triggerSub.unsubscribe();
+    sub.unsubscribe();
+  }
+
+  // Step 2: Wait for AUTH challenge from relay
+  if (!relay.challenge) {
+    try {
+      const timeout = new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error('No auth challenge')), 5000)
+      );
+      await Promise.race([
+        firstValueFrom(relay.challenge$.pipe(filter(c => c !== null))),
+        timeout,
+      ]);
+    } catch {
+      console.warn('[relay] No auth challenge received, relay may not require auth');
+      return;
+    }
+  }
+
+  // Step 3: Authenticate with the challenge
+  try {
+    const timeout = new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error('Auth timeout')), 10000)
+    );
+    await Promise.race([firstValueFrom(relay.authenticate(signer)), timeout]);
+  } catch (err: any) {
+    console.warn('[relay] Auth error:', err.message);
   }
 }
 
@@ -279,8 +319,9 @@ export class NomenRelay {
   }
 
   async connect(): Promise<void> {
-    // applesauce-relay connects automatically, just wait for connection
-    await firstValueFrom(relay.connected$.pipe(filter(connected => connected)));
+    // applesauce-relay connects lazily on first subscription.
+    // No need to explicitly connect — request/subscription calls handle it.
+    // Just resolve immediately; auth happens in ensureConnected.
   }
 
   async authenticate(signer: AuthSigner): Promise<void> {
