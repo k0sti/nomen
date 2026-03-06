@@ -297,11 +297,23 @@
     return entry.meta?.bot === true;
   }
 
-  function ownerOf(entry: AgentEntry): string | null {
-    if (!$profile) return null;
-    const owner = entry.meta?.owner || entry.meta?.guardian;
-    if (owner === $profile.npub) return 'you';
-    return null;
+  function getLinkStatus(entry: AgentEntry): 'mutual' | 'claimed' | 'recognized' | 'none' {
+    if (!$profile) return 'none';
+    const userDeclared = agents.some(a => a.npub === entry.npub);
+    const agentDeclared = (entry.meta?.owner === $profile.npub) || (entry.meta?.guardian === $profile.npub);
+    if (userDeclared && agentDeclared) return 'mutual';
+    if (userDeclared) return 'claimed';
+    if (agentDeclared) return 'recognized';
+    return 'none';
+  }
+
+  function linkBadgeClass(status: string): string {
+    switch (status) {
+      case 'mutual': return 'bg-green-900/30 border-green-800/50 text-green-400';
+      case 'claimed': return 'bg-amber-900/30 border-amber-800/50 text-amber-400';
+      case 'recognized': return 'bg-teal-900/30 border-teal-800/50 text-teal-400';
+      default: return 'bg-gray-700/30 border-gray-600/50 text-gray-500';
+    }
   }
 </script>
 
@@ -342,18 +354,8 @@
                 picture={agent.profile?.picture}
                 about={agent.profile?.about}
                 isBot={isBot(agent)}
-                role={agent.nsec ? `${agent.role} 🔑` : agent.role}
+                role={`link: ${getLinkStatus(agent)}` + (agent.nsec ? ' 🔑' : '')}
               >
-                <button
-                  onclick={(e) => { e.stopPropagation(); toggleRole(agent.npub); }}
-                  class="text-[11px] px-2 py-1 rounded-lg border transition-colors duration-150
-                    {agent.role === 'guardian'
-                      ? 'bg-purple-900/30 border-purple-800/50 text-purple-400 hover:bg-purple-900/50'
-                      : 'bg-accent-600/10 border-accent-600/30 text-accent-400 hover:bg-accent-600/20'}"
-                  title="Click to toggle role"
-                >
-                  {agent.role}
-                </button>
                 <button
                   onclick={(e) => { e.stopPropagation(); removeAgent(agent.npub); }}
                   class="w-9 h-9 flex items-center justify-center rounded-lg text-gray-600 hover:text-red-400 hover:bg-red-900/20 transition-colors duration-150"
@@ -491,11 +493,8 @@
         </div>
 
         <div class="flex items-center gap-2 mt-2 flex-wrap justify-center">
-          <span class="text-[10px] px-1.5 py-0.5 rounded border transition-colors
-            {a.role === 'guardian'
-              ? 'bg-purple-900/30 border-purple-800/50 text-purple-400'
-              : 'bg-accent-600/10 border-accent-600/30 text-accent-400'}">
-            {a.role}
+          <span class="text-[10px] px-1.5 py-0.5 rounded border transition-colors {linkBadgeClass(getLinkStatus(a))}">
+            link: {getLinkStatus(a)}
           </span>
           {#if a.meta?.bot === true}
             <span class="text-[10px] px-1.5 py-0.5 rounded bg-blue-900/40 text-blue-400 border border-blue-800/50">bot</span>

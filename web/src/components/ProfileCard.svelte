@@ -76,6 +76,14 @@
             ? 'bg-purple-900/30 border-purple-800/50 text-purple-400'
             : role === 'profile'
             ? 'bg-teal-900/30 border-teal-800/50 text-teal-400'
+            : role.includes('mutual')
+            ? 'bg-green-900/30 border-green-800/50 text-green-400'
+            : role.includes('claimed')
+            ? 'bg-amber-900/30 border-amber-800/50 text-amber-400'
+            : role.includes('recognized')
+            ? 'bg-teal-900/30 border-teal-800/50 text-teal-400'
+            : role.includes('none')
+            ? 'bg-gray-700/30 border-gray-600/50 text-gray-500'
             : 'bg-accent-600/10 border-accent-600/30 text-accent-400'}">
           {role}
         </span>
