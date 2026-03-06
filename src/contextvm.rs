@@ -323,9 +323,7 @@ impl ContextVmServer {
             tier,
             allowed_scopes: scope.map(|s| vec![s]),
             limit,
-            vector_weight: 0.7,
-            text_weight: 0.3,
-            min_confidence: None,
+            ..Default::default()
         };
 
         let results = search::search(&self.db, self.embedder.as_ref(), &opts).await?;

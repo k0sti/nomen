@@ -106,6 +106,9 @@ enum Command {
         /// Full-text BM25 weight (0.0–1.0)
         #[arg(long, default_value = "0.3")]
         text_weight: f32,
+        /// Aggregate similar results (>0.85 embedding similarity) into single entries
+        #[arg(long)]
+        aggregate: bool,
     },
     /// Generate embeddings for memories that lack them
     Embed {
@@ -376,8 +379,8 @@ async fn main() -> Result<()> {
                 cmd_delete(&resolved.relay, &resolved.nsecs, topic.as_deref(), id.as_deref()).await?;
             }
         }
-        Command::Search { ref query, ref tier, limit, vector_weight, text_weight } => {
-            cmd_search(&cli, query, tier.as_deref(), limit, vector_weight, text_weight).await?;
+        Command::Search { ref query, ref tier, limit, vector_weight, text_weight, aggregate } => {
+            cmd_search(&cli, query, tier.as_deref(), limit, vector_weight, text_weight, aggregate).await?;
         }
         Command::Embed { limit } => {
             cmd_embed(&cli, limit).await?;
@@ -779,6 +782,7 @@ async fn cmd_search(
     limit: usize,
     vector_weight: f32,
     text_weight: f32,
+    aggregate: bool,
 ) -> Result<()> {
     let config = load_config(cli)?;
     let embedder = config.build_embedder();
@@ -792,6 +796,7 @@ async fn cmd_search(
         vector_weight,
         text_weight,
         min_confidence: None,
+        aggregate,
     };
 
     let results = search::search(&db, embedder.as_ref(), &opts).await?;

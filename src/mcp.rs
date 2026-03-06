@@ -335,9 +335,7 @@ impl McpServer {
             tier,
             allowed_scopes,
             limit,
-            vector_weight: 0.7,
-            text_weight: 0.3,
-            min_confidence: None,
+            ..Default::default()
         };
 
         let results = search::search(&self.db, self.embedder.as_ref(), &opts).await?;

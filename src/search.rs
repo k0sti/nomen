@@ -34,6 +34,8 @@ pub struct SearchOptions {
     pub vector_weight: f32,
     pub text_weight: f32,
     pub min_confidence: Option<f64>,
+    /// If true, group results with >0.85 embedding similarity and merge them.
+    pub aggregate: bool,
 }
 
 impl Default for SearchOptions {
@@ -46,6 +48,7 @@ impl Default for SearchOptions {
             vector_weight: 0.7,
             text_weight: 0.3,
             min_confidence: None,
+            aggregate: false,
         }
     }
 }
@@ -178,7 +181,12 @@ pub async fn search(
     // Re-sort by decayed score
     results.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
 
-    // Update access tracking for all results (TODO #3)
+    // Aggregate similar results if requested
+    if opts.aggregate {
+        results = aggregate_results(results);
+    }
+
+    // Update access tracking for all results
     let d_tags: Vec<String> = results
         .iter()
         .filter_map(|r| r.d_tag.clone())
@@ -215,4 +223,120 @@ async fn text_only_search(
         .collect();
 
     Ok(results)
+}
+
+/// Cosine similarity between two embedding vectors.
+fn cosine_similarity(a: &[f32], b: &[f32]) -> f64 {
+    if a.len() != b.len() || a.is_empty() {
+        return 0.0;
+    }
+    let mut dot = 0.0f64;
+    let mut norm_a = 0.0f64;
+    let mut norm_b = 0.0f64;
+    for (x, y) in a.iter().zip(b.iter()) {
+        let x = *x as f64;
+        let y = *y as f64;
+        dot += x * y;
+        norm_a += x * x;
+        norm_b += y * y;
+    }
+    let denom = norm_a.sqrt() * norm_b.sqrt();
+    if denom == 0.0 { 0.0 } else { dot / denom }
+}
+
+/// Aggregate search results: group results with >0.85 embedding similarity
+/// and merge them into a single result with combined detail and highest confidence.
+fn aggregate_results(results: Vec<SearchResult>) -> Vec<SearchResult> {
+    if results.len() <= 1 {
+        return results;
+    }
+
+    let mut merged: Vec<bool> = vec![false; results.len()];
+    let mut aggregated: Vec<SearchResult> = Vec::new();
+
+    for i in 0..results.len() {
+        if merged[i] {
+            continue;
+        }
+
+        let mut group_indices = vec![i];
+
+        if let Some(ref emb_a) = results[i].embedding {
+            for j in (i + 1)..results.len() {
+                if merged[j] {
+                    continue;
+                }
+                if let Some(ref emb_b) = results[j].embedding {
+                    let sim = cosine_similarity(emb_a, emb_b);
+                    if sim > 0.85 {
+                        group_indices.push(j);
+                        merged[j] = true;
+                    }
+                }
+            }
+        }
+
+        merged[i] = true;
+
+        if group_indices.len() == 1 {
+            aggregated.push(SearchResult {
+                tier: results[i].tier.clone(),
+                topic: results[i].topic.clone(),
+                confidence: results[i].confidence.clone(),
+                summary: results[i].summary.clone(),
+                detail: results[i].detail.clone(),
+                created_at: results[i].created_at,
+                score: results[i].score,
+                match_type: results[i].match_type,
+                d_tag: results[i].d_tag.clone(),
+                embedding: results[i].embedding.clone(),
+            });
+        } else {
+            // Use highest-scoring result as base, combine details
+            let best_idx = *group_indices
+                .iter()
+                .max_by(|&&a, &&b| {
+                    results[a].score.partial_cmp(&results[b].score).unwrap_or(std::cmp::Ordering::Equal)
+                })
+                .unwrap();
+
+            let max_confidence: f64 = group_indices
+                .iter()
+                .filter_map(|&idx| results[idx].confidence.parse::<f64>().ok())
+                .fold(0.0f64, f64::max);
+
+            let mut combined_detail = String::new();
+            let mut topics: Vec<&str> = Vec::new();
+            for &idx in &group_indices {
+                if !topics.contains(&results[idx].topic.as_str()) {
+                    topics.push(&results[idx].topic);
+                }
+                if !combined_detail.is_empty() {
+                    combined_detail.push_str("\n---\n");
+                }
+                combined_detail.push_str(&format!("[{}] {}", results[idx].topic, results[idx].detail));
+            }
+
+            let topic_display = if topics.len() > 1 {
+                format!("{} (+{} related)", results[best_idx].topic, topics.len() - 1)
+            } else {
+                results[best_idx].topic.clone()
+            };
+
+            aggregated.push(SearchResult {
+                tier: results[best_idx].tier.clone(),
+                topic: topic_display,
+                confidence: format!("{max_confidence:.2}"),
+                summary: results[best_idx].summary.clone(),
+                detail: combined_detail,
+                created_at: results[best_idx].created_at,
+                score: results[best_idx].score,
+                match_type: results[best_idx].match_type,
+                d_tag: results[best_idx].d_tag.clone(),
+                embedding: results[best_idx].embedding.clone(),
+            });
+        }
+    }
+
+    aggregated
 }

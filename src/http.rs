@@ -230,9 +230,7 @@ async fn api_search(
         tier: req.tier,
         allowed_scopes: req.scope.map(|s| vec![s]),
         limit: req.limit.unwrap_or(10),
-        vector_weight: 0.7,
-        text_weight: 0.3,
-        min_confidence: None,
+        ..Default::default()
     };
 
     let results = search::search(&state.db, state.embedder.as_ref(), &opts).await?;
