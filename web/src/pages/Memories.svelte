@@ -55,7 +55,6 @@
 
   // React to async profile restore after refresh
   $effect(() => {
-    console.log('[Memories] $effect: profile=', $profile?.npubShort, 'memories=', $memories.length);
     if (!$profile) return;
     if ($memories.length > 0) return; // already loaded
     loadMemories();

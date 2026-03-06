@@ -109,11 +109,8 @@ async function requestEvents(filters: any[], timeoutMs = 15000): Promise<NostrEv
   const r = getRelay();
   const events: NostrEvent[] = [];
 
-  console.log('[relay] requestEvents', JSON.stringify(filters), 'connected:', r.connected, 'authenticated:', r.authenticated);
-
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
-      console.warn('[relay] requestEvents timeout, got', events.length, 'events');
       sub.unsubscribe();
       resolve(events);
     }, timeoutMs);
@@ -126,12 +123,10 @@ async function requestEvents(filters: any[], timeoutMs = 15000): Promise<NostrEv
         }
       },
       complete: () => {
-        console.log('[relay] requestEvents complete, got', events.length, 'events');
         clearTimeout(timer);
         resolve(events);
       },
       error: (err) => {
-        console.error('[relay] requestEvents error:', err.message || err);
         clearTimeout(timer);
         reject(err);
       },
@@ -295,6 +290,7 @@ export async function listGroups(): Promise<Group[]> {
       name: getTag('name') || getTag('d') || 'unnamed',
       about: getTag('about') || '',
       picture: getTag('picture') || '',
+      members: e.tags.filter(t => t[0] === 'p').map(t => t[1]),
       memberCount: e.tags.filter(t => t[0] === 'p').length,
     };
   });
