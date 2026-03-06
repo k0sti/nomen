@@ -12,6 +12,7 @@
     npub: string;
     role: 'agent' | 'guardian';
     added: number;
+    nsec?: string; // optional nsec for decrypting private memories
     // resolved profile metadata
     profile?: NostrProfile;
     meta?: Record<string, any>;
@@ -26,6 +27,9 @@
   let saving = $state(false);
   let loadingConfig = $state(false);
   let discoverLoading = $state(false);
+  let selectedAgent = $state<AgentEntry | null>(null);
+  let editingNsec = $state(false);
+  let nsecInput = $state('');
 
   $effect(() => {
     if ($profile && agents.length === 0 && !loadingConfig) {
@@ -215,7 +219,11 @@
     saving = true;
     try {
       const content = JSON.stringify({
-        agents: agents.map(a => ({ npub: a.npub, role: a.role, added: a.added })),
+        agents: agents.map(a => {
+          const entry: any = { npub: a.npub, role: a.role, added: a.added };
+          if (a.nsec) entry.nsec = a.nsec;
+          return entry;
+        }),
       });
       const r = await ensureConnected();
       console.log('[Agents] saveConfig: publishing to d-tag', CONFIG_D_TAG, 'with', agents.length, 'agents');
@@ -228,6 +236,43 @@
     } finally {
       saving = false;
     }
+  }
+
+  function openAgent(agent: AgentEntry) {
+    selectedAgent = agent;
+    editingNsec = false;
+    nsecInput = agent.nsec || '';
+  }
+
+  function isOwnAgent(agent: AgentEntry): boolean {
+    if (!$profile) return false;
+    const owner = agent.meta?.owner || agent.meta?.guardian;
+    return owner === $profile.npub || agent.role === 'guardian' || agents.some(a => a.npub === agent.npub);
+  }
+
+  async function saveNsec() {
+    if (!selectedAgent) return;
+    const trimmed = nsecInput.trim();
+    // Validate nsec format
+    if (trimmed && !trimmed.startsWith('nsec1')) {
+      showError('Invalid nsec format — must start with nsec1');
+      return;
+    }
+    if (trimmed) {
+      try {
+        nip19.decode(trimmed);
+      } catch {
+        showError('Invalid nsec — failed to decode');
+        return;
+      }
+    }
+    agents = agents.map(a =>
+      a.npub === selectedAgent!.npub ? { ...a, nsec: trimmed || undefined } : a
+    );
+    selectedAgent = { ...selectedAgent, nsec: trimmed || undefined };
+    editingNsec = false;
+    await saveConfig();
+    showInfo(trimmed ? 'Agent nsec saved' : 'Agent nsec removed');
   }
 
   function displayName(entry: AgentEntry): string {
@@ -275,36 +320,38 @@
       {:else}
         <div class="space-y-2">
           {#each agents as agent (agent.npub)}
-            <ProfileCard
-              pubkey={agent.profile?.pubkey || (() => { try { return nip19.decode(agent.npub).data as string; } catch { return ''; } })()}
-              name={agent.profile?.name}
-              displayName={agent.profile?.displayName}
-              picture={agent.profile?.picture}
-              about={agent.profile?.about}
-              isBot={isBot(agent)}
-              role={agent.role}
-            >
-              <button
-                onclick={() => toggleRole(agent.npub)}
-                class="text-[11px] px-2 py-1 rounded-lg border transition-colors duration-150
-                  {agent.role === 'guardian'
-                    ? 'bg-purple-900/30 border-purple-800/50 text-purple-400 hover:bg-purple-900/50'
-                    : 'bg-accent-600/10 border-accent-600/30 text-accent-400 hover:bg-accent-600/20'}"
-                title="Click to toggle role"
+            <button class="w-full text-left" onclick={() => openAgent(agent)}>
+              <ProfileCard
+                pubkey={agent.profile?.pubkey || (() => { try { return nip19.decode(agent.npub).data as string; } catch { return ''; } })()}
+                name={agent.profile?.name}
+                displayName={agent.profile?.displayName}
+                picture={agent.profile?.picture}
+                about={agent.profile?.about}
+                isBot={isBot(agent)}
+                role={agent.role}
               >
-                {agent.role}
-              </button>
-              <button
-                onclick={() => removeAgent(agent.npub)}
-                class="w-9 h-9 flex items-center justify-center rounded-lg text-gray-600 hover:text-red-400 hover:bg-red-900/20 transition-colors duration-150"
-                title="Remove agent"
-                aria-label="Remove agent"
-              >
-                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
-                </svg>
-              </button>
-            </ProfileCard>
+                <button
+                  onclick={(e) => { e.stopPropagation(); toggleRole(agent.npub); }}
+                  class="text-[11px] px-2 py-1 rounded-lg border transition-colors duration-150
+                    {agent.role === 'guardian'
+                      ? 'bg-purple-900/30 border-purple-800/50 text-purple-400 hover:bg-purple-900/50'
+                      : 'bg-accent-600/10 border-accent-600/30 text-accent-400 hover:bg-accent-600/20'}"
+                  title="Click to toggle role"
+                >
+                  {agent.role}
+                </button>
+                <button
+                  onclick={(e) => { e.stopPropagation(); removeAgent(agent.npub); }}
+                  class="w-9 h-9 flex items-center justify-center rounded-lg text-gray-600 hover:text-red-400 hover:bg-red-900/20 transition-colors duration-150"
+                  title="Remove agent"
+                  aria-label="Remove agent"
+                >
+                  <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              </ProfileCard>
+            </button>
           {/each}
         </div>
       {/if}
@@ -391,3 +438,124 @@
     </section>
   {/if}
 </div>
+
+<!-- Agent profile modal -->
+{#if selectedAgent}
+  {@const a = selectedAgent}
+  {@const pubkey = a.profile?.pubkey || (() => { try { return nip19.decode(a.npub).data as string; } catch { return ''; } })()}
+  {@const label = a.profile?.displayName || a.profile?.name || compressNpub(a.npub)}
+  <dialog open class="fixed inset-0 z-50 flex items-center justify-center bg-transparent">
+    <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+    <div class="fixed inset-0 bg-black/60" role="presentation" onclick={() => selectedAgent = null}></div>
+    <div class="relative bg-gray-900 border border-gray-700 rounded-xl p-6 w-full max-w-sm shadow-2xl mx-4">
+      <div class="flex flex-col items-center">
+        {#if a.profile?.picture}
+          <img src={a.profile.picture} alt="" class="w-24 h-24 rounded-full object-cover border-2 border-gray-600 mb-4" />
+        {:else}
+          <div class="w-24 h-24 rounded-full bg-accent-600 flex items-center justify-center text-4xl font-bold text-white mb-4">
+            {label[0].toUpperCase()}
+          </div>
+        {/if}
+
+        <h2 class="text-xl font-semibold text-gray-100">{label}</h2>
+
+        {#if a.profile?.name && a.profile.name !== label}
+          <p class="text-sm text-gray-500">@{a.profile.name}</p>
+        {/if}
+
+        <div class="flex items-center gap-2 mt-2">
+          <code class="text-sm text-gray-400 font-mono">{compressNpub(a.npub)}</code>
+          <button
+            onclick={() => navigator.clipboard.writeText(a.npub)}
+            class="w-9 h-9 flex items-center justify-center rounded-lg text-gray-500 hover:text-gray-300 hover:bg-gray-800 transition-colors"
+            title="Copy npub"
+          >
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+            </svg>
+          </button>
+        </div>
+
+        <div class="flex items-center gap-2 mt-2 flex-wrap justify-center">
+          <span class="text-[10px] px-1.5 py-0.5 rounded border transition-colors
+            {a.role === 'guardian'
+              ? 'bg-purple-900/30 border-purple-800/50 text-purple-400'
+              : 'bg-accent-600/10 border-accent-600/30 text-accent-400'}">
+            {a.role}
+          </span>
+          {#if a.meta?.bot === true}
+            <span class="text-[10px] px-1.5 py-0.5 rounded bg-blue-900/40 text-blue-400 border border-blue-800/50">bot</span>
+          {/if}
+          {#if a.nsec}
+            <span class="text-[10px] px-1.5 py-0.5 rounded bg-green-900/40 text-green-400 border border-green-800/50">🔑 nsec</span>
+          {/if}
+        </div>
+
+        {#if a.profile?.about}
+          <p class="text-sm text-gray-400 mt-3 text-center whitespace-pre-wrap">{a.profile.about}</p>
+        {/if}
+
+        {#if a.meta?.website}
+          <a href={a.meta.website} target="_blank" rel="noopener" class="text-sm text-accent-400 hover:underline mt-2">{a.meta.website}</a>
+        {/if}
+
+        {#if a.meta?.lud16}
+          <p class="text-xs text-gray-500 mt-2">⚡ {a.meta.lud16}</p>
+        {/if}
+      </div>
+
+      <!-- Nsec management -->
+      <div class="mt-4 p-3 rounded-lg border border-gray-700 bg-gray-800/30">
+        <div class="flex items-center justify-between mb-2">
+          <span class="text-xs font-medium text-gray-400">Agent Secret Key</span>
+          {#if !editingNsec}
+            <button
+              onclick={() => { editingNsec = true; nsecInput = a.nsec || ''; }}
+              class="text-xs text-accent-400 hover:text-accent-300"
+            >
+              {a.nsec ? 'Change' : 'Add nsec'}
+            </button>
+          {/if}
+        </div>
+        {#if editingNsec}
+          <div class="space-y-2">
+            <input
+              type="password"
+              bind:value={nsecInput}
+              placeholder="nsec1..."
+              class="w-full px-3 py-2 bg-gray-900 border border-gray-700 rounded-lg text-sm text-gray-200 placeholder-gray-600 focus:border-accent-500 transition-colors font-mono"
+            />
+            <p class="text-[10px] text-gray-600">Used to decrypt private memories. Stored in your config event on the relay.</p>
+            <div class="flex gap-2">
+              <button
+                onclick={saveNsec}
+                class="flex-1 py-2 rounded-lg bg-accent-600/20 border border-accent-600/50 text-accent-300 hover:bg-accent-600/30 text-sm transition-colors"
+              >
+                Save
+              </button>
+              <button
+                onclick={() => editingNsec = false}
+                class="flex-1 py-2 rounded-lg border border-gray-700 text-gray-400 hover:text-gray-200 hover:bg-gray-800 text-sm transition-colors"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        {:else if a.nsec}
+          <p class="text-xs text-green-400/70 font-mono">nsec1•••••••{a.nsec.slice(-6)}</p>
+        {:else}
+          <p class="text-xs text-gray-600">No nsec configured — private memories won't be decryptable.</p>
+        {/if}
+      </div>
+
+      <div class="mt-4">
+        <button
+          onclick={() => selectedAgent = null}
+          class="w-full py-2.5 min-h-11 rounded-lg border border-gray-700 text-gray-400 hover:text-gray-200 hover:bg-gray-800 transition-colors text-sm"
+        >
+          Close
+        </button>
+      </div>
+    </div>
+  </dialog>
+{/if}
