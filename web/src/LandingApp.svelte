@@ -10,10 +10,10 @@
   <div class="content">
     <header class="hero">
       <h1 class="title">Nomen</h1>
-      <p class="tagline">Nostr-native memory for AI agents</p>
+      <p class="tagline">Nostr Memory Network</p>
       <p class="subtitle">
-        Persistent, searchable memory that syncs via Nostr relays.
-        From noise to knowledge.
+        Collective, tiered memory for AI agents. From noise to knowledge —
+        persistent, searchable, self-sovereign.
       </p>
       <div class="hero-actions">
         <a
@@ -37,13 +37,14 @@
       <div class="feature-card">
         <div class="feature-icon">
           <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-            <path d="M12 2L2 7l10 5 10-5-10-5z" />
-            <path d="M2 17l10 5 10-5" />
-            <path d="M2 12l10 5 10-5" />
+            <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
+            <circle cx="9" cy="7" r="4" />
+            <path d="M23 21v-2a4 4 0 0 0-3-3.87" />
+            <path d="M16 3.13a4 4 0 0 1 0 7.75" />
           </svg>
         </div>
-        <h3>Relay Sync</h3>
-        <p>Memories persist as Nostr events (NIP-78), syncing across relays. No vendor lock-in — your data travels with you.</p>
+        <h3>Collective & Tiered</h3>
+        <p>Public, group, and private memory tiers with cryptographic identity. Named groups and npub sets — both hierarchical. Agents share knowledge within trust boundaries.</p>
       </div>
 
       <div class="feature-card">
@@ -56,7 +57,7 @@
           </svg>
         </div>
         <h3>Semantic Search</h3>
-        <p>Hybrid vector + BM25 search finds relevant memories by meaning, not just keywords. Powered by SurrealDB.</p>
+        <p>Hybrid vector + BM25 search finds memories by meaning. Confidence decay, importance scoring, and result aggregation for high-quality retrieval.</p>
       </div>
 
       <div class="feature-card">
@@ -73,26 +74,47 @@
             <line x1="8.5" y1="8.5" x2="15.5" y2="15.5" />
           </svg>
         </div>
-        <h3>Knowledge Graphs</h3>
-        <p>Entity extraction and graph relationships let agents reason about connections between concepts.</p>
+        <h3>Knowledge Graph</h3>
+        <p>Entities automatically extracted and linked via graph edges — mentions, references, contradictions. SurrealDB-native graph queries.</p>
       </div>
 
       <div class="feature-card">
         <div class="feature-icon">
           <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-            <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
-            <circle cx="9" cy="7" r="4" />
-            <path d="M23 21v-2a4 4 0 0 0-3-3.87" />
-            <path d="M16 3.13a4 4 0 0 1 0 7.75" />
+            <path d="M12 2L2 7l10 5 10-5-10-5z" />
+            <path d="M2 17l10 5 10-5" />
+            <path d="M2 12l10 5 10-5" />
           </svg>
         </div>
-        <h3>Multi-Agent Trust</h3>
-        <p>Tiered visibility — public, group, and private memories. Agents share knowledge within trust boundaries.</p>
+        <h3>Nostr-Native</h3>
+        <p>Custom kind 31234 replaceable events on any Nostr relay. Memory travels with the agent's keypair — no vendor lock-in, no central database.</p>
+      </div>
+
+      <div class="feature-card">
+        <div class="feature-icon">
+          <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+          </svg>
+        </div>
+        <h3>Consolidation</h3>
+        <p>Sleep-inspired pipeline: raw messages → LLM extraction → merge & dedup → named memories. Conflict detection, entity linking, automatic pruning.</p>
+      </div>
+
+      <div class="feature-card">
+        <div class="feature-icon">
+          <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <rect x="2" y="3" width="20" height="14" rx="2" ry="2" />
+            <line x1="8" y1="21" x2="16" y2="21" />
+            <line x1="12" y1="17" x2="12" y2="21" />
+          </svg>
+        </div>
+        <h3>MCP & Context-VM</h3>
+        <p>MCP server (stdio/HTTP) for agent frameworks. Context-VM for pure Nostr request/response — no MCP required. Web dashboard for operations.</p>
       </div>
     </section>
 
     <footer class="landing-footer">
-      <p>Built on <a href="https://nostr.com" target="_blank" rel="noopener noreferrer">Nostr</a> &middot; Open source</p>
+      <p>Built on <a href="https://nostr.com" target="_blank" rel="noopener noreferrer">Nostr</a> · Powered by <a href="https://surrealdb.com" target="_blank" rel="noopener noreferrer">SurrealDB</a> · Open source</p>
     </footer>
   </div>
 </div>
@@ -211,9 +233,9 @@
 
   .features {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(min(260px, 100%), 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(min(280px, 100%), 1fr));
     gap: var(--space-6);
-    max-width: 1100px;
+    max-width: 1200px;
     margin-inline: auto;
     width: 100%;
     padding-block: var(--space-10);
