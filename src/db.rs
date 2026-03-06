@@ -955,7 +955,9 @@ pub async fn update_access_tracking(db: &Surreal<Db>, d_tag: &str) -> Result<()>
 /// Batch update access tracking for multiple d_tags.
 pub async fn update_access_tracking_batch(db: &Surreal<Db>, d_tags: &[String]) -> Result<()> {
     for d_tag in d_tags {
-        update_access_tracking(db, d_tag).await.ok();
+        if let Err(e) = update_access_tracking(db, d_tag).await {
+            tracing::warn!(d_tag = %d_tag, "Failed to update access tracking: {e}");
+        }
     }
     Ok(())
 }

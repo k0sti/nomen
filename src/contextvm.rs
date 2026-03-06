@@ -83,7 +83,7 @@ impl RateLimiter {
 
     /// Returns true if the request is allowed, false if rate-limited.
     fn check(&self, npub: &str, now: u64) -> bool {
-        let mut state = self.state.lock().unwrap();
+        let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
         let entry = state.entry(npub.to_string()).or_insert((0, now));
 
         // Reset window if more than 60s have passed
