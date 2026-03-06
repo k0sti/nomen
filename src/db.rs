@@ -521,9 +521,9 @@ pub async fn hybrid_search(
 
     let sql = format!(
         "SELECT *, \
-           vector::similarity::cosine(embedding, $vec) AS vec_score, \
+           IF embedding != NONE THEN vector::similarity::cosine(embedding, $vec) ELSE 0 END AS vec_score, \
            search::score(1) AS text_score, \
-           (vector::similarity::cosine(embedding, $vec) * $vw + search::score(1) * $tw) AS combined \
+           (IF embedding != NONE THEN vector::similarity::cosine(embedding, $vec) ELSE 0 END * $vw + search::score(1) * $tw) AS combined \
          FROM memory \
          WHERE {where_clause} \
          ORDER BY combined DESC \
