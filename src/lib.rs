@@ -11,6 +11,7 @@ pub mod embed;
 pub mod entities;
 pub mod groups;
 pub mod ingest;
+pub mod kinds;
 pub mod memory;
 pub mod relay;
 pub mod search;
@@ -138,7 +139,7 @@ impl Nomen {
     /// automatically. This is the single source of truth for local memory
     /// storage — MCP, Context-VM, and CLI all delegate here.
     pub async fn store(&self, mem: NewMemory) -> Result<String> {
-        let d_tag = format!("snow:memory:{}", mem.topic);
+        let d_tag = mem.topic.clone();
         let source = mem.source.as_deref().unwrap_or("api");
         let model = mem.model.as_deref().unwrap_or("nomen/api");
         let detail_text = if mem.detail.is_empty() { &mem.summary } else { &mem.detail };
@@ -185,7 +186,7 @@ impl Nomen {
         embedder: &dyn Embedder,
         mem: NewMemory,
     ) -> Result<String> {
-        let d_tag = format!("snow:memory:{}", mem.topic);
+        let d_tag = mem.topic.clone();
         let source = mem.source.as_deref().unwrap_or("api");
         let model = mem.model.as_deref().unwrap_or("nomen/api");
         let detail_text = if mem.detail.is_empty() { &mem.summary } else { &mem.detail };
@@ -253,8 +254,7 @@ impl Nomen {
     /// Delete a memory by topic or event ID.
     pub async fn delete(&self, topic: Option<&str>, id: Option<&str>) -> Result<()> {
         if let Some(topic) = topic {
-            let d_tag = format!("snow:memory:{topic}");
-            db::delete_memory_by_dtag(&self.db, &d_tag).await?;
+            db::delete_memory_by_dtag(&self.db, topic).await?;
         }
         if let Some(id) = id {
             db::delete_memory_by_nostr_id(&self.db, id).await?;

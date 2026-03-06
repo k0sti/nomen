@@ -640,7 +640,7 @@ pub async fn consolidate(
                 continue;
             }
 
-            let d_tag = format!("snow:memory:{}", memory.topic);
+            let d_tag = memory.topic.clone();
 
             // Check if a memory with this topic already exists (TODO #2: merge)
             let existing = get_existing_memory(db, &d_tag).await;
@@ -687,7 +687,7 @@ pub async fn consolidate(
                                             is_dedup_merge = true;
                                             // Store using the similar memory's d_tag
                                             let mem = crate::NewMemory {
-                                                topic: sim_dtag.strip_prefix("snow:memory:").unwrap_or(&memory.topic).to_string(),
+                                                topic: sim_dtag.clone(),
                                                 summary: m.summary.clone(),
                                                 detail: m.detail.clone(),
                                                 tier: tier.clone(),
@@ -769,7 +769,7 @@ pub async fn consolidate(
 
             // Handle conflict detection: create contradicts edge
             if contradicts && is_merge {
-                let existing_d_tag = format!("snow:memory:{}", memory.topic);
+                let existing_d_tag = memory.topic.clone();
                 if let Err(e) = crate::db::create_references_edge(
                     db,
                     &d_tag,

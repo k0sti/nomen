@@ -711,8 +711,7 @@ impl McpServer {
         }
 
         if let Some(topic) = topic {
-            let d_tag = format!("snow:memory:{topic}");
-            db::delete_memory_by_dtag(&self.db, &d_tag).await?;
+            db::delete_memory_by_dtag(&self.db, topic).await?;
             Ok(format!("Deleted memory with topic: {topic}"))
         } else {
             let id = id.unwrap();

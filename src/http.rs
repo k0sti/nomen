@@ -391,8 +391,7 @@ async fn api_delete_memory(
     State(state): State<SharedState>,
     Path(topic): Path<String>,
 ) -> Result<Json<Value>, AppError> {
-    let d_tag = format!("snow:memory:{topic}");
-    db::delete_memory_by_dtag(&state.db, &d_tag).await?;
+    db::delete_memory_by_dtag(&state.db, &topic).await?;
     Ok(Json(json!({ "deleted": topic })))
 }
 

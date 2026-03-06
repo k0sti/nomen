@@ -18,6 +18,7 @@ use nomen::entities;
 use nomen::groups;
 use nomen::ingest;
 use nomen::mcp;
+use nomen::kinds::{MEMORY_KIND, LESSON_KIND, LEGACY_LESSON_KIND};
 use nomen::memory::{get_tag_value, parse_event};
 use nomen::relay::{RelayConfig, RelayManager};
 use nomen::search;
@@ -507,7 +508,7 @@ async fn cmd_list(relay_url: &str, nsecs: &[String], named: bool, ephemeral: boo
     let mut lesson_count = 0usize;
 
     for event in events.into_iter() {
-        if event.kind == Kind::Custom(4129) {
+        if event.kind == Kind::Custom(LESSON_KIND) || event.kind == Kind::Custom(LEGACY_LESSON_KIND) {
             lesson_count += 1;
             continue;
         }
@@ -567,7 +568,7 @@ async fn cmd_sync(relay_url: &str, nsecs: &[String]) -> Result<()> {
     let mut skipped = 0usize;
 
     for event in events.into_iter() {
-        if event.kind == Kind::Custom(4129) {
+        if event.kind == Kind::Custom(LESSON_KIND) || event.kind == Kind::Custom(LEGACY_LESSON_KIND) {
             continue;
         }
         let d_tag = get_tag_value(&event.tags, "d").unwrap_or_default();
@@ -628,34 +629,36 @@ async fn cmd_store(
         content_str.clone()
     };
 
-    // Build d-tag
-    let d_tag = format!("snow:memory:{topic}");
+    // Build d-tag (clean topic, no prefix for kind 31234)
+    let d_tag = topic.to_string();
 
-    // Check for existing event with this d-tag (for snow:supersedes)
+    // Check for existing event with this d-tag (for supersedes)
     let previous_event_id = {
         let events = mgr.fetch_memories(&_pubkeys).await?;
         events.into_iter().find(|e| {
-            get_tag_value(&e.tags, "d").as_deref() == Some(&d_tag)
+            let raw_dtag = get_tag_value(&e.tags, "d").unwrap_or_default();
+            let parsed_topic = nomen::memory::parse_d_tag(&raw_dtag);
+            parsed_topic == d_tag
         }).map(|e| e.id)
     };
 
     // Build version based on previous event
     let version = if previous_event_id.is_some() { "2" } else { "1" };
 
-    // Build tags
+    // Build tags (clean names, no snow: prefix)
     let mut tags = vec![
         Tag::custom(TagKind::Custom("d".into()), vec![d_tag.clone()]),
-        Tag::custom(TagKind::Custom("snow:tier".into()), vec![tier.to_string()]),
-        Tag::custom(TagKind::Custom("snow:model".into()), vec!["human/manual".to_string()]),
-        Tag::custom(TagKind::Custom("snow:confidence".into()), vec![format!("{confidence:.2}")]),
-        Tag::custom(TagKind::Custom("snow:source".into()), vec![keys.public_key().to_hex()]),
-        Tag::custom(TagKind::Custom("snow:version".into()), vec![version.to_string()]),
+        Tag::custom(TagKind::Custom("tier".into()), vec![tier.to_string()]),
+        Tag::custom(TagKind::Custom("model".into()), vec!["human/manual".to_string()]),
+        Tag::custom(TagKind::Custom("confidence".into()), vec![format!("{confidence:.2}")]),
+        Tag::custom(TagKind::Custom("source".into()), vec![keys.public_key().to_hex()]),
+        Tag::custom(TagKind::Custom("version".into()), vec![version.to_string()]),
     ];
 
-    // Add snow:supersedes tag if updating an existing memory
+    // Add supersedes tag if updating an existing memory
     if let Some(prev_id) = previous_event_id {
         tags.push(Tag::custom(
-            TagKind::Custom("snow:supersedes".into()),
+            TagKind::Custom("supersedes".into()),
             vec![prev_id.to_hex()],
         ));
     }
@@ -674,7 +677,7 @@ async fn cmd_store(
         }
     }
 
-    let builder = EventBuilder::new(Kind::Custom(30078), final_content).tags(tags);
+    let builder = EventBuilder::new(Kind::Custom(MEMORY_KIND), final_content).tags(tags);
 
     // Publish to relay
     println!("Publishing to relay...");
@@ -690,7 +693,7 @@ async fn cmd_store(
         model: "human/manual".to_string(),
         summary: summary.to_string(),
         created_at: Timestamp::now(),
-        d_tag,
+        d_tag: d_tag.clone(),
         source: keys.public_key().to_hex(),
         content_raw: content_str,
         detail: if detail.is_empty() { summary.to_string() } else { detail.to_string() },
@@ -733,12 +736,13 @@ async fn cmd_delete(
         EventId::from_hex(eid).context("Invalid event ID")?
     } else {
         let topic = topic.unwrap();
-        let d_tag = format!("snow:memory:{topic}");
 
-        // Fetch to find the event with this d-tag
+        // Fetch to find the event with this topic (check both old and new d-tag formats)
         let events = mgr.fetch_memories(&pubkeys).await?;
         let found = events.into_iter().find(|e| {
-            get_tag_value(&e.tags, "d").as_deref() == Some(&d_tag)
+            let raw_dtag = get_tag_value(&e.tags, "d").unwrap_or_default();
+            let parsed_topic = nomen::memory::parse_d_tag(&raw_dtag);
+            parsed_topic == topic
         });
 
         match found {
@@ -753,11 +757,10 @@ async fn cmd_delete(
 
     let result = mgr.publish(delete_builder).await?;
 
-    // Remove from local SurrealDB
+    // Remove from local SurrealDB (clean d_tag = topic)
     let db = db::init_db().await?;
     if let Some(topic) = topic {
-        let d_tag = format!("snow:memory:{topic}");
-        db::delete_memory_by_dtag(&db, &d_tag).await?;
+        db::delete_memory_by_dtag(&db, topic).await?;
     } else if let Some(eid) = event_id {
         db::delete_memory_by_nostr_id(&db, eid).await?;
     }

@@ -5,6 +5,8 @@ use nostr_sdk::prelude::*;
 use nostr_sdk::prelude::nip44;
 use tracing::{debug, info, warn};
 
+use crate::kinds::{MEMORY_KIND, LESSON_KIND, LEGACY_APP_DATA_KIND, LEGACY_LESSON_KIND};
+
 /// Result of publishing an event to relays.
 pub struct PublishResult {
     pub event_id: EventId,
@@ -87,10 +89,15 @@ impl RelayManager {
         Ok(())
     }
 
-    /// Fetch memory events (kind 30078) and agent lessons (kind 4129) for the given pubkeys.
+    /// Fetch memory events (kind 31234 + legacy 30078) and agent lessons (kind 31235 + legacy 4129).
     pub async fn fetch_memories(&self, pubkeys: &[PublicKey]) -> Result<Events> {
         let filter = Filter::new()
-            .kinds(vec![Kind::Custom(30078), Kind::Custom(4129)])
+            .kinds(vec![
+                Kind::Custom(MEMORY_KIND),
+                Kind::Custom(LESSON_KIND),
+                Kind::Custom(LEGACY_APP_DATA_KIND),
+                Kind::Custom(LEGACY_LESSON_KIND),
+            ])
             .authors(pubkeys.to_vec());
 
         debug!("Fetching events for {} pubkeys", pubkeys.len());
@@ -181,14 +188,19 @@ impl RelayManager {
         &self.client
     }
 
-    /// Subscribe to kind 30078 events for the given pubkeys and return new events
+    /// Subscribe to memory events for the given pubkeys and return new events
     /// via a tokio broadcast channel. Used for daemon/incremental sync.
     pub async fn subscribe(
         &self,
         pubkeys: &[PublicKey],
     ) -> Result<tokio::sync::mpsc::Receiver<Event>> {
         let filter = Filter::new()
-            .kinds(vec![Kind::Custom(30078), Kind::Custom(4129)])
+            .kinds(vec![
+                Kind::Custom(MEMORY_KIND),
+                Kind::Custom(LESSON_KIND),
+                Kind::Custom(LEGACY_APP_DATA_KIND),
+                Kind::Custom(LEGACY_LESSON_KIND),
+            ])
             .authors(pubkeys.to_vec());
 
         self.client.subscribe(filter, None).await?;

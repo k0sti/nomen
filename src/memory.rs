@@ -39,8 +39,11 @@ pub fn parse_d_tag(d_tag: &str) -> String {
     }
 }
 
+/// Parse tier from event tags. Checks both new ("tier") and legacy ("snow:tier") tag names.
 pub fn parse_tier(tags: &Tags) -> String {
-    let tier_val = get_tag_value(tags, "snow:tier").unwrap_or("unknown".to_string());
+    let tier_val = get_tag_value(tags, "tier")
+        .or_else(|| get_tag_value(tags, "snow:tier"))
+        .unwrap_or_else(|| "unknown".to_string());
     if tier_val == "group" {
         if let Some(h) = get_tag_value(tags, "h") {
             return format!("group:{h}");
@@ -66,6 +69,12 @@ pub fn get_tag_value(tags: &Tags, name: &str) -> Option<String> {
         }
     }
     None
+}
+
+/// Get a tag value, checking new name first, then legacy "snow:" prefixed name.
+fn get_tag_compat(tags: &Tags, name: &str) -> Option<String> {
+    get_tag_value(tags, name)
+        .or_else(|| get_tag_value(tags, &format!("snow:{name}")))
 }
 
 /// Try to decrypt NIP-44 encrypted content using the provided keys.
@@ -96,13 +105,14 @@ pub fn try_decrypt_content(event: &Event, keys: &Keys) -> Option<String> {
 
 pub fn parse_event(event: &Event, keys: &Keys) -> ParsedMemory {
     let tags = &event.tags;
-    let d_tag = get_tag_value(tags, "d").unwrap_or_default();
-    let topic = parse_d_tag(&d_tag);
+    let d_tag_raw = get_tag_value(tags, "d").unwrap_or_default();
+    let topic = parse_d_tag(&d_tag_raw);
     let tier = parse_tier(tags);
-    let version = get_tag_value(tags, "snow:version").unwrap_or("?".to_string());
-    let confidence = get_tag_value(tags, "snow:confidence").unwrap_or("?".to_string());
-    let model = get_tag_value(tags, "snow:model").unwrap_or("unknown".to_string());
-    let source = get_tag_value(tags, "snow:source").unwrap_or_default();
+    // Check new tag names first, fall back to legacy "snow:" prefixed names
+    let version = get_tag_compat(tags, "version").unwrap_or_else(|| "?".to_string());
+    let confidence = get_tag_compat(tags, "confidence").unwrap_or_else(|| "?".to_string());
+    let model = get_tag_compat(tags, "model").unwrap_or_else(|| "unknown".to_string());
+    let source = get_tag_compat(tags, "source").unwrap_or_default();
 
     let content_str = if tier == "private" {
         match try_decrypt_content(event, keys) {
@@ -125,15 +135,16 @@ pub fn parse_event(event: &Event, keys: &Keys) -> ParsedMemory {
         }
     };
 
+    // Always normalize d_tag to clean topic for SurrealDB storage
     ParsedMemory {
         tier,
-        topic,
+        topic: topic.clone(),
         version,
         confidence,
         model,
         summary,
         created_at: event.created_at,
-        d_tag,
+        d_tag: topic,
         source,
         content_raw: content_str,
         detail,

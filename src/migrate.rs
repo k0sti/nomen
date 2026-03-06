@@ -91,7 +91,7 @@ pub async fn migrate_from_sqlite(
             }
         };
 
-        let d_tag = format!("snow:memory:{}", mem.topic);
+        let d_tag = mem.topic.clone();
         let content = serde_json::json!({
             "summary": mem.summary,
             "detail": mem.detail,
