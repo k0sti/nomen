@@ -42,7 +42,7 @@
           <h3 class="font-mono text-sm font-medium text-gray-200">{memory.topic}</h3>
           <TierBadge tier={memory.tier} scope={memory.scope} />
         </div>
-        <p class="text-sm text-gray-400 mt-1 line-clamp-2">{memory.summary}</p>
+        <p class="text-sm text-gray-400 mt-1 {isExpanded ? '' : 'line-clamp-2'}">{memory.summary}</p>
       </div>
       <div class="text-right shrink-0">
         <div class="text-xs text-gray-500">{formatDate(memory.created_at)}</div>
