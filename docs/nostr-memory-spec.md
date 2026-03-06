@@ -1,10 +1,10 @@
 # Nostr Memory Event Specification
 
-**Version:** v0.1
-**Date:** 2026-03-04
+**Version:** v0.2
+**Date:** 2026-03-07
 **Status:** Draft
 
-Defines the Nostr event schema for the nomen memory system. Memory events are custom kind 31234 addressable/replaceable events stored on Nostr relays.
+Defines the Nostr event schema for the nomen memory system. Memory events are kind 31234 addressable/replaceable events stored on Nostr relays.
 
 ---
 
@@ -20,7 +20,68 @@ All memory events use **kind 31234** (Nomen Memory). This is an addressable/repl
 
 ---
 
-## 1. Memory Event Structure
+## 1. D-Tag Format
+
+### Structure
+
+```
+{visibility}:{context}:{topic}
+```
+
+The d-tag encodes three dimensions separated by colons:
+
+| Field | Description | Examples |
+|-------|-------------|---------|
+| **visibility** | Access level — who can read this memory | `public`, `group`, `circle`, `private` |
+| **context** | Boundary — whose memory this is or where it belongs | group name, pubkey hash, npub, or empty |
+| **topic** | Subject identifier — what this memory is about | `api-patterns`, `ssh-config` |
+
+### Visibility Values
+
+| Value | Context | Description |
+|-------|---------|-------------|
+| `public` | empty | Readable by anyone on the relay |
+| `group` | group name/id | Readable by members of a named, managed group (NIP-29) |
+| `circle` | hash of sorted pubkeys | Readable by an ad-hoc set of participants (no relay group) |
+| `private` | npub | Readable only by the author and their agents |
+
+### Examples
+
+```
+public::nostr-relay-auth
+public::rust-error-handling
+group:techteam:deployment-process
+group:inner-circle:weekend-plans
+circle:a3f8b2c1e9d04712:shared-project-notes
+private:npub1zc6ts76lel22d38l9uk7zazsen8yd7dtuzcz5uv8d3vkast9hlks4725sl:ssh-config
+```
+
+### Design Rationale
+
+- **No namespace prefix** — kind 31234 is the namespace; no `snow:memory:` prefix needed
+- **Visibility in d-tag** — eliminates the need for a separate tier tag; relay can filter by d-tag prefix
+- **Context in d-tag** — enables relay-side prefix queries like `group:techteam:*` without scanning tags
+- **Topic last** — human-readable slug, unique within its visibility+context pair
+
+### Circle Hash
+
+For ad-hoc participant sets, the context is a deterministic hash:
+
+1. Collect all participant pubkeys (hex)
+2. Sort alphabetically
+3. Concatenate with commas
+4. SHA-256 hash
+5. Take first 16 hex characters
+
+```
+circle:a3f8b2c1e9d04712:shared-notes
+```
+
+Participants are discoverable via `p` tags on the event.
+
+---
+
+## 2. Memory Event Structure
 
 ### JSON Example
 
@@ -31,11 +92,9 @@ All memory events use **kind 31234** (Nomen Memory). This is an addressable/repl
   "created_at": 1739901000,
   "content": "{\"summary\":\"Use anyhow for application errors\",\"detail\":\"In application code, prefer anyhow::Result for ergonomic error propagation.\",\"context\":null}",
   "tags": [
-    ["d", "rust/error-handling"],
-    ["tier", "public"],
+    ["d", "public::rust-error-handling"],
     ["model", "anthropic/claude-opus-4-6"],
     ["confidence", "0.92"],
-    ["source", "<originating-agent-pubkey-hex>"],
     ["version", "1"],
     ["t", "rust"],
     ["t", "error-handling"]
@@ -53,109 +112,118 @@ The `content` field is a JSON object:
 |-------|------|----------|-------------|
 | `summary` | string | Yes | Short summary of the memory |
 | `detail` | string | Yes | Full detail / body |
-| `context` | string | No | Optional structured context |
+| `context` | string | No | What triggered this memory |
+
+No metadata in content — that's what tags are for.
 
 ### Tags
 
 | Tag | Required | Description |
 |-----|----------|-------------|
-| `d` | Yes | Topic key: `<namespace>/<topic>` — makes event addressable/replaceable |
-| `tier` | Yes | Visibility tier: `public`, `group`, `personal`, or `internal` |
+| `d` | Yes | `{visibility}:{context}:{topic}` — addressable/replaceable key |
 | `model` | Yes | Model that generated this memory (e.g. `anthropic/claude-opus-4-6`) |
 | `confidence` | Yes | Self-assessed confidence score, float in [0.0, 1.0] |
-| `source` | Yes | Pubkey (hex) of the originating agent |
-| `version` | Yes | Version number (monotonically increasing per topic+source) |
-| `supersedes` | No | Event ID of the previous version this replaces |
-| `t` | No | Topic tags for relay-side filtering (repeatable) |
+| `version` | Yes | Version number (monotonically increasing per d-tag) |
+| `supersedes` | No | D-tag of the previous version this replaces |
+| `t` | No | Freeform topic tags for filtering (repeatable) |
+| `h` | No | NIP-29 group id (for `group` visibility, relay-enforced) |
+| `p` | No | Participant pubkeys (for `circle` visibility) |
 
-### D-Tag Namespace
-
-| Pattern | Scope | Description |
-|---------|-------|-------------|
-| `<namespace>/<topic>` | Memory | Collective memory entry keyed by topic |
-| `snowclaw:memory:npub:<npub1...>` | Per-user | Agent's memory about a specific user |
-| `snowclaw:memory:group:<group_id>` | Per-group | Agent's memory about a specific group |
-| `snowclaw:config:group:<group_id>` | Config | Dynamic group configuration |
-| `snowclaw:config:global` | Config | Global dynamic configuration |
+**Removed from previous spec:**
+- `tier` tag — encoded in d-tag visibility
+- `source` tag — redundant with `event.pubkey`
 
 ---
 
-## 2. Per-User Memory
+## 3. Visibility-Specific Behavior
+
+### Public
+
+```json
+["d", "public::api-rate-limiting"]
+```
+
+No access restrictions. No `h` or `p` tags needed.
+
+### Group
+
+```json
+["d", "group:techteam:deployment-process"],
+["h", "techteam"]
+```
+
+The `h` tag enables relay-side group scoping (NIP-29). Membership managed by the relay. Groups are pre-defined with a name/id.
+
+### Circle
+
+```json
+["d", "circle:a3f8b2c1e9d04712:shared-notes"],
+["p", "<pubkey-hex-1>"],
+["p", "<pubkey-hex-2>"],
+["p", "<pubkey-hex-3>"]
+```
+
+Ad-hoc participant sets. No relay group — access enforced client-side or via NIP-44 encryption. The hash in the context deterministically identifies the participant set.
+
+Content SHOULD be NIP-44 encrypted when the relay doesn't enforce access control.
+
+### Private
+
+```json
+["d", "private:npub1zc6ts76lel22d38l9uk7zazsen8yd7dtuzcz5uv8d3vkast9hlks4725sl:ssh-config"]
+```
+
+Single identity. Content SHOULD be NIP-44 encrypted (self-encrypt: author encrypts to their own pubkey). Only the author and agents holding the author's nsec can decrypt.
+
+---
+
+## 4. Per-User Memory
 
 Each user that interacts with an agent gets an auto-created memory record.
 
+### D-Tag
+
+```
+private:npub1zc6ts76lel22d38l9uk7zazsen8yd7dtuzcz5uv8d3vkast9hlks4725sl:user-profile
+```
+
 ### Content Schema
 
 ```json
 {
-  "display_names": [["k0", 1739800000]],
-  "first_seen": 1739800000,
-  "notes": ["Project lead", "Prefers concise responses"],
-  "preferences": {"language": "en"},
-  "is_owner": true
+  "summary": "Project lead, prefers concise responses",
+  "detail": "{\"display_names\":[[\"k0\",1739800000]],\"first_seen\":1739800000,\"notes\":[\"Project lead\"],\"preferences\":{\"language\":\"en\"},\"is_owner\":true}",
+  "context": "Auto-created from user interactions"
 }
 ```
 
-### D-Tag
-
-```
-snowclaw:memory:npub:npub1zc6ts76lel22d38l9uk7zazsen8yd7dtuzcz5uv8d3vkast9hlks4725sl
-```
-
-Uses bech32 npub for human readability. Full npub, no truncation.
-
 ---
 
-## 3. Per-Group Memory
+## 5. Per-Group Memory
 
 Each NIP-29 group gets an auto-created memory record.
 
+### D-Tag
+
+```
+group:techteam:group-context
+```
+
 ### Content Schema
 
 ```json
 {
-  "purpose": "Core team coordination and architecture decisions",
-  "members": [["npub1abc...", "k0"], ["npub1def...", "Clarity"]],
-  "themes": ["nostr", "agents", "task-system"],
-  "decisions": [["Use NIP-78 for memory", 1739800000], ["Zooid as primary relay", 1739850000]]
+  "summary": "Core team coordination and architecture decisions",
+  "detail": "{\"purpose\":\"Core team coordination\",\"members\":[[\"npub1abc...\",\"k0\"],[\"npub1def...\",\"Clarity\"]],\"themes\":[\"nostr\",\"agents\"],\"decisions\":[[\"Use NIP-78 for memory\",1739800000]]}",
+  "context": "Auto-created from group activity"
 }
 ```
 
-### D-Tag
-
-```
-snowclaw:memory:group:techteam
-```
-
-### Group Scoping
-
-The `h` tag scopes visibility to group members (relay-enforced):
-
-```json
-["h", "techteam"]
-```
-
-### Group Types
-
-**Named groups** (NIP-29): Pre-defined with an ID, mapped to a relay group via `h` tag. Members managed by the relay. Used for teams, communities, projects.
-
-```json
-["h", "techteam"]
-```
-
-**Ad-hoc npub sets**: Implicit groups formed by a set of participants (e.g., a multi-party DM). No relay group — scoped by a deterministic hash of sorted participant npubs. Used for private conversations between specific agents/users.
-
-```json
-["snow:scope", "sha256:sorted_npub1,npub2,npub3"]
-```
-
-Ad-hoc sets are always personal tier with NIP-44 encryption. They don't use `h` tags since they aren't relay-managed groups.
-
 ---
 
-## 4. Agent Lessons — Kind 4129
+## 6. Agent Lessons — Kind 4129
 
-Behavioral learnings published by agents. Not NIP-78 — these are regular events forming an append-only log.
+Behavioral learnings published by agents. Not kind 31234 — these are regular events forming an append-only log.
 
 ```json
 {
@@ -171,7 +239,7 @@ Behavioral learnings published by agents. Not NIP-78 — these are regular event
 
 ---
 
-## 5. Agent Identity Events
+## 7. Agent Identity Events
 
 ### Kind 0 — Profile Metadata
 
@@ -230,7 +298,7 @@ For verified owner-agent relationship, both must exist:
 
 ---
 
-## 6. Relay Subscription Filters
+## 8. Relay Subscription Filters
 
 ### Memory Events
 
@@ -238,10 +306,10 @@ For verified owner-agent relationship, both must exist:
 {"kinds": [31234], "authors": ["<agent-pubkey>", "<owner-pubkey>"]}
 ```
 
-### With D-Tag Prefix Filter
+### By Visibility (D-Tag Prefix)
 
 ```json
-{"kinds": [31234], "#d": [...]}
+{"kinds": [31234], "#d": ["public:", "group:techteam:"]}
 ```
 
 ### Agent Lessons
@@ -262,7 +330,7 @@ For verified owner-agent relationship, both must exist:
 
 ---
 
-## 7. Relay Authentication — NIP-42
+## 9. Relay Authentication — NIP-42
 
 The zooid relay requires NIP-42 AUTH. On connection, the relay sends an AUTH challenge:
 
@@ -284,6 +352,19 @@ Client responds with a signed kind 22242 event:
 
 ---
 
+## 10. Encryption
+
+| Visibility | Encryption | Method |
+|------------|-----------|--------|
+| public | None | — |
+| group | Optional | NIP-44 with group shared key (TBD) |
+| circle | Recommended | NIP-44 per-participant (encrypt to each `p` tag pubkey) |
+| private | Recommended | NIP-44 self-encrypt (author encrypts to own pubkey) |
+
+Only the `content` field is encrypted. Tags remain plaintext for relay-side filtering.
+
+---
+
 ## NIP Compatibility
 
 | NIP | Usage |
@@ -292,6 +373,21 @@ Client responds with a signed kind 22242 event:
 | NIP-09 | Event deletion (memory cleanup) |
 | NIP-29 | Relay-based groups (h tag scoping) |
 | NIP-42 | Relay AUTH (mandatory for zooid) |
-| NIP-44 | Encryption (personal tier: agent↔user shared secret; internal tier: self-encrypt) |
+| NIP-44 | Encryption (circle + private visibility) |
 | Custom 31234 | Nomen memory events (replaceable by author+kind+d) |
 | NIP-AE | Agent attribution & verification |
+
+---
+
+## Migration from v0.1
+
+| v0.1 | v0.2 |
+|------|------|
+| `snow:memory:{topic}` d-tag | `{visibility}:{context}:{topic}` d-tag |
+| `tier` tag | Removed — visibility in d-tag |
+| `source` tag | Removed — use `event.pubkey` |
+| `snow:tier`, `snow:confidence`, etc. | `confidence`, `version`, `model` (no prefix) |
+| `snowclaw:memory:npub:{npub}` | `private:{npub}:{topic}` |
+| `snowclaw:memory:group:{id}` | `group:{id}:{topic}` |
+
+Events with old d-tag formats should be re-published with new format during migration. Old events can be deleted via NIP-09 after migration is confirmed.
