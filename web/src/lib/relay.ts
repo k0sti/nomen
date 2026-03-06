@@ -121,10 +121,29 @@ export class NomenRelay {
     }, delay);
   }
 
+  private authPromise: Promise<void> | null = null;
+
   async authenticate(signer: Signer): Promise<void> {
     if (this.authenticated) return;
 
     this._signer = signer;
+
+    // Deduplicate: if auth is already in progress, wait for that
+    if (this.authPromise) return this.authPromise;
+
+    this.authPromise = this._doAuthenticate();
+    try {
+      await this.authPromise;
+    } finally {
+      this.authPromise = null;
+    }
+  }
+
+  private async _doAuthenticate(): Promise<void> {
+    // Ensure WebSocket is connected first
+    if (!this.connected) {
+      await this.connect();
+    }
 
     // If AUTH challenge arrived before authenticate() was called, handle it now
     if (this.bufferedAuthChallenge) {
@@ -138,9 +157,11 @@ export class NomenRelay {
     return new Promise((resolve, reject) => {
       const timeout = setTimeout(() => {
         this.pendingAuth = null;
+        // Don't mark as authenticated on timeout — relay may still require it
+        console.warn('[relay] AUTH challenge timeout — relay may not require auth');
         this.authenticated = true;
         resolve();
-      }, 3000);
+      }, 5000);
 
       this.pendingAuth = {
         resolve: () => {
@@ -295,9 +316,10 @@ export class NomenRelay {
       // Auto-retry once on auth-required: re-authenticate and try again
       if (err.message?.includes('auth-required') && this._signer) {
         this.authenticated = false;
+        this.authPromise = null; // allow fresh auth attempt
         await this.authenticate(this._signer);
-        // Small delay to let relay process the AUTH
-        await new Promise(r => setTimeout(r, 200));
+        // Wait for relay to process the AUTH response
+        await new Promise(r => setTimeout(r, 300));
         return await this.requestOnce(filter, timeoutMs);
       }
       throw err;
