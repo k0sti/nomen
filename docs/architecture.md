@@ -45,11 +45,10 @@ src/
 ├── config.rs         (197)  TOML config (~/.config/nomen/config.toml)
 ├── access.rs         (132)  Access control
 ├── display.rs         (77)  Formatted output
-├── migrate.rs        (136)  SQLite → SurrealDB migration
-└── snowclaw_adapter.rs (456) Snowclaw integration bridge
+└── migrate.rs        (136)  SQLite → SurrealDB migration
 ```
 
-Total: ~7400 LOC Rust.
+Total: ~6900 LOC Rust.
 
 ## Storage: SurrealDB (Embedded)
 

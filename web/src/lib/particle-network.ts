@@ -112,6 +112,17 @@ export function updateSimulation(
     p.x += p.vx;
     p.y += p.vy;
 
+    // Enforce minimum speed so particles never stop
+    const minSpeed = config.speed * 0.5;
+    if (speed < minSpeed && speed > 0.001) {
+      p.vx = (p.vx / speed) * minSpeed;
+      p.vy = (p.vy / speed) * minSpeed;
+    } else if (speed <= 0.001) {
+      const angle = Math.random() * Math.PI * 2;
+      p.vx = Math.cos(angle) * minSpeed;
+      p.vy = Math.sin(angle) * minSpeed;
+    }
+
     // Wrap around edges with padding
     const pad = 20;
     if (p.x < -pad) p.x = width + pad;

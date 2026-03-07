@@ -52,12 +52,12 @@
     for (const conn of connections) {
       const a = state.particles[conn.a];
       const b = state.particles[conn.b];
-      const alpha = conn.strength * 0.35;
+      const alpha = conn.strength * 0.6;
       ctx.beginPath();
       ctx.moveTo(a.x, a.y);
       ctx.lineTo(b.x, b.y);
-      ctx.strokeStyle = `oklch(0.6 0.12 275 / ${alpha})`;
-      ctx.lineWidth = conn.strength * 1.5;
+      ctx.strokeStyle = `oklch(0.65 0.14 275 / ${alpha})`;
+      ctx.lineWidth = conn.strength * 2;
       ctx.stroke();
     }
 
