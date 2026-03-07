@@ -36,6 +36,8 @@ use anyhow::Result;
 use surrealdb::engine::local::Db;
 use surrealdb::Surreal;
 
+use std::sync::Arc;
+
 use crate::config::Config;
 use crate::consolidate::{ConsolidationConfig, ConsolidationReport, NoopLlmProvider};
 use crate::embed::Embedder;
@@ -44,6 +46,7 @@ use crate::groups::GroupStore;
 use crate::ingest::{MessageQuery, RawMessage, RawMessageRecord};
 use crate::relay::RelayManager;
 use crate::search::{SearchOptions, SearchResult};
+use crate::signer::NomenSigner;
 
 /// High-level handle wrapping SurrealDB, embedder, relay, and groups.
 pub struct Nomen {
@@ -51,6 +54,7 @@ pub struct Nomen {
     embedder: Box<dyn Embedder>,
     relay: Option<RelayManager>,
     groups: GroupStore,
+    signer: Option<Arc<dyn NomenSigner>>,
 }
 
 /// Options for creating a new memory directly (without relay event).
@@ -93,20 +97,31 @@ impl Nomen {
         let db = db::init_db_with_dimensions(config.embedding_dimensions()).await?;
         let embedder = config.build_embedder();
         let groups = GroupStore::load(&config.groups, &db).await?;
+        let signer = config.build_signer();
 
         Ok(Self {
             db,
             embedder,
             relay: None,
             groups,
+            signer,
         })
     }
 
     /// Open with an explicit relay manager (already connected or not).
     pub async fn open_with_relay(config: &Config, relay: RelayManager) -> Result<Self> {
         let mut nomen = Self::open(config).await?;
+        // Use relay's signer if no signer was built from config
+        if nomen.signer.is_none() {
+            nomen.signer = Some(relay.arc_signer().clone());
+        }
         nomen.relay = Some(relay);
         Ok(nomen)
+    }
+
+    /// Get the signer, if available.
+    pub fn signer(&self) -> Option<&Arc<dyn NomenSigner>> {
+        self.signer.as_ref()
     }
 
     /// Get a reference to the underlying SurrealDB handle.
@@ -140,7 +155,12 @@ impl Nomen {
     /// and publishes to relay if available. For personal/internal tier,
     /// content is NIP-44 encrypted before relay publish.
     pub async fn store(&self, mem: NewMemory) -> Result<String> {
-        let d_tag = mem.topic.clone();
+        let author_pubkey_hex = self
+            .signer
+            .as_ref()
+            .map(|s| s.public_key().to_hex())
+            .unwrap_or_default();
+        let d_tag = memory::build_dtag_from_tier(&mem.tier, &author_pubkey_hex, &mem.topic);
         let source = mem.source.as_deref().unwrap_or("api");
         let model = mem.model.as_deref().unwrap_or("nomen/api");
         let detail_text = if mem.detail.is_empty() { &mem.summary } else { &mem.detail };
@@ -265,7 +285,7 @@ impl Nomen {
 
     /// Run the consolidation pipeline on unconsolidated messages.
     pub async fn consolidate(&self, opts: ConsolidateOptions) -> Result<ConsolidationReport> {
-        let author_pubkey = self.relay.as_ref().map(|r| r.public_key().to_hex());
+        let author_pubkey = self.signer.as_ref().map(|s| s.public_key().to_hex());
         let config = ConsolidationConfig {
             batch_size: opts.batch_size,
             min_messages: opts.min_messages,

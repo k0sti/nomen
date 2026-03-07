@@ -1688,6 +1688,7 @@ async fn cmd_init(force: bool, non_interactive: bool) -> Result<()> {
             provider: emb_provider,
             model: emb_model,
             api_key_env: emb_api_key_env,
+            api_key: None,
             base_url: None,
             dimensions: emb_dimensions,
             batch_size: 100,

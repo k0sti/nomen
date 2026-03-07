@@ -146,6 +146,10 @@ pub struct EmbeddingConfig {
     /// Environment variable name containing the API key
     #[serde(default = "default_api_key_env")]
     pub api_key_env: String,
+    /// Direct API key passthrough (avoids env var mutation in multi-threaded contexts).
+    /// Takes precedence over `api_key_env` when set.
+    #[serde(default, skip_serializing)]
+    pub api_key: Option<String>,
     /// Base URL override (optional, provider default used if absent)
     #[serde(default)]
     pub base_url: Option<String>,
@@ -198,6 +202,7 @@ impl Default for EmbeddingConfig {
             provider: default_provider(),
             model: default_model(),
             api_key_env: default_api_key_env(),
+            api_key: None,
             base_url: None,
             dimensions: default_dimensions(),
             batch_size: default_batch_size(),
@@ -271,7 +276,10 @@ impl Config {
             return Box::new(crate::embed::NoopEmbedder);
         };
 
-        let api_key = std::env::var(&emb.api_key_env).unwrap_or_default();
+        let api_key = emb
+            .api_key
+            .clone()
+            .unwrap_or_else(|| std::env::var(&emb.api_key_env).unwrap_or_default());
         if api_key.is_empty() {
             tracing::warn!(
                 "Embedding API key env {} not set, using NoopEmbedder",

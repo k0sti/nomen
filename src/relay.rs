@@ -166,6 +166,11 @@ impl RelayManager {
         self.signer.as_ref()
     }
 
+    /// Get a cloneable handle to the signer.
+    pub fn arc_signer(&self) -> &Arc<dyn NomenSigner> {
+        &self.signer
+    }
+
     /// Get the public key from the signer.
     pub fn public_key(&self) -> PublicKey {
         self.signer.public_key()
