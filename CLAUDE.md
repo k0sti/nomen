@@ -13,17 +13,17 @@ Read these docs before implementing:
 
 Working documents (research, specs) are in Obsidian: `~/Obsidian/vault/Projects/Nomen/`
 
-## Module Map (~9,400 LOC Rust, 21 files)
+## Module Map (~9,500 LOC Rust, 21 files)
 
 ```
 src/
-├── main.rs           CLI entry, clap commands (1911 LOC)
+├── main.rs           CLI entry, clap commands (1914 LOC)
 ├── lib.rs            Nomen struct, public API (284 LOC)
 ├── db.rs             SurrealDB schema, queries, CRUD (1269 LOC)
-├── consolidate.rs    Raw messages → named memories, merge, dedup (1130 LOC)
+├── consolidate.rs    Raw messages → named memories, merge, dedup, relay publish (1196 LOC)
 ├── mcp.rs            MCP server (JSON-RPC stdio, 9+ tools) (793 LOC)
 ├── contextvm.rs      Nostr-native request/response via NIP-44 (599 LOC)
-├── http.rs           HTTP server + web UI serving (596 LOC)
+├── http.rs           HTTP server + web UI serving (622 LOC)
 ├── groups.rs         Group management (hierarchical, NIP-29 mapping) (373 LOC)
 ├── search.rs         Hybrid vector + BM25 search + scoring (342 LOC)
 ├── config.rs         TOML config (~/.config/nomen/config.toml) (292 LOC)
