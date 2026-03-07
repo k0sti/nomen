@@ -1214,6 +1214,9 @@ async fn cmd_consolidate(
             report.messages_processed,
             report.memories_created
         );
+        if report.events_published > 0 {
+            println!("  Published {} memories to relay (kind 31234)", report.events_published);
+        }
         if report.events_deleted > 0 {
             println!("  Deleted {} ephemeral events from relay (NIP-09)", report.events_deleted);
         }

@@ -374,6 +374,8 @@ async fn api_consolidate(
     Ok(Json(json!({
         "messages_processed": report.messages_processed,
         "memories_created": report.memories_created,
+        "events_published": report.events_published,
+        "events_deleted": report.events_deleted,
         "channels": report.channels,
     })))
 }
