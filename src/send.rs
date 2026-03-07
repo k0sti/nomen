@@ -110,7 +110,7 @@ pub async fn send_message(
             let pk = PublicKey::from_bech32(npub)
                 .map(|pk| pk.to_hex())
                 .unwrap_or_else(|_| npub.clone());
-            ("private".to_string(), pk)
+            ("personal".to_string(), pk)
         }
         SendTarget::Group(group_id) => ("group".to_string(), group_id.clone()),
         SendTarget::Public => ("public".to_string(), String::new()),

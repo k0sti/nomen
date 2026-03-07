@@ -6,12 +6,14 @@ use crate::groups::GroupStore;
 /// Rules:
 /// - public: everyone can access
 /// - group: requester must be a member of the memory's scope group
-/// - private: only the author (source) can access
+/// - personal: only the author (source) can access (user-auditable knowledge)
+/// - internal: only the author (source) can access (agent-only reasoning)
+/// - private: legacy alias for personal, treated identically
 pub fn can_access(memory: &MemoryRecord, requester_npub: &str, group_store: &GroupStore) -> bool {
     match memory.tier.as_str() {
         "public" => true,
         "group" => group_store.is_member(&memory.scope, requester_npub),
-        "private" => memory.source == requester_npub,
+        "personal" | "internal" | "private" => memory.source == requester_npub,
         _ => false,
     }
 }
@@ -43,7 +45,9 @@ pub fn build_query_filters(
     let tiers = vec![
         "public".to_string(),
         "group".to_string(),
-        "private".to_string(),
+        "personal".to_string(),
+        "internal".to_string(),
+        "private".to_string(), // legacy alias for personal
     ];
     let scopes = build_scope_filter(requester_npub, group_store);
     (tiers, scopes)
@@ -82,7 +86,23 @@ mod tests {
     }
 
     #[test]
-    fn test_can_access_private() {
+    fn test_can_access_personal() {
+        let store = GroupStore::from_config(&[]);
+        let mem = make_memory("personal", "npub1author", "npub1author");
+        assert!(can_access(&mem, "npub1author", &store));
+        assert!(!can_access(&mem, "npub1other", &store));
+    }
+
+    #[test]
+    fn test_can_access_internal() {
+        let store = GroupStore::from_config(&[]);
+        let mem = make_memory("internal", "npub1author", "npub1author");
+        assert!(can_access(&mem, "npub1author", &store));
+        assert!(!can_access(&mem, "npub1other", &store));
+    }
+
+    #[test]
+    fn test_can_access_private_legacy() {
         let store = GroupStore::from_config(&[]);
         let mem = make_memory("private", "npub1author", "npub1author");
         assert!(can_access(&mem, "npub1author", &store));

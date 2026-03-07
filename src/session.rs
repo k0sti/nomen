@@ -21,7 +21,7 @@ use crate::groups::GroupStore;
 pub struct ResolvedSession {
     /// Original session ID string.
     pub session_id: String,
-    /// Visibility tier: "public", "group", or "private".
+    /// Visibility tier: "public", "group", "personal", or "internal".
     pub tier: String,
     /// Scope: empty for public, group_id for group, npub hex for private.
     pub scope: String,
@@ -80,7 +80,7 @@ pub fn resolve_session(
             .unwrap_or_else(|_| session_id.to_string());
         return Ok(ResolvedSession {
             session_id: session_id.to_string(),
-            tier: "private".to_string(),
+            tier: "personal".to_string(),
             scope: hex.clone(),
             channel: default_channel.to_string(),
             group_id: String::new(),
@@ -104,7 +104,7 @@ pub fn resolve_session(
                 .unwrap_or_else(|_| target.to_string());
             return Ok(ResolvedSession {
                 session_id: session_id.to_string(),
-                tier: "private".to_string(),
+                tier: "personal".to_string(),
                 scope: hex.clone(),
                 channel: prefix.to_string(),
                 group_id: String::new(),

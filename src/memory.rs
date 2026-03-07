@@ -40,10 +40,30 @@ pub fn parse_d_tag(d_tag: &str) -> String {
 }
 
 /// Parse tier from event tags. Checks both new ("tier") and legacy ("snow:tier") tag names.
+/// Also extracts visibility from the v0.2 d-tag format if no tier tag is present.
+/// Normalizes "private" → "personal" (canonical 4-tier model).
 pub fn parse_tier(tags: &Tags) -> String {
-    let tier_val = get_tag_value(tags, "tier")
-        .or_else(|| get_tag_value(tags, "snow:tier"))
-        .unwrap_or_else(|| "unknown".to_string());
+    // Try tier tag first (legacy/compat)
+    let tier_from_tag = get_tag_value(tags, "tier")
+        .or_else(|| get_tag_value(tags, "snow:tier"));
+
+    // Try extracting from v0.2 d-tag format: {visibility}:{context}:{topic}
+    let tier_val = tier_from_tag.unwrap_or_else(|| {
+        if let Some(d) = get_tag_value(tags, "d") {
+            if let Some(vis) = d.split(':').next() {
+                match vis {
+                    "public" | "group" | "personal" | "internal" | "circle" => return vis.to_string(),
+                    "private" => return "personal".to_string(),
+                    _ => {}
+                }
+            }
+        }
+        "unknown".to_string()
+    });
+
+    // Normalize legacy "private" → "personal"
+    let tier_val = if tier_val == "private" { "personal".to_string() } else { tier_val };
+
     if tier_val == "group" {
         if let Some(h) = get_tag_value(tags, "h") {
             return format!("group:{h}");
@@ -52,10 +72,13 @@ pub fn parse_tier(tags: &Tags) -> String {
     tier_val
 }
 
-/// Extract the base tier (public/group/private) without scope suffix
+/// Extract the base tier (public/group/personal/internal) without scope suffix.
+/// Normalizes legacy "private" to "personal".
 pub fn base_tier(tier: &str) -> &str {
     if tier.starts_with("group") {
         "group"
+    } else if tier == "private" {
+        "personal"
     } else {
         tier
     }
@@ -114,7 +137,7 @@ pub fn parse_event(event: &Event, keys: &Keys) -> ParsedMemory {
     let model = get_tag_compat(tags, "model").unwrap_or_else(|| "unknown".to_string());
     let source = get_tag_compat(tags, "source").unwrap_or_default();
 
-    let content_str = if tier == "private" {
+    let content_str = if tier == "personal" || tier == "internal" || tier == "private" {
         match try_decrypt_content(event, keys) {
             Some(decrypted) => decrypted,
             None => event.content.to_string(),

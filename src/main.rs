@@ -622,8 +622,8 @@ async fn cmd_store(
     })
     .to_string();
 
-    // Encrypt if private tier
-    let final_content = if tier == "private" {
+    // Encrypt if personal/internal tier (or legacy "private")
+    let final_content = if tier == "personal" || tier == "internal" || tier == "private" {
         mgr.encrypt_private(&content_str)?
     } else {
         content_str.clone()
@@ -847,7 +847,7 @@ async fn cmd_search(
         let tier_display = format!("[{}]", result.tier);
         let tier_colored = match result.tier.as_str() {
             "public" => tier_display.green(),
-            "private" => tier_display.red(),
+            "personal" | "internal" | "private" => tier_display.red(),
             _ => tier_display.yellow(),
         };
 

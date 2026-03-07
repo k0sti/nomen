@@ -142,11 +142,11 @@ fn sanitize_topic_component(s: &str) -> String {
 
 /// Derive the memory tier from a group of source messages.
 ///
-/// - DM messages (source "nostr" with sender npub, no group channel) → "private"
+/// - DM messages (source "nostr" with sender npub, no group channel) → "personal"
 /// - Group messages (channel matches a group pattern) → "group"
 /// - Public/CLI/other → "public"
 fn derive_tier_from_messages(messages: &[RawMessageRecord]) -> String {
-    // Check sources — if any message is from a DM-like source, treat as private
+    // Check sources — if any message is from a DM-like source, treat as personal
     let has_dm = messages.iter().any(|m| {
         // nostr DMs have source "nostr" and either empty channel or "dm" channel
         (m.source == "nostr" && (m.channel.is_empty() || m.channel == "dm"))
@@ -163,7 +163,7 @@ fn derive_tier_from_messages(messages: &[RawMessageRecord]) -> String {
     });
 
     if has_dm {
-        "private".to_string()
+        "personal".to_string()
     } else if has_group {
         "group".to_string()
     } else {
@@ -171,22 +171,22 @@ fn derive_tier_from_messages(messages: &[RawMessageRecord]) -> String {
     }
 }
 
-/// Enforce cross-group consolidation guard: private sources must never produce
-/// group or public tier memories. Returns the tier, potentially downgraded.
+/// Enforce cross-group consolidation guard: personal/internal sources must never
+/// produce group or public tier memories. Returns the tier, potentially downgraded.
 fn enforce_tier_guard(derived_tier: &str, source_tier: &str) -> String {
     match source_tier {
-        "private" => {
-            // Private sources can only produce private memories
-            if derived_tier != "private" {
+        "personal" | "internal" | "private" => {
+            // Personal/internal sources can only produce personal memories
+            if derived_tier != "personal" && derived_tier != "internal" && derived_tier != "private" {
                 warn!(
                     derived = derived_tier,
-                    "Cross-group guard: downgrading tier to private (source is private)"
+                    "Cross-group guard: downgrading tier to personal (source is {source_tier})"
                 );
             }
-            "private".to_string()
+            "personal".to_string()
         }
         "group" => {
-            // Group sources can produce group or private, but not public
+            // Group sources can produce group or personal, but not public
             if derived_tier == "public" {
                 warn!("Cross-group guard: downgrading tier to group (source is group)");
                 "group".to_string()
@@ -617,7 +617,7 @@ pub async fn consolidate(
             m.source == "dm" || m.source == "telegram_dm"
                 || (m.source == "nostr" && (m.channel.is_empty() || m.channel == "dm"))
         }) {
-            "private"
+            "personal"
         } else if group_msgs.iter().any(|m| {
             !m.channel.is_empty() && m.channel != "dm" && m.channel != "general"
         }) {
