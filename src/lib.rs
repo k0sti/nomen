@@ -235,12 +235,24 @@ impl Nomen {
     ///
     /// This is for use by MCP, Context-VM, and other code that doesn't have
     /// a full Nomen instance but does have db + embedder references.
+    /// `author_pubkey_hex` is used for personal/internal tier d-tag scoping;
+    /// pass empty string if no signer is available.
     pub async fn store_direct(
         db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
         embedder: &dyn Embedder,
         mem: NewMemory,
     ) -> Result<String> {
-        let d_tag = mem.topic.clone();
+        Self::store_direct_with_author(db, embedder, mem, "").await
+    }
+
+    /// Store a new memory with explicit author pubkey for d-tag construction.
+    pub async fn store_direct_with_author(
+        db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
+        embedder: &dyn Embedder,
+        mem: NewMemory,
+        author_pubkey_hex: &str,
+    ) -> Result<String> {
+        let d_tag = memory::build_dtag_from_tier(&mem.tier, author_pubkey_hex, &mem.topic);
         let source = mem.source.as_deref().unwrap_or("api");
         let model = mem.model.as_deref().unwrap_or("nomen/api");
         let detail_text = if mem.detail.is_empty() { &mem.summary } else { &mem.detail };
@@ -341,9 +353,19 @@ impl Nomen {
         db::count_memories_by_type(&self.db).await
     }
 
-    /// Get a memory by its d_tag (topic).
-    pub async fn get_by_topic(&self, topic: &str) -> Result<Option<db::MemoryRecord>> {
-        db::get_memory_by_dtag(&self.db, topic).await
+    /// Get a memory by its d_tag.
+    pub async fn get_by_topic(&self, d_tag: &str) -> Result<Option<db::MemoryRecord>> {
+        db::get_memory_by_dtag(&self.db, d_tag).await
+    }
+
+    /// Get a memory by raw topic string (queries the `topic` field, not `d_tag`).
+    pub async fn get_by_raw_topic(&self, topic: &str) -> Result<Option<db::MemoryRecord>> {
+        db::get_memory_by_topic(&self.db, topic).await
+    }
+
+    /// Delete a memory by raw topic string (queries the `topic` field, not `d_tag`).
+    pub async fn delete_by_topic(&self, topic: &str) -> Result<()> {
+        db::delete_memory_by_topic(&self.db, topic).await
     }
 
     /// Send a message via relay.

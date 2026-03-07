@@ -562,6 +562,26 @@ pub async fn get_memory_by_dtag(db: &Surreal<Db>, d_tag: &str) -> Result<Option<
     Ok(results.pop())
 }
 
+/// Get a single memory by topic field (raw topic, not d-tag).
+pub async fn get_memory_by_topic(db: &Surreal<Db>, topic: &str) -> Result<Option<MemoryRecord>> {
+    let mut results: Vec<MemoryRecord> = db
+        .query("SELECT * FROM memory WHERE topic = $topic LIMIT 1")
+        .bind(("topic", topic.to_string()))
+        .await?
+        .check()?
+        .take(0)?;
+    Ok(results.pop())
+}
+
+/// Delete memory by topic field (raw topic, not d-tag).
+pub async fn delete_memory_by_topic(db: &Surreal<Db>, topic: &str) -> Result<()> {
+    db.query("DELETE FROM memory WHERE topic = $topic")
+        .bind(("topic", topic.to_string()))
+        .await?
+        .check()?;
+    Ok(())
+}
+
 /// Delete memory by d-tag.
 pub async fn delete_memory_by_dtag(db: &Surreal<Db>, d_tag: &str) -> Result<()> {
     db.query("DELETE FROM memory WHERE d_tag = $d_tag")
@@ -581,7 +601,19 @@ pub async fn delete_memory_by_nostr_id(db: &Surreal<Db>, nostr_id: &str) -> Resu
 }
 
 /// Extract scope from d-tag.
+///
+/// Supports both v0.2 (`{visibility}:{context}:{topic}`) and legacy v0.1 formats.
+/// Returns the context segment as scope (e.g., pubkey hex for personal, group id for group).
 fn extract_scope(d_tag: &str) -> String {
+    // v0.2 format: {visibility}:{context}:{topic}
+    if crate::memory::is_v2_dtag(d_tag) {
+        let mut parts = d_tag.splitn(3, ':');
+        let _visibility = parts.next();
+        let context = parts.next().unwrap_or("");
+        return context.to_string();
+    }
+
+    // v0.1 legacy formats
     if d_tag.starts_with("snowclaw:memory:npub:") {
         d_tag.strip_prefix("snowclaw:memory:npub:").unwrap_or("").to_string()
     } else if d_tag.starts_with("snowclaw:memory:group:") {
