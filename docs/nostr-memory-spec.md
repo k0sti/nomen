@@ -46,6 +46,11 @@ The d-tag encodes three dimensions separated by colons:
 | `personal` | hex pubkey | User-auditable knowledge, readable only by author and their agents |
 | `internal` | hex pubkey | Agent-only reasoning, readable only by the agent |
 
+> **Tier Resolution (v0.2):** The legacy `private` visibility is normalized to `personal` on read.
+> The five-tier model (`public`, `group`, `circle`, `personal`, `internal`) supersedes
+> the earlier three-tier (`public`, `group`, `private`) and four-tier proposals.
+> `circle` visibility encryption is TBD and not yet implemented.
+
 ### Examples
 
 ```

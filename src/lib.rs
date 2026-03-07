@@ -231,10 +231,12 @@ impl Nomen {
 
     /// Run the consolidation pipeline on unconsolidated messages.
     pub async fn consolidate(&self, opts: ConsolidateOptions) -> Result<ConsolidationReport> {
+        let author_pubkey = self.relay.as_ref().map(|r| r.keys().public_key().to_hex());
         let config = ConsolidationConfig {
             batch_size: opts.batch_size,
             min_messages: opts.min_messages,
             llm_provider: opts.llm_provider.unwrap_or_else(|| Box::new(NoopLlmProvider)),
+            author_pubkey,
             ..Default::default()
         };
         consolidate::consolidate(&self.db, self.embedder.as_ref(), &config, self.relay.as_ref()).await
