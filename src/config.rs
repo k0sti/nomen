@@ -289,4 +289,14 @@ impl Config {
             emb.batch_size,
         )
     }
+
+    /// Build a signer from the first nsec in config.
+    ///
+    /// Returns `None` if no nsec is configured (library callers provide their own signer).
+    pub fn build_signer(&self) -> Option<std::sync::Arc<dyn crate::signer::NomenSigner>> {
+        let nsecs = self.all_nsecs();
+        let nsec = nsecs.first()?;
+        let keys = nostr_sdk::Keys::parse(nsec).ok()?;
+        Some(std::sync::Arc::new(crate::signer::KeysSigner::new(keys)))
+    }
 }

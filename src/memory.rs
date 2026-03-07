@@ -1,6 +1,7 @@
 use nostr_sdk::prelude::*;
-use nostr_sdk::prelude::nip44;
 use serde::Deserialize;
+
+use crate::signer::NomenSigner;
 
 #[derive(Deserialize)]
 pub struct MemoryContent {
@@ -163,23 +164,25 @@ fn get_tag_compat(tags: &Tags, name: &str) -> Option<String> {
         .or_else(|| get_tag_value(tags, &format!("snow:{name}")))
 }
 
-/// Try to decrypt NIP-44 encrypted content using the provided keys.
-pub fn try_decrypt_content(event: &Event, keys: &Keys) -> Option<String> {
+/// Try to decrypt NIP-44 encrypted content using the provided signer.
+pub fn try_decrypt_content(event: &Event, signer: &dyn NomenSigner) -> Option<String> {
     let content = event.content.as_str();
 
     if content.starts_with('{') || content.starts_with('[') || content.starts_with('"') {
         return None;
     }
 
-    if let Ok(decrypted) = nip44::decrypt(keys.secret_key(), &keys.public_key(), content) {
+    // Try self-decrypt first
+    if let Ok(decrypted) = signer.decrypt(content) {
         return Some(decrypted);
     }
 
+    // Try decrypting with each p-tag recipient
     for tag in event.tags.iter() {
         let vec = tag.as_slice();
         if vec.len() >= 2 && vec[0] == "p" {
-            if let Ok(recipient_pk) = PublicKey::from_hex(&vec[1]) {
-                if let Ok(decrypted) = nip44::decrypt(keys.secret_key(), &recipient_pk, content) {
+            if let Ok(sender_pk) = PublicKey::from_hex(&vec[1]) {
+                if let Ok(decrypted) = signer.decrypt_from(content, &sender_pk) {
                     return Some(decrypted);
                 }
             }
@@ -189,7 +192,7 @@ pub fn try_decrypt_content(event: &Event, keys: &Keys) -> Option<String> {
     None
 }
 
-pub fn parse_event(event: &Event, keys: &Keys) -> ParsedMemory {
+pub fn parse_event(event: &Event, signer: &dyn NomenSigner) -> ParsedMemory {
     let tags = &event.tags;
     let d_tag_raw = get_tag_value(tags, "d").unwrap_or_default();
     let topic = parse_d_tag(&d_tag_raw);
@@ -201,7 +204,7 @@ pub fn parse_event(event: &Event, keys: &Keys) -> ParsedMemory {
     let source = get_tag_compat(tags, "source").unwrap_or_default();
 
     let content_str = if tier == "personal" || tier == "internal" || tier == "private" {
-        match try_decrypt_content(event, keys) {
+        match try_decrypt_content(event, signer) {
             Some(decrypted) => decrypted,
             None => event.content.to_string(),
         }

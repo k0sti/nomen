@@ -12,7 +12,6 @@ use std::sync::Mutex;
 
 use anyhow::Result;
 use nostr_sdk::prelude::*;
-use nostr_sdk::prelude::nip44;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use surrealdb::Surreal;
@@ -148,7 +147,7 @@ impl ContextVmServer {
 
     /// Subscribe to kind 21900 requests tagged with our npub and process them.
     pub async fn run(&self) -> Result<()> {
-        let our_pubkey = self.relay.keys().public_key();
+        let our_pubkey = self.relay.public_key();
         info!(
             pubkey = %our_pubkey.to_bech32().unwrap_or_default(),
             "Context-VM listening for requests"
@@ -224,12 +223,8 @@ impl ContextVmServer {
         );
 
         // Decrypt content (NIP-44, encrypted to our pubkey)
-        let plaintext = nip44::decrypt(
-            self.relay.keys().secret_key(),
-            &event.pubkey,
-            &event.content,
-        )
-        .map_err(|e| anyhow::anyhow!("NIP-44 decryption failed: {e}"))?;
+        let plaintext = self.relay.signer().decrypt_from(&event.content, &event.pubkey)
+            .map_err(|e| anyhow::anyhow!("NIP-44 decryption failed: {e}"))?;
 
         // Parse request
         let request: ContextVmRequest = serde_json::from_str(&plaintext)
@@ -268,13 +263,8 @@ impl ContextVmServer {
         let response_json = serde_json::to_string(response)?;
 
         // Encrypt to requester's pubkey
-        let encrypted = nip44::encrypt(
-            self.relay.keys().secret_key(),
-            &request_event.pubkey,
-            &response_json,
-            nip44::Version::default(),
-        )
-        .map_err(|e| anyhow::anyhow!("NIP-44 encryption failed: {e}"))?;
+        let encrypted = self.relay.signer().encrypt_to(&response_json, &request_event.pubkey)
+            .map_err(|e| anyhow::anyhow!("NIP-44 encryption failed: {e}"))?;
 
         let expiration = Timestamp::from(Timestamp::now().as_u64() + 60);
         let tags = vec![

@@ -17,6 +17,7 @@ pub mod relay;
 pub mod search;
 pub mod send;
 pub mod session;
+pub mod signer;
 
 #[cfg(feature = "migrate")]
 pub mod migrate;
@@ -180,7 +181,7 @@ impl Nomen {
         if let Some(ref relay) = self.relay {
             // NIP-44 encrypt for personal/internal tier
             let final_content = if base_tier == "personal" || base_tier == "internal" {
-                relay.encrypt_private(&content_str).unwrap_or(content_str)
+                relay.signer().encrypt(&content_str).unwrap_or(content_str)
             } else {
                 content_str
             };
@@ -264,7 +265,7 @@ impl Nomen {
 
     /// Run the consolidation pipeline on unconsolidated messages.
     pub async fn consolidate(&self, opts: ConsolidateOptions) -> Result<ConsolidationReport> {
-        let author_pubkey = self.relay.as_ref().map(|r| r.keys().public_key().to_hex());
+        let author_pubkey = self.relay.as_ref().map(|r| r.public_key().to_hex());
         let config = ConsolidationConfig {
             batch_size: opts.batch_size,
             min_messages: opts.min_messages,
@@ -304,6 +305,25 @@ impl Nomen {
         default_channel: &str,
     ) -> Result<session::ResolvedSession> {
         session::resolve_session(session_id, &self.groups, default_channel)
+    }
+
+    /// List memories, optionally filtered by tier.
+    pub async fn list_memories(
+        &self,
+        tier: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<db::MemoryRecord>> {
+        db::list_memories(&self.db, tier, limit).await
+    }
+
+    /// Count memories: returns (total, named, pending_raw_messages).
+    pub async fn count_memories(&self) -> Result<(usize, usize, usize)> {
+        db::count_memories_by_type(&self.db).await
+    }
+
+    /// Get a memory by its d_tag (topic).
+    pub async fn get_by_topic(&self, topic: &str) -> Result<Option<db::MemoryRecord>> {
+        db::get_memory_by_dtag(&self.db, topic).await
     }
 
     /// Send a message via relay.

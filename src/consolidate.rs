@@ -838,7 +838,7 @@ pub async fn consolidate(
                 // Encrypt if personal/internal tier
                 let base = crate::memory::base_tier(&tier);
                 let final_content = if base == "personal" || base == "internal" {
-                    match relay.encrypt_private(&content_str) {
+                    match relay.signer().encrypt(&content_str) {
                         Ok(encrypted) => encrypted,
                         Err(e) => {
                             warn!("Failed to encrypt private memory for relay: {e}");

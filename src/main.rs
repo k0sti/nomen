@@ -1,4 +1,5 @@
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
@@ -23,6 +24,7 @@ use nomen::memory::{get_tag_value, parse_event};
 use nomen::relay::{RelayConfig, RelayManager};
 use nomen::search;
 use nomen::send;
+use nomen::signer::{NomenSigner, KeysSigner};
 
 // ── CLI ─────────────────────────────────────────────────────────────
 
@@ -335,9 +337,13 @@ fn parse_keys(nsecs: &[String]) -> Result<(Vec<Keys>, Vec<PublicKey>)> {
     Ok((all_keys, pubkeys))
 }
 
+fn build_signer(keys: &Keys) -> Arc<dyn NomenSigner> {
+    Arc::new(KeysSigner::new(keys.clone()))
+}
+
 fn build_relay_manager(relay_url: &str, keys: &Keys) -> RelayManager {
     RelayManager::new(
-        keys.clone(),
+        build_signer(keys),
         RelayConfig {
             relay_url: relay_url.to_string(),
             ..Default::default()
@@ -500,6 +506,7 @@ async fn cmd_list(relay_url: &str, nsecs: &[String], named: bool, ephemeral: boo
     let (all_keys, pubkeys) = parse_keys(nsecs)?;
     debug!("Parsed {} keys", all_keys.len());
 
+    let signer = build_signer(&all_keys[0]);
     let mgr = build_relay_manager(relay_url, &all_keys[0]);
     mgr.connect().await?;
     let events = mgr.fetch_memories(&pubkeys).await?;
@@ -525,7 +532,7 @@ async fn cmd_list(relay_url: &str, nsecs: &[String], named: bool, ephemeral: boo
             }
         }
 
-        memories.push(parse_event(&event, &all_keys[0]));
+        memories.push(parse_event(&event, signer.as_ref()));
     }
 
     let npubs: Vec<String> = all_keys
@@ -558,6 +565,7 @@ async fn cmd_sync(relay_url: &str, nsecs: &[String]) -> Result<()> {
     let (all_keys, pubkeys) = parse_keys(nsecs)?;
 
     println!("Connecting to relay...");
+    let signer = build_signer(&all_keys[0]);
     let mgr = build_relay_manager(relay_url, &all_keys[0]);
     mgr.connect().await?;
     let events = mgr.fetch_memories(&pubkeys).await?;
@@ -576,7 +584,7 @@ async fn cmd_sync(relay_url: &str, nsecs: &[String]) -> Result<()> {
             continue;
         }
 
-        let parsed = parse_event(&event, &all_keys[0]);
+        let parsed = parse_event(&event, signer.as_ref());
         match db::store_memory(&db, &parsed, &event).await {
             Ok(true) => stored += 1,
             Ok(false) => skipped += 1,
@@ -624,14 +632,14 @@ async fn cmd_store(
 
     // Encrypt if personal/internal tier (or legacy "private")
     let final_content = if tier == "personal" || tier == "internal" || tier == "private" {
-        mgr.encrypt_private(&content_str)?
+        mgr.signer().encrypt(&content_str)?
     } else {
         content_str.clone()
     };
 
     // Build v0.2 d-tag: {visibility}:{context}:{topic}
     let context = if tier == "personal" || tier == "internal" || tier == "private" {
-        keys.public_key().to_hex()
+        mgr.public_key().to_hex()
     } else if let Some(group_id) = tier.strip_prefix("group:") {
         group_id.to_string()
     } else if tier == "group" {
@@ -703,7 +711,7 @@ async fn cmd_store(
         summary: summary.to_string(),
         created_at: Timestamp::now(),
         d_tag: d_tag.clone(),
-        source: keys.public_key().to_hex(),
+        source: mgr.public_key().to_hex(),
         content_raw: content_str,
         detail: if detail.is_empty() { summary.to_string() } else { detail.to_string() },
     };
@@ -1170,7 +1178,7 @@ async fn cmd_consolidate(
         .unwrap_or_else(|| Box::new(consolidate::NoopLlmProvider));
 
     let author_pubkey = relay_manager.as_ref()
-        .map(|mgr| mgr.keys().public_key().to_hex())
+        .map(|mgr| mgr.public_key().to_hex())
         .or_else(|| {
             config.all_nsecs().first()
                 .and_then(|nsec| nostr_sdk::SecretKey::from_bech32(nsec).ok())

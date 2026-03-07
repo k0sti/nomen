@@ -378,7 +378,7 @@ async fn api_consolidate(
         .map(|p| Box::new(p) as Box<dyn consolidate::LlmProvider>)
         .unwrap_or_else(|| Box::new(consolidate::NoopLlmProvider));
 
-    let author_pubkey = state.relay.as_ref().map(|r| r.keys().public_key().to_hex());
+    let author_pubkey = state.relay.as_ref().map(|r| r.public_key().to_hex());
     drop(cfg);
 
     let config = consolidate::ConsolidationConfig {

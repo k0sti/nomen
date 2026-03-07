@@ -551,6 +551,17 @@ pub async fn hybrid_search(
     Ok(results)
 }
 
+/// Get a single memory by d-tag (topic).
+pub async fn get_memory_by_dtag(db: &Surreal<Db>, d_tag: &str) -> Result<Option<MemoryRecord>> {
+    let mut results: Vec<MemoryRecord> = db
+        .query("SELECT * FROM memory WHERE d_tag = $d_tag LIMIT 1")
+        .bind(("d_tag", d_tag.to_string()))
+        .await?
+        .check()?
+        .take(0)?;
+    Ok(results.pop())
+}
+
 /// Delete memory by d-tag.
 pub async fn delete_memory_by_dtag(db: &Surreal<Db>, d_tag: &str) -> Result<()> {
     db.query("DELETE FROM memory WHERE d_tag = $d_tag")

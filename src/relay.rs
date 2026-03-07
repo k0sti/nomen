@@ -1,11 +1,12 @@
+use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{Context, Result};
 use nostr_sdk::prelude::*;
-use nostr_sdk::prelude::nip44;
 use tracing::{debug, info, warn};
 
 use crate::kinds::{MEMORY_KIND, LESSON_KIND, LEGACY_APP_DATA_KIND, LEGACY_LESSON_KIND};
+use crate::signer::NomenSigner;
 
 /// Result of publishing an event to relays.
 pub struct PublishResult {
@@ -51,20 +52,25 @@ impl Default for RelayConfig {
 /// Manages Nostr relay connections, event publishing, and NIP-44 encryption.
 pub struct RelayManager {
     client: Client,
-    keys: Keys,
+    signer: Arc<dyn NomenSigner>,
     config: RelayConfig,
 }
 
 impl RelayManager {
-    /// Create a new RelayManager (does not connect yet).
-    pub fn new(keys: Keys, config: RelayConfig) -> Self {
-        let client = ClientBuilder::new()
-            .signer(keys.clone())
-            .build();
+    /// Create a new RelayManager with a signer (does not connect yet).
+    pub fn new(signer: Arc<dyn NomenSigner>, config: RelayConfig) -> Self {
+        // Build Client with Keys if the signer has a secret key (needed for
+        // nostr-sdk's internal signing in send_event_builder, gift_wrap, etc.)
+        let client = if let Some(sk) = signer.secret_key() {
+            let keys = Keys::new(sk.clone());
+            ClientBuilder::new().signer(keys).build()
+        } else {
+            ClientBuilder::new().build()
+        };
 
         Self {
             client,
-            keys,
+            signer,
             config,
         }
     }
@@ -82,7 +88,7 @@ impl RelayManager {
         debug!("Connected to {}", self.config.relay_url);
         info!(
             relay = %self.config.relay_url,
-            pubkey = %self.keys.public_key().to_bech32().unwrap_or_default(),
+            pubkey = %self.signer.public_key().to_bech32().unwrap_or_default(),
             "Relay connection established (NIP-42 auth enabled)"
         );
 
@@ -155,32 +161,14 @@ impl RelayManager {
         })
     }
 
-    /// Encrypt content for private tier using NIP-44 (self-encrypt: encrypt to own pubkey).
-    pub fn encrypt_private(&self, content: &str) -> Result<String> {
-        let encrypted = nip44::encrypt(
-            self.keys.secret_key(),
-            &self.keys.public_key(),
-            content,
-            nip44::Version::default(),
-        )
-        .map_err(|e| anyhow::anyhow!("NIP-44 encryption failed: {e}"))?;
-        Ok(encrypted)
+    /// Get a reference to the signer.
+    pub fn signer(&self) -> &dyn NomenSigner {
+        self.signer.as_ref()
     }
 
-    /// Decrypt NIP-44 encrypted content (self-encrypted).
-    pub fn decrypt_private(&self, encrypted: &str) -> Result<String> {
-        let decrypted = nip44::decrypt(
-            self.keys.secret_key(),
-            &self.keys.public_key(),
-            encrypted,
-        )
-        .map_err(|e| anyhow::anyhow!("NIP-44 decryption failed: {e}"))?;
-        Ok(decrypted)
-    }
-
-    /// Get a reference to the keys.
-    pub fn keys(&self) -> &Keys {
-        &self.keys
+    /// Get the public key from the signer.
+    pub fn public_key(&self) -> PublicKey {
+        self.signer.public_key()
     }
 
     /// Get a reference to the underlying nostr-sdk Client.

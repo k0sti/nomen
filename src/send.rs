@@ -127,7 +127,7 @@ pub async fn send_message(
     let msg = RawMessage {
         source: "nomen".to_string(),
         source_id: Some(result.event_id.clone()),
-        sender: relay.keys().public_key().to_hex(),
+        sender: relay.public_key().to_hex(),
         channel: Some(channel.to_string()),
         content: opts.content,
         metadata: Some(metadata.to_string()),
@@ -156,7 +156,7 @@ async fn send_dm(relay: &RelayManager, npub: &str, content: &str) -> Result<Send
     // Build NIP-17 rumor (kind 14 = private direct message)
     let rumor = EventBuilder::new(Kind::Custom(14), content)
         .tags(vec![Tag::public_key(recipient_pk)])
-        .build(relay.keys().public_key());
+        .build(relay.public_key());
 
     // Gift wrap and send (NIP-59 + NIP-44 encryption handled by nostr-sdk)
     let output = relay
