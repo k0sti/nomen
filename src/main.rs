@@ -629,29 +629,38 @@ async fn cmd_store(
         content_str.clone()
     };
 
-    // Build d-tag (clean topic, no prefix for kind 31234)
-    let d_tag = topic.to_string();
+    // Build v0.2 d-tag: {visibility}:{context}:{topic}
+    let context = if tier == "personal" || tier == "internal" || tier == "private" {
+        keys.public_key().to_hex()
+    } else if let Some(group_id) = tier.strip_prefix("group:") {
+        group_id.to_string()
+    } else if tier == "group" {
+        String::new()
+    } else {
+        String::new() // public
+    };
+    let visibility = nomen::memory::base_tier(tier);
+    let d_tag = nomen::memory::build_v2_dtag(visibility, &context, topic);
 
     // Check for existing event with this d-tag (for supersedes)
+    // Also match old v0.1 d-tags that resolve to the same topic
     let previous_event_id = {
         let events = mgr.fetch_memories(&_pubkeys).await?;
         events.into_iter().find(|e| {
             let raw_dtag = get_tag_value(&e.tags, "d").unwrap_or_default();
-            let parsed_topic = nomen::memory::parse_d_tag(&raw_dtag);
-            parsed_topic == d_tag
+            // Match against new v0.2 d-tag or parsed v0.1 topic
+            raw_dtag == d_tag || nomen::memory::parse_d_tag(&raw_dtag) == topic
         }).map(|e| e.id)
     };
 
     // Build version based on previous event
     let version = if previous_event_id.is_some() { "2" } else { "1" };
 
-    // Build tags (clean names, no snow: prefix)
+    // Build tags (v0.2: no tier or source tags — visibility is in d-tag, source is event.pubkey)
     let mut tags = vec![
         Tag::custom(TagKind::Custom("d".into()), vec![d_tag.clone()]),
-        Tag::custom(TagKind::Custom("tier".into()), vec![tier.to_string()]),
         Tag::custom(TagKind::Custom("model".into()), vec!["human/manual".to_string()]),
         Tag::custom(TagKind::Custom("confidence".into()), vec![format!("{confidence:.2}")]),
-        Tag::custom(TagKind::Custom("source".into()), vec![keys.public_key().to_hex()]),
         Tag::custom(TagKind::Custom("version".into()), vec![version.to_string()]),
     ];
 
@@ -1160,6 +1169,13 @@ async fn cmd_consolidate(
         .map(|p| Box::new(p) as Box<dyn consolidate::LlmProvider>)
         .unwrap_or_else(|| Box::new(consolidate::NoopLlmProvider));
 
+    let author_pubkey = relay_manager.as_ref()
+        .map(|mgr| mgr.keys().public_key().to_hex())
+        .or_else(|| {
+            config.all_nsecs().first()
+                .and_then(|nsec| nostr_sdk::SecretKey::from_bech32(nsec).ok())
+                .map(|sk| nostr_sdk::Keys::new(sk).public_key().to_hex())
+        });
     let consolidation_config = consolidate::ConsolidationConfig {
         batch_size,
         min_messages,
@@ -1167,6 +1183,7 @@ async fn cmd_consolidate(
         dry_run,
         older_than,
         tier,
+        author_pubkey,
     };
 
     if dry_run {

@@ -453,6 +453,8 @@ pub struct ConsolidationConfig {
     pub older_than: Option<String>,
     /// Only consolidate messages matching this tier.
     pub tier: Option<String>,
+    /// Author's hex pubkey, used for v0.2 d-tag context on personal/internal memories.
+    pub author_pubkey: Option<String>,
 }
 
 impl Default for ConsolidationConfig {
@@ -464,6 +466,7 @@ impl Default for ConsolidationConfig {
             dry_run: false,
             older_than: None,
             tier: None,
+            author_pubkey: None,
         }
     }
 }
@@ -640,9 +643,11 @@ pub async fn consolidate(
                 continue;
             }
 
-            let d_tag = memory.topic.clone();
+            // Build v0.2 d-tag: {visibility}:{context}:{topic}
+            let author_hex = config.author_pubkey.as_deref().unwrap_or("");
+            let d_tag = crate::memory::build_dtag_from_tier(&tier, author_hex, &memory.topic);
 
-            // Check if a memory with this topic already exists (TODO #2: merge)
+            // Check if a memory with this d-tag already exists (for merge)
             let existing = get_existing_memory(db, &d_tag).await;
 
             let (final_summary, final_detail, final_confidence, final_importance, contradicts, is_merge) = if let Ok(Some(existing_mem)) = existing {
@@ -729,7 +734,7 @@ pub async fn consolidate(
             let detail_for_entities = final_detail.clone();
 
             let mem = crate::NewMemory {
-                topic: memory.topic.clone(),
+                topic: d_tag.clone(),
                 summary: final_summary,
                 detail: final_detail,
                 tier: tier.clone(),

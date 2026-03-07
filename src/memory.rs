@@ -25,7 +25,21 @@ pub struct ParsedMemory {
     pub detail: String,
 }
 
+/// Parse a d-tag into a clean topic string.
+///
+/// Supports both v0.1 and v0.2 d-tag formats:
+/// - v0.2: `{visibility}:{context}:{topic}` → returns topic as-is (full d-tag is the identifier)
+/// - v0.1: `snow:memory:{topic}` → extracts topic
+/// - v0.1: `snowclaw:memory:npub:{npub}` → `user:{npub_prefix}`
+/// - v0.1: `snowclaw:memory:group:{id}` → `group:{id}`
+/// - v0.1: `snowclaw:config:{key}` → `config:{key}`
 pub fn parse_d_tag(d_tag: &str) -> String {
+    // v0.2 format: starts with a known visibility prefix
+    if is_v2_dtag(d_tag) {
+        return d_tag.to_string();
+    }
+
+    // v0.1 formats
     if let Some(topic) = d_tag.strip_prefix("snow:memory:") {
         topic.to_string()
     } else if let Some(rest) = d_tag.strip_prefix("snowclaw:memory:npub:") {
@@ -36,6 +50,55 @@ pub fn parse_d_tag(d_tag: &str) -> String {
         format!("config:{}", d_tag.strip_prefix("snowclaw:config:").unwrap())
     } else {
         d_tag.to_string()
+    }
+}
+
+/// Check if a d-tag uses the v0.2 format: `{visibility}:{context}:{topic}`.
+pub fn is_v2_dtag(d_tag: &str) -> bool {
+    let prefix = d_tag.split(':').next().unwrap_or("");
+    matches!(prefix, "public" | "group" | "circle" | "personal" | "internal" | "private")
+}
+
+/// Extract the topic component from a v0.2 d-tag.
+/// For `public::rust-error-handling` returns `rust-error-handling`.
+/// For `group:techteam:deployment` returns `deployment`.
+pub fn v2_dtag_topic(d_tag: &str) -> Option<&str> {
+    if !is_v2_dtag(d_tag) {
+        return None;
+    }
+    // Find the second colon
+    let first_colon = d_tag.find(':')?;
+    let rest = &d_tag[first_colon + 1..];
+    let second_colon = rest.find(':')?;
+    Some(&rest[second_colon + 1..])
+}
+
+/// Build a v0.2 d-tag from visibility, context, and topic.
+pub fn build_v2_dtag(visibility: &str, context: &str, topic: &str) -> String {
+    format!("{visibility}:{context}:{topic}")
+}
+
+/// Build a v0.2 d-tag from tier string and author pubkey hex.
+///
+/// Derives visibility and context from the tier:
+/// - `"public"` → `public::topic`
+/// - `"group:techteam"` → `group:techteam:topic`
+/// - `"group"` → `group::topic`
+/// - `"personal"` / `"private"` → `personal:{pubkey_hex}:topic`
+/// - `"internal"` → `internal:{pubkey_hex}:topic`
+pub fn build_dtag_from_tier(tier: &str, author_pubkey_hex: &str, topic: &str) -> String {
+    if tier == "public" {
+        build_v2_dtag("public", "", topic)
+    } else if let Some(group_id) = tier.strip_prefix("group:") {
+        build_v2_dtag("group", group_id, topic)
+    } else if tier == "group" {
+        build_v2_dtag("group", "", topic)
+    } else if tier == "personal" || tier == "private" {
+        build_v2_dtag("personal", author_pubkey_hex, topic)
+    } else if tier == "internal" {
+        build_v2_dtag("internal", author_pubkey_hex, topic)
+    } else {
+        build_v2_dtag("public", "", topic)
     }
 }
 
