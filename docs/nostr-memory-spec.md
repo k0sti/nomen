@@ -43,7 +43,7 @@ The d-tag encodes three dimensions separated by colons:
 | `public` | empty | Readable by anyone on the relay |
 | `group` | group name/id | Readable by members of a named, managed group (NIP-29) |
 | `circle` | hash of sorted pubkeys | Readable by an ad-hoc set of participants (no relay group) |
-| `private` | npub | Readable only by the author and their agents |
+| `private` | hex pubkey | Readable only by the author and their agents |
 
 ### Examples
 
@@ -53,11 +53,12 @@ public::rust-error-handling
 group:techteam:deployment-process
 group:inner-circle:weekend-plans
 circle:a3f8b2c1e9d04712:shared-project-notes
-private:npub1zc6ts76lel22d38l9uk7zazsen8yd7dtuzcz5uv8d3vkast9hlks4725sl:ssh-config
+private:d29fe7c1af179eac10767f57ac021f520b44a8ded1fd37b1d1f79c9e545f96d7:ssh-config
 ```
 
 ### Design Rationale
 
+- **Hex pubkeys, not npub** — consistent with event.pubkey, `p` tags, and all Nostr internals; no bech32 decoding needed for matching
 - **No namespace prefix** — kind 31234 is the namespace; no `snow:memory:` prefix needed
 - **Visibility in d-tag** — eliminates the need for a separate tier tag; relay can filter by d-tag prefix
 - **Context in d-tag** — enables relay-side prefix queries like `group:techteam:*` without scanning tags
@@ -170,7 +171,7 @@ Content SHOULD be NIP-44 encrypted when the relay doesn't enforce access control
 ### Private
 
 ```json
-["d", "private:npub1zc6ts76lel22d38l9uk7zazsen8yd7dtuzcz5uv8d3vkast9hlks4725sl:ssh-config"]
+["d", "private:d29fe7c1af179eac10767f57ac021f520b44a8ded1fd37b1d1f79c9e545f96d7:ssh-config"]
 ```
 
 Single identity. Content SHOULD be NIP-44 encrypted (self-encrypt: author encrypts to their own pubkey). Only the author and agents holding the author's nsec can decrypt.
@@ -184,7 +185,7 @@ Each user that interacts with an agent gets an auto-created memory record.
 ### D-Tag
 
 ```
-private:npub1zc6ts76lel22d38l9uk7zazsen8yd7dtuzcz5uv8d3vkast9hlks4725sl:user-profile
+private:1634b87b5fcfd4a6c4ff2f2de17450ccce46f9abe0b02a71876c596ec165bfed:user-profile
 ```
 
 ### Content Schema
@@ -357,11 +358,13 @@ Client responds with a signed kind 22242 event:
 | Visibility | Encryption | Method |
 |------------|-----------|--------|
 | public | None | — |
-| group | Optional | NIP-44 with group shared key (TBD) |
-| circle | Recommended | NIP-44 per-participant (encrypt to each `p` tag pubkey) |
+| group | Optional | TBD — relay-enforced access may suffice |
+| circle | Recommended | TBD — envelope model (per-participant key wrapping) likely |
 | private | Recommended | NIP-44 self-encrypt (author encrypts to own pubkey) |
 
 Only the `content` field is encrypted. Tags remain plaintext for relay-side filtering.
+
+Circle and group encryption schemes are not yet finalized. Private self-encryption is straightforward: author uses NIP-44 `getConversationKey(own_privkey, own_pubkey)` to encrypt/decrypt.
 
 ---
 
@@ -387,7 +390,7 @@ Only the `content` field is encrypted. Tags remain plaintext for relay-side filt
 | `tier` tag | Removed — visibility in d-tag |
 | `source` tag | Removed — use `event.pubkey` |
 | `snow:tier`, `snow:confidence`, etc. | `confidence`, `version`, `model` (no prefix) |
-| `snowclaw:memory:npub:{npub}` | `private:{npub}:{topic}` |
+| `snowclaw:memory:npub:{npub}` | `private:{hex-pubkey}:{topic}` |
 | `snowclaw:memory:group:{id}` | `group:{id}:{topic}` |
 
 Events with old d-tag formats should be re-published with new format during migration. Old events can be deleted via NIP-09 after migration is confirmed.
