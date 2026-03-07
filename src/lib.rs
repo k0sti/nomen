@@ -133,11 +133,11 @@ impl Nomen {
         search::search(&self.db, self.embedder.as_ref(), &opts).await
     }
 
-    /// Store a new memory directly into SurrealDB (no relay publish).
+    /// Store a new memory into SurrealDB and optionally publish to relay.
     ///
-    /// Builds the ParsedMemory, stores in DB, and generates embeddings
-    /// automatically. This is the single source of truth for local memory
-    /// storage — MCP, Context-VM, and CLI all delegate here.
+    /// Builds the ParsedMemory, stores in DB, generates embeddings,
+    /// and publishes to relay if available. For personal/internal tier,
+    /// content is NIP-44 encrypted before relay publish.
     pub async fn store(&self, mem: NewMemory) -> Result<String> {
         let d_tag = mem.topic.clone();
         let source = mem.source.as_deref().unwrap_or("api");
@@ -147,9 +147,11 @@ impl Nomen {
             "summary": mem.summary,
             "detail": detail_text,
         });
+        let content_str = content.to_string();
+        let base_tier = memory::base_tier(&mem.tier);
 
         let parsed = memory::ParsedMemory {
-            tier: mem.tier,
+            tier: mem.tier.clone(),
             topic: mem.topic,
             version: "1".to_string(),
             confidence: format!("{:.2}", mem.confidence),
@@ -158,7 +160,7 @@ impl Nomen {
             created_at: nostr_sdk::Timestamp::now(),
             d_tag: d_tag.clone(),
             source: source.to_string(),
-            content_raw: content.to_string(),
+            content_raw: content_str.clone(),
             detail: detail_text.to_string(),
         };
 
@@ -171,6 +173,37 @@ impl Nomen {
                 if let Some(embedding) = embeddings.into_iter().next() {
                     let _ = db::store_embedding(&self.db, &d_tag, embedding).await;
                 }
+            }
+        }
+
+        // Publish to relay if available
+        if let Some(ref relay) = self.relay {
+            // NIP-44 encrypt for personal/internal tier
+            let final_content = if base_tier == "personal" || base_tier == "internal" {
+                relay.encrypt_private(&content_str).unwrap_or(content_str)
+            } else {
+                content_str
+            };
+
+            let mut tags = vec![
+                nostr_sdk::Tag::custom(nostr_sdk::TagKind::Custom("d".into()), vec![d_tag.clone()]),
+                nostr_sdk::Tag::custom(nostr_sdk::TagKind::Custom("model".into()), vec![model.to_string()]),
+                nostr_sdk::Tag::custom(nostr_sdk::TagKind::Custom("confidence".into()), vec![format!("{:.2}", mem.confidence)]),
+                nostr_sdk::Tag::custom(nostr_sdk::TagKind::Custom("version".into()), vec!["1".to_string()]),
+            ];
+
+            // Add h tag for group tier (NIP-29)
+            if let Some(group_id) = mem.tier.strip_prefix("group:") {
+                tags.push(nostr_sdk::Tag::custom(nostr_sdk::TagKind::Custom("h".into()), vec![group_id.to_string()]));
+            }
+
+            let builder = nostr_sdk::EventBuilder::new(
+                nostr_sdk::Kind::Custom(crate::kinds::MEMORY_KIND),
+                final_content,
+            ).tags(tags);
+
+            if let Err(e) = relay.publish(builder).await {
+                tracing::warn!("Failed to publish memory to relay: {e}");
             }
         }
 
