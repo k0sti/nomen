@@ -478,6 +478,7 @@ pub struct ConsolidationReport {
     pub memories_created: usize,
     pub memories_updated: usize,
     pub events_deleted: usize,
+    pub events_published: usize,
     pub channels: Vec<String>,
     pub groups: Vec<GroupSummary>,
     pub dry_run: bool,
@@ -822,6 +823,71 @@ pub async fn consolidate(
                             count = extracted_entities.len(),
                             "Extracted entities from consolidated memory"
                         );
+                    }
+                }
+            }
+
+            // Publish consolidated memory to relay as kind 31234
+            if let Some(relay) = relay {
+                let content_json = serde_json::json!({
+                    "summary": summary_for_entities,
+                    "detail": detail_for_entities,
+                });
+                let content_str = content_json.to_string();
+
+                // Encrypt if personal/internal tier
+                let base = crate::memory::base_tier(&tier);
+                let final_content = if base == "personal" || base == "internal" {
+                    match relay.encrypt_private(&content_str) {
+                        Ok(encrypted) => encrypted,
+                        Err(e) => {
+                            warn!("Failed to encrypt private memory for relay: {e}");
+                            content_str
+                        }
+                    }
+                } else {
+                    content_str
+                };
+
+                // Build tags (v0.2: no tier/source tags)
+                let version_str = if is_merge { "2" } else { "1" };
+                let mut event_tags = vec![
+                    Tag::custom(TagKind::Custom("d".into()), vec![d_tag.clone()]),
+                    Tag::custom(TagKind::Custom("model".into()), vec!["nomen/consolidation".to_string()]),
+                    Tag::custom(TagKind::Custom("confidence".into()), vec![format!("{:.2}", final_confidence)]),
+                    Tag::custom(TagKind::Custom("version".into()), vec![version_str.to_string()]),
+                    Tag::custom(TagKind::Custom("consolidated_from".into()), vec![consolidated_from_count.clone()]),
+                    Tag::custom(TagKind::Custom("consolidated_at".into()), vec![consolidated_at.clone()]),
+                ];
+
+                // Add topic tags from the LLM-derived topic
+                for part in memory.topic.split('/') {
+                    if !part.is_empty() {
+                        event_tags.push(Tag::custom(TagKind::Custom("t".into()), vec![part.to_string()]));
+                    }
+                }
+
+                // Add h tag for group-scoped memories (NIP-29)
+                if tier.starts_with("group:") {
+                    if let Some(group_id) = tier.strip_prefix("group:") {
+                        event_tags.push(Tag::custom(TagKind::Custom("h".into()), vec![group_id.to_string()]));
+                    }
+                }
+
+                let builder = EventBuilder::new(Kind::Custom(crate::kinds::MEMORY_KIND), final_content)
+                    .tags(event_tags);
+
+                match relay.publish(builder).await {
+                    Ok(result) => {
+                        debug!(
+                            event_id = %result.event_id,
+                            d_tag = %d_tag,
+                            "Published consolidated memory to relay"
+                        );
+                        report.events_published += 1;
+                    }
+                    Err(e) => {
+                        warn!(d_tag = %d_tag, "Failed to publish consolidated memory: {e}");
                     }
                 }
             }
