@@ -154,7 +154,7 @@ The consolidation pipeline (`consolidate.rs`) converts raw messages into named m
 7. Extract entities from consolidated content
 8. Mark raw messages as consolidated
 9. Publish NIP-09 deletion events for consumed ephemeral Nostr events
-10. Publish consolidated memories to relay
+10. Publish consolidated memories to relay as kind 31234 events (with NIP-44 encryption for personal/internal)
 
 ### HNSW Dimensions
 
