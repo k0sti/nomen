@@ -104,8 +104,10 @@ pub struct MemoriesQuery {
 
 #[derive(Deserialize)]
 pub struct ConsolidateRequest {
-    pub channel: Option<String>,
-    pub since: Option<String>,
+    pub older_than: Option<String>,
+    pub tier: Option<String>,
+    pub batch_size: Option<usize>,
+    pub dry_run: Option<bool>,
 }
 
 #[derive(Deserialize)]
@@ -366,16 +368,38 @@ async fn api_consolidation_status(
 
 async fn api_consolidate(
     State(state): State<SharedState>,
-    Json(_req): Json<ConsolidateRequest>,
+    Json(req): Json<ConsolidateRequest>,
 ) -> Result<Json<Value>, AppError> {
-    let config = consolidate::ConsolidationConfig::default();
+    // Build LLM provider from config
+    let cfg = state.config.read().await;
+    let llm_provider: Box<dyn consolidate::LlmProvider> = cfg
+        .consolidation_llm_config()
+        .and_then(|c| consolidate::OpenAiLlmProvider::from_config(&c))
+        .map(|p| Box::new(p) as Box<dyn consolidate::LlmProvider>)
+        .unwrap_or_else(|| Box::new(consolidate::NoopLlmProvider));
+
+    let author_pubkey = state.relay.as_ref().map(|r| r.keys().public_key().to_hex());
+    drop(cfg);
+
+    let config = consolidate::ConsolidationConfig {
+        batch_size: req.batch_size.unwrap_or(50),
+        dry_run: req.dry_run.unwrap_or(false),
+        older_than: req.older_than,
+        tier: req.tier,
+        llm_provider,
+        author_pubkey,
+        ..Default::default()
+    };
+
     let report = consolidate::consolidate(&state.db, state.embedder.as_ref(), &config, state.relay.as_ref()).await?;
 
     Ok(Json(json!({
         "messages_processed": report.messages_processed,
         "memories_created": report.memories_created,
+        "memories_updated": report.memories_updated,
         "events_published": report.events_published,
         "events_deleted": report.events_deleted,
+        "dry_run": report.dry_run,
         "channels": report.channels,
     })))
 }
