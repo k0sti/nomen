@@ -2,41 +2,42 @@
 
 ## Project
 
-**Nomen** is a Rust CLI and library for managing agent memory. Backed by Nostr events (NIP-78) for sync/persistence and SurrealDB (embedded) for local indexing, vector search, graph relationships, and full-text search.
+**Nomen** is a Rust CLI and library for managing agent memory. Backed by Nostr events (kind 31234) for sync/persistence and SurrealDB (embedded) for local indexing, vector search, graph relationships, and full-text search.
 
 ## Architecture
 
 Read these docs before implementing:
 - `docs/architecture.md` — Full system design, SurrealDB schema, data flow
-- `docs/nostr-memory-spec.md` — NIP-78 event format for memory
+- `docs/nostr-memory-spec.md` — NIP event format for memory (v0.2)
+- `docs/migration.md` — D-tag format migration (v0.1 → v0.2)
 
 Working documents (research, specs) are in Obsidian: `~/Obsidian/vault/Projects/Nomen/`
 
-## Module Map
+## Module Map (~9,400 LOC Rust, 21 files)
 
 ```
 src/
-├── main.rs           CLI entry, clap commands
-├── lib.rs            Nomen struct, public API (library crate)
-├── db.rs             SurrealDB schema, queries, CRUD
-├── search.rs         Hybrid vector + BM25 search
-├── relay.rs          Nostr relay sync (NIP-78, NIP-42)
-├── memory.rs         Memory parsing from Nostr events
-├── send.rs           Send messages (NIP-17 DM, NIP-29 group, kind 1)
-├── session.rs        Session ID resolution → tier/scope
-├── mcp.rs            MCP server (JSON-RPC stdio)
-├── http.rs           HTTP server + web UI serving
-├── contextvm.rs      Nostr-native request/response (NIP-44)
-├── ingest.rs         Raw message ingestion
-├── consolidate.rs    Raw messages → named memories (with NIP-09 cleanup)
-├── embed.rs          Embedding generation (OpenAI-compatible API)
-├── entities.rs       Entity extraction + graph edges
-├── groups.rs         Group management (hierarchical, NIP-29 mapping)
-├── config.rs         TOML config (~/.config/nomen/config.toml)
-├── access.rs         Access control (tier-based)
-├── display.rs        Formatted CLI output
-├── migrate.rs        SQLite → SurrealDB migration (feature-gated)
-└── snowclaw_adapter.rs  Snowclaw integration bridge (feature-gated)
+├── main.rs           CLI entry, clap commands (1911 LOC)
+├── lib.rs            Nomen struct, public API (284 LOC)
+├── db.rs             SurrealDB schema, queries, CRUD (1269 LOC)
+├── consolidate.rs    Raw messages → named memories, merge, dedup (1130 LOC)
+├── mcp.rs            MCP server (JSON-RPC stdio, 9+ tools) (793 LOC)
+├── contextvm.rs      Nostr-native request/response via NIP-44 (599 LOC)
+├── http.rs           HTTP server + web UI serving (596 LOC)
+├── groups.rs         Group management (hierarchical, NIP-29 mapping) (373 LOC)
+├── search.rs         Hybrid vector + BM25 search + scoring (342 LOC)
+├── config.rs         TOML config (~/.config/nomen/config.toml) (292 LOC)
+├── send.rs           Send messages (NIP-17 DM, NIP-29 group, kind 1) (249 LOC)
+├── memory.rs         Memory parsing, d-tag v0.1/v0.2 dual format (238 LOC)
+├── relay.rs          Nostr relay sync (NIP-42, NIP-44) (235 LOC)
+├── session.rs        Session ID resolution → tier/scope (232 LOC)
+├── entities.rs       Entity extraction + graph edges (212 LOC)
+├── embed.rs          Embedding generation (OpenAI-compatible API) (188 LOC)
+├── access.rs         Access control (4-tier model) (152 LOC)
+├── migrate.rs        SQLite → SurrealDB migration (feature-gated) (136 LOC)
+├── display.rs        Formatted CLI output (77 LOC)
+├── ingest.rs         Raw message ingestion (63 LOC)
+└── kinds.rs          Custom Nostr kind constants (19 LOC)
 ```
 
 ## CLI Commands
@@ -50,13 +51,15 @@ nomen sync
 nomen send <content> --to <recipient> [--channel nostr]
 nomen ingest <content> --source cli --sender local [--channel ...]
 nomen messages [--source ...] [--channel ...] [--sender ...] [--around <id>]
-nomen consolidate [--dry-run] [--older-than 30m] [--tier private] [--batch-size 50]
+nomen consolidate [--dry-run] [--older-than 30m] [--tier personal] [--batch-size 50]
 nomen entities [--kind person]
 nomen prune [--days 30]
 nomen embed [--limit 100]
 nomen group create/list/members/add/remove
 nomen serve [--stdio] [--http :3000] [--context-vm] [--static-dir ...]
 nomen config
+nomen init
+nomen doctor
 ```
 
 ## Config
@@ -99,12 +102,32 @@ relay = "wss://zooid.atlantislabs.space"
 
 ## Key Implementation Notes
 
-### Memory Event Parsing
+### Memory Tiers (4-tier model)
 
-The d-tag prefix is `snow:memory:` for collective memories. Other prefixes:
-- `snowclaw:memory:npub:` — per-user memories
-- `snowclaw:memory:group:` — per-group memories
-- `snowclaw:config:` — dynamic config (show separately or skip)
+- **public** — readable by anyone
+- **group** — readable by group members (NIP-29)
+- **personal** — user-auditable knowledge, encrypted (NIP-44 self-encrypt)
+- **internal** — agent-only reasoning, encrypted (NIP-44 self-encrypt)
+- Legacy `private` is accepted on read and normalized to `personal`
+
+### D-Tag Format (v0.2)
+
+D-tags encode `{visibility}:{context}:{topic}`:
+- `public::rust-error-handling`
+- `group:techteam:deployment-process`
+- `personal:{hex-pubkey}:ssh-config`
+- `internal:{hex-pubkey}:agent-reasoning`
+
+The parser (`memory.rs`) supports dual-format read (v0.1 prefixes + v0.2 format). New writes use v0.2 format only. See `docs/migration.md`.
+
+### Event Kinds
+
+Defined in `kinds.rs`:
+- `31234` — Named/consolidated memory (replaceable, d-tag addressable)
+- `31235` — Agent lesson (replaceable)
+- `1234` — Ephemeral memory (regular, future use)
+- `30078` — Legacy NIP-78 (read-only compat)
+- `4129` — Legacy lesson (read-only compat)
 
 ### Content JSON
 
@@ -125,10 +148,13 @@ The consolidation pipeline (`consolidate.rs`) converts raw messages into named m
 1. Query unconsolidated messages (with optional time/tier filters)
 2. Group by sender/channel + 4-hour time windows
 3. Send each group to LLM for summarization (or noop provider for testing)
-4. Store consolidated memories with `snow:consolidated_from` and `snow:consolidated_at` tags
-5. Create `consolidated_from` graph edges in SurrealDB
-6. Mark raw messages as consolidated
-7. Publish NIP-09 deletion events for consumed ephemeral Nostr events
+4. Merge into existing memories or create new ones (with near-duplicate detection)
+5. Store consolidated memories with provenance tags
+6. Create `consolidated_from` graph edges in SurrealDB
+7. Extract entities from consolidated content
+8. Mark raw messages as consolidated
+9. Publish NIP-09 deletion events for consumed ephemeral Nostr events
+10. Publish consolidated memories to relay
 
 ### HNSW Dimensions
 
