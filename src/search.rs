@@ -4,7 +4,7 @@ use surrealdb::Surreal;
 use surrealdb::engine::local::Db;
 use tracing::debug;
 
-use crate::db::{self, SearchDisplayResult};
+use crate::db;
 use crate::embed::Embedder;
 
 /// Minimum decay factor — memories never lose more than 80% of their confidence.
@@ -199,28 +199,99 @@ pub async fn search(
 }
 
 /// Text-only search fallback.
+///
+/// Uses the same composite scoring as hybrid search but without the vector
+/// component: `text_score × 0.3 + recency × 0.15 + importance × 0.15`.
+/// This ensures results have meaningful scores even when embeddings are disabled,
+/// preventing downstream filters from discarding all results.
 async fn text_only_search(
     db: &Surreal<Db>,
     opts: &SearchOptions,
 ) -> Result<Vec<SearchResult>> {
-    let display_results: Vec<SearchDisplayResult> =
-        db::search_memories(db, &opts.query, opts.tier.as_deref(), opts.allowed_scopes.as_deref(), opts.limit).await?;
+    let mut conditions = vec!["content @1@ $query".to_string()];
+    if opts.tier.is_some() {
+        conditions.push("tier = $tier".to_string());
+    }
+    if opts.allowed_scopes.is_some() {
+        conditions.push("(scope = \"\" OR array::any($scopes, |$s| scope = $s OR string::starts_with(scope, string::concat($s, \".\"))))".to_string());
+    }
+    if opts.min_confidence.is_some() {
+        conditions.push("(confidence IS NONE OR confidence >= $min_conf)".to_string());
+    }
+    let where_clause = conditions.join(" AND ");
 
-    let results = display_results
+    let sql = format!(
+        "SELECT *, search::score(1) AS text_score \
+         FROM memory WHERE {where_clause} \
+         ORDER BY text_score DESC LIMIT {}",
+        opts.limit
+    );
+
+    let mut q = db.query(&sql).bind(("query", opts.query.clone()));
+    if let Some(ref tier_val) = opts.tier {
+        q = q.bind(("tier", tier_val.clone()));
+    }
+    if let Some(ref scopes) = opts.allowed_scopes {
+        q = q.bind(("scopes", scopes.clone()));
+    }
+    if let Some(min_conf) = opts.min_confidence {
+        q = q.bind(("min_conf", min_conf));
+    }
+
+    let rows: Vec<db::HybridSearchRow> = q.await?.check()?.take(0)?;
+
+    let mut results: Vec<SearchResult> = rows
         .into_iter()
-        .map(|r| SearchResult {
-            tier: r.tier,
-            topic: r.topic,
-            confidence: r.confidence.clone(),
-            summary: r.summary.clone(),
-            detail: r.summary,
-            created_at: r.created_at,
-            score: 0.0,
-            match_type: MatchType::Text,
-            d_tag: None,
-            embedding: None,
+        .map(|r| {
+            let ts = chrono::DateTime::parse_from_rfc3339(&r.created_at)
+                .map(|dt| Timestamp::from(dt.timestamp() as u64))
+                .unwrap_or(Timestamp::from(0));
+
+            let text_score = r.text_score.unwrap_or(0.0);
+
+            // Apply confidence decay
+            let decay = confidence_decay_factor(
+                r.last_accessed.as_deref(),
+                &r.created_at,
+            );
+            let raw_confidence = r.confidence.unwrap_or(0.5);
+            let effective_confidence = raw_confidence * decay;
+
+            let recency = confidence_decay_factor(Some(&r.created_at), &r.created_at);
+            let importance_norm = r.importance.unwrap_or(5) as f64 / 10.0;
+
+            // Same composite as hybrid search, minus vector component:
+            // text×0.3 + recency×0.15 + importance×0.15
+            let decayed_score = text_score * 0.3
+                + recency * 0.15
+                + importance_norm * 0.15;
+
+            SearchResult {
+                tier: r.tier,
+                topic: r.topic,
+                confidence: format!("{effective_confidence:.2}"),
+                summary: r.summary.unwrap_or_else(|| r.content.clone()),
+                detail: r.content,
+                created_at: ts,
+                score: decayed_score,
+                match_type: MatchType::Text,
+                d_tag: r.d_tag,
+                embedding: None,
+            }
         })
         .collect();
+
+    // Re-sort by composite score
+    results.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+
+    // Update access tracking for text-only results too
+    let d_tags: Vec<String> = results
+        .iter()
+        .filter_map(|r| r.d_tag.clone())
+        .collect();
+    if !d_tags.is_empty() {
+        db::update_access_tracking_batch(db, &d_tags).await.ok();
+    }
 
     Ok(results)
 }
