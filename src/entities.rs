@@ -173,13 +173,61 @@ fn is_common_word(word: &str) -> bool {
         .to_lowercase();
     matches!(
         w.as_str(),
-        "the" | "a" | "an" | "and" | "or" | "but" | "in" | "on" | "at" | "to"
-            | "for" | "of" | "with" | "by" | "from" | "is" | "are" | "was"
-            | "were" | "be" | "been" | "being" | "have" | "has" | "had"
-            | "do" | "does" | "did" | "will" | "would" | "could" | "should"
-            | "may" | "might" | "shall" | "can" | "this" | "that" | "these"
-            | "those" | "it" | "its" | "i" | "we" | "they" | "he" | "she"
-            | "not" | "no" | "if" | "then" | "so" | "as" | "use" | "using"
+        "the"
+            | "a"
+            | "an"
+            | "and"
+            | "or"
+            | "but"
+            | "in"
+            | "on"
+            | "at"
+            | "to"
+            | "for"
+            | "of"
+            | "with"
+            | "by"
+            | "from"
+            | "is"
+            | "are"
+            | "was"
+            | "were"
+            | "be"
+            | "been"
+            | "being"
+            | "have"
+            | "has"
+            | "had"
+            | "do"
+            | "does"
+            | "did"
+            | "will"
+            | "would"
+            | "could"
+            | "should"
+            | "may"
+            | "might"
+            | "shall"
+            | "can"
+            | "this"
+            | "that"
+            | "these"
+            | "those"
+            | "it"
+            | "its"
+            | "i"
+            | "we"
+            | "they"
+            | "he"
+            | "she"
+            | "not"
+            | "no"
+            | "if"
+            | "then"
+            | "so"
+            | "as"
+            | "use"
+            | "using"
     )
 }
 
@@ -190,7 +238,9 @@ mod tests {
     #[test]
     fn test_extract_mentions() {
         let entities = extract_entities_heuristic("talked to @alice about the project", &[]);
-        assert!(entities.iter().any(|e| e.name == "alice" && e.kind == EntityKind::Person));
+        assert!(entities
+            .iter()
+            .any(|e| e.name == "alice" && e.kind == EntityKind::Person));
     }
 
     #[test]
@@ -201,7 +251,9 @@ mod tests {
             relevance: 1.0,
         }];
         let entities = extract_entities_heuristic("working on nomen today", &known);
-        assert!(entities.iter().any(|e| e.name == "Nomen" && e.kind == EntityKind::Project));
+        assert!(entities
+            .iter()
+            .any(|e| e.name == "Nomen" && e.kind == EntityKind::Project));
     }
 
     #[test]

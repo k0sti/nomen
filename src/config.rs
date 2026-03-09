@@ -90,10 +90,18 @@ pub struct MemoryConsolidationConfig {
     pub base_url: Option<String>,
 }
 
-fn default_true() -> bool { true }
-fn default_interval_hours() -> u32 { 4 }
-fn default_ephemeral_ttl_minutes() -> u32 { 60 }
-fn default_max_ephemeral_count() -> usize { 200 }
+fn default_true() -> bool {
+    true
+}
+fn default_interval_hours() -> u32 {
+    4
+}
+fn default_ephemeral_ttl_minutes() -> u32 {
+    60
+}
+fn default_max_ephemeral_count() -> usize {
+    200
+}
 
 #[derive(Deserialize, Serialize, Clone)]
 pub struct MessagingConfig {
@@ -252,9 +260,15 @@ impl Config {
             if let Some(ref mc) = mem.consolidation {
                 if mc.provider.is_some() || mc.model.is_some() || mc.api_key_env.is_some() {
                     return Some(ConsolidationLlmConfig {
-                        provider: mc.provider.clone().unwrap_or_else(default_consolidation_provider),
+                        provider: mc
+                            .provider
+                            .clone()
+                            .unwrap_or_else(default_consolidation_provider),
                         model: mc.model.clone().unwrap_or_else(default_consolidation_model),
-                        api_key_env: mc.api_key_env.clone().unwrap_or_else(default_consolidation_api_key_env),
+                        api_key_env: mc
+                            .api_key_env
+                            .clone()
+                            .unwrap_or_else(default_consolidation_api_key_env),
                         base_url: mc.base_url.clone(),
                     });
                 }
@@ -267,7 +281,10 @@ impl Config {
 
     /// Get the embedding dimensions from config (defaults to 1536).
     pub fn embedding_dimensions(&self) -> usize {
-        self.embedding.as_ref().map(|e| e.dimensions).unwrap_or(1536)
+        self.embedding
+            .as_ref()
+            .map(|e| e.dimensions)
+            .unwrap_or(1536)
     }
 
     /// Build an embedder from config. Returns NoopEmbedder if no config or no API key.

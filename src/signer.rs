@@ -5,8 +5,8 @@
 
 use anyhow::Result;
 use async_trait::async_trait;
-use nostr_sdk::prelude::*;
 use nostr_sdk::prelude::nip44;
+use nostr_sdk::prelude::*;
 
 /// Trait for signing Nostr events and performing NIP-44 encryption.
 ///
@@ -62,7 +62,9 @@ impl From<Keys> for KeysSigner {
 #[async_trait]
 impl NomenSigner for KeysSigner {
     async fn sign_event(&self, unsigned: UnsignedEvent) -> Result<Event> {
-        let event = unsigned.sign(&self.keys).await
+        let event = unsigned
+            .sign(&self.keys)
+            .await
             .map_err(|e| anyhow::anyhow!("Event signing failed: {e}"))?;
         Ok(event)
     }
@@ -83,12 +85,8 @@ impl NomenSigner for KeysSigner {
     }
 
     fn decrypt(&self, encrypted: &str) -> Result<String> {
-        let decrypted = nip44::decrypt(
-            self.keys.secret_key(),
-            &self.keys.public_key(),
-            encrypted,
-        )
-        .map_err(|e| anyhow::anyhow!("NIP-44 decryption failed: {e}"))?;
+        let decrypted = nip44::decrypt(self.keys.secret_key(), &self.keys.public_key(), encrypted)
+            .map_err(|e| anyhow::anyhow!("NIP-44 decryption failed: {e}"))?;
         Ok(decrypted)
     }
 
@@ -104,12 +102,8 @@ impl NomenSigner for KeysSigner {
     }
 
     fn decrypt_from(&self, encrypted: &str, sender: &PublicKey) -> Result<String> {
-        let decrypted = nip44::decrypt(
-            self.keys.secret_key(),
-            sender,
-            encrypted,
-        )
-        .map_err(|e| anyhow::anyhow!("NIP-44 decryption failed: {e}"))?;
+        let decrypted = nip44::decrypt(self.keys.secret_key(), sender, encrypted)
+            .map_err(|e| anyhow::anyhow!("NIP-44 decryption failed: {e}"))?;
         Ok(decrypted)
     }
 

@@ -3,12 +3,12 @@
 //! Supports multiple delivery channels (nostr, telegram, etc.).
 //! For nostr: npub→NIP-17 gift-wrapped DM, group→kind 9, public→kind 1.
 
-use anyhow::{Result, bail};
+use anyhow::{bail, Result};
 use nostr_sdk::prelude::*;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use surrealdb::Surreal;
 use surrealdb::engine::local::Db;
+use surrealdb::Surreal;
 use tracing::{debug, info};
 
 use crate::db;
@@ -98,9 +98,7 @@ pub async fn send_message(
 
     let result = match &opts.target {
         SendTarget::Npub(npub) => send_dm(relay, npub, &opts.content).await?,
-        SendTarget::Group(group_id) => {
-            send_group(relay, groups, group_id, &opts.content).await?
-        }
+        SendTarget::Group(group_id) => send_group(relay, groups, group_id, &opts.content).await?,
         SendTarget::Public => send_public(relay, &opts.content).await?,
     };
 
@@ -194,9 +192,10 @@ async fn send_group(
 
     debug!(group = %group_id, h_tag = %h_tag, "Sending NIP-29 group message");
 
-    let tags = vec![
-        Tag::custom(TagKind::Custom("h".into()), vec![h_tag.to_string()]),
-    ];
+    let tags = vec![Tag::custom(
+        TagKind::Custom("h".into()),
+        vec![h_tag.to_string()],
+    )];
 
     let builder = EventBuilder::new(Kind::Custom(9), content).tags(tags);
     let publish_result = relay.publish(builder).await?;

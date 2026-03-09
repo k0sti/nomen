@@ -1,10 +1,10 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use anyhow::{Context, Result, bail};
+use anyhow::{bail, Context, Result};
 use clap::{Parser, Subcommand};
 use colored::Colorize;
-use dialoguer::{Confirm, Input, Select, Password};
+use dialoguer::{Confirm, Input, Password, Select};
 use nostr_sdk::prelude::*;
 use tracing::debug;
 
@@ -18,13 +18,13 @@ use nomen::display::{display_memories, format_timestamp};
 use nomen::entities;
 use nomen::groups;
 use nomen::ingest;
+use nomen::kinds::{LEGACY_LESSON_KIND, LESSON_KIND, MEMORY_KIND};
 use nomen::mcp;
-use nomen::kinds::{MEMORY_KIND, LESSON_KIND, LEGACY_LESSON_KIND};
 use nomen::memory::{get_tag_value, parse_event};
 use nomen::relay::{RelayConfig, RelayManager};
 use nomen::search;
 use nomen::send;
-use nomen::signer::{NomenSigner, KeysSigner};
+use nomen::signer::{KeysSigner, NomenSigner};
 
 // ── CLI ─────────────────────────────────────────────────────────────
 
@@ -366,7 +366,10 @@ async fn main() -> Result<()> {
 
     // Handle init and doctor before resolve_config (config may not exist yet)
     match &cli.command {
-        Command::Init { force, non_interactive } => {
+        Command::Init {
+            force,
+            non_interactive,
+        } => {
             return cmd_init(*force, *non_interactive).await;
         }
         Command::Doctor => {
@@ -378,7 +381,11 @@ async fn main() -> Result<()> {
     let resolved = resolve_config(&cli)?;
 
     match cli.command {
-        Command::List { named, ephemeral, stats } => {
+        Command::List {
+            named,
+            ephemeral,
+            stats,
+        } => {
             if resolved.nsecs.is_empty() {
                 bail!(
                     "No nsec provided. Set it in {} or pass --nsec",
@@ -392,28 +399,79 @@ async fn main() -> Result<()> {
         }
         Command::Sync => {
             if resolved.nsecs.is_empty() {
-                bail!("No nsec provided. Set it in {} or pass --nsec", Config::path().display());
+                bail!(
+                    "No nsec provided. Set it in {} or pass --nsec",
+                    Config::path().display()
+                );
             }
             cmd_sync(&resolved.relay, &resolved.nsecs).await?;
         }
-        Command::Store { topic, summary, detail, tier, confidence } => {
+        Command::Store {
+            topic,
+            summary,
+            detail,
+            tier,
+            confidence,
+        } => {
             if resolved.nsecs.is_empty() {
-                bail!("No nsec provided. Set it in {} or pass --nsec", Config::path().display());
+                bail!(
+                    "No nsec provided. Set it in {} or pass --nsec",
+                    Config::path().display()
+                );
             }
-            cmd_store(&resolved.relay, &resolved.nsecs, &topic, &summary, &detail, &tier, confidence).await?;
+            cmd_store(
+                &resolved.relay,
+                &resolved.nsecs,
+                &topic,
+                &summary,
+                &detail,
+                &tier,
+                confidence,
+            )
+            .await?;
         }
-        Command::Delete { topic, id, ephemeral, older_than } => {
+        Command::Delete {
+            topic,
+            id,
+            ephemeral,
+            older_than,
+        } => {
             if ephemeral {
                 cmd_delete_ephemeral(older_than.as_deref()).await?;
             } else {
                 if resolved.nsecs.is_empty() {
-                    bail!("No nsec provided. Set it in {} or pass --nsec", Config::path().display());
+                    bail!(
+                        "No nsec provided. Set it in {} or pass --nsec",
+                        Config::path().display()
+                    );
                 }
-                cmd_delete(&resolved.relay, &resolved.nsecs, topic.as_deref(), id.as_deref()).await?;
+                cmd_delete(
+                    &resolved.relay,
+                    &resolved.nsecs,
+                    topic.as_deref(),
+                    id.as_deref(),
+                )
+                .await?;
             }
         }
-        Command::Search { ref query, ref tier, limit, vector_weight, text_weight, aggregate } => {
-            cmd_search(&cli, query, tier.as_deref(), limit, vector_weight, text_weight, aggregate).await?;
+        Command::Search {
+            ref query,
+            ref tier,
+            limit,
+            vector_weight,
+            text_weight,
+            aggregate,
+        } => {
+            cmd_search(
+                &cli,
+                query,
+                tier.as_deref(),
+                limit,
+                vector_weight,
+                text_weight,
+                aggregate,
+            )
+            .await?;
         }
         Command::Embed { limit } => {
             cmd_embed(&cli, limit).await?;
@@ -421,14 +479,50 @@ async fn main() -> Result<()> {
         Command::Group { action } => {
             cmd_group(action).await?;
         }
-        Command::Ingest { content, source, sender, channel } => {
+        Command::Ingest {
+            content,
+            source,
+            sender,
+            channel,
+        } => {
             cmd_ingest(&content, &source, &sender, channel.as_deref()).await?;
         }
-        Command::Messages { source, channel, sender, since, limit, around, context } => {
-            cmd_messages(source.as_deref(), channel.as_deref(), sender.as_deref(), since.as_deref(), limit, around.as_deref(), context).await?;
+        Command::Messages {
+            source,
+            channel,
+            sender,
+            since,
+            limit,
+            around,
+            context,
+        } => {
+            cmd_messages(
+                source.as_deref(),
+                channel.as_deref(),
+                sender.as_deref(),
+                since.as_deref(),
+                limit,
+                around.as_deref(),
+                context,
+            )
+            .await?;
         }
-        Command::Consolidate { min_messages, batch_size, dry_run, ref older_than, ref tier } => {
-            cmd_consolidate(&cli, min_messages, batch_size, dry_run, older_than.clone(), tier.clone()).await?;
+        Command::Consolidate {
+            min_messages,
+            batch_size,
+            dry_run,
+            ref older_than,
+            ref tier,
+        } => {
+            cmd_consolidate(
+                &cli,
+                min_messages,
+                batch_size,
+                dry_run,
+                older_than.clone(),
+                tier.clone(),
+            )
+            .await?;
         }
         Command::Entities { kind } => {
             cmd_entities(kind.as_deref()).await?;
@@ -436,14 +530,45 @@ async fn main() -> Result<()> {
         Command::Prune { days, dry_run } => {
             cmd_prune(days, dry_run).await?;
         }
-        Command::Send { ref content, ref to, ref channel } => {
+        Command::Send {
+            ref content,
+            ref to,
+            ref channel,
+        } => {
             if resolved.nsecs.is_empty() {
-                bail!("No nsec provided. Set it in {} or pass --nsec", Config::path().display());
+                bail!(
+                    "No nsec provided. Set it in {} or pass --nsec",
+                    Config::path().display()
+                );
             }
-            cmd_send(&resolved.relay, &resolved.nsecs, &to, &content, channel.as_deref(), &cli).await?;
+            cmd_send(
+                &resolved.relay,
+                &resolved.nsecs,
+                &to,
+                &content,
+                channel.as_deref(),
+                &cli,
+            )
+            .await?;
         }
-        Command::Serve { stdio, http: ref http_addr, ref static_dir, ref landing_dir, context_vm, ref allowed_npubs } => {
-            cmd_serve(&cli, stdio, http_addr.clone(), static_dir.clone(), landing_dir.clone(), context_vm, allowed_npubs.clone()).await?;
+        Command::Serve {
+            stdio,
+            http: ref http_addr,
+            ref static_dir,
+            ref landing_dir,
+            context_vm,
+            ref allowed_npubs,
+        } => {
+            cmd_serve(
+                &cli,
+                stdio,
+                http_addr.clone(),
+                static_dir.clone(),
+                landing_dir.clone(),
+                context_vm,
+                allowed_npubs.clone(),
+            )
+            .await?;
         }
         Command::Init { .. } | Command::Doctor => unreachable!("handled above"),
     }
@@ -453,18 +578,20 @@ async fn main() -> Result<()> {
 
 // ── Command: list ───────────────────────────────────────────────────
 
-async fn cmd_list(relay_url: &str, nsecs: &[String], named: bool, ephemeral: bool, stats: bool) -> Result<()> {
+async fn cmd_list(
+    relay_url: &str,
+    nsecs: &[String],
+    named: bool,
+    ephemeral: bool,
+    stats: bool,
+) -> Result<()> {
     // If --stats or --ephemeral, use local DB
     if stats || ephemeral {
         let db_handle = db::init_db().await?;
 
         if stats {
             let (total, _named_count, pending) = db::count_memories_by_type(&db_handle).await?;
-            println!(
-                "\n{}\n{}",
-                "Memory Statistics".bold(),
-                "═".repeat(40)
-            );
+            println!("\n{}\n{}", "Memory Statistics".bold(), "═".repeat(40));
             println!("  Named memories: {}", total);
             println!("  Ephemeral (pending): {}", pending.to_string().yellow());
             println!();
@@ -494,7 +621,11 @@ async fn cmd_list(relay_url: &str, nsecs: &[String], named: bool, ephemeral: boo
                     msg.source,
                     msg.sender.bold(),
                     channel_display,
-                    if msg.content.len() > 80 { format!("{}...", &msg.content[..80]) } else { msg.content.clone() }
+                    if msg.content.len() > 80 {
+                        format!("{}...", &msg.content[..80])
+                    } else {
+                        msg.content.clone()
+                    }
                 );
                 println!("    {}", msg.created_at.dimmed());
             }
@@ -515,7 +646,8 @@ async fn cmd_list(relay_url: &str, nsecs: &[String], named: bool, ephemeral: boo
     let mut lesson_count = 0usize;
 
     for event in events.into_iter() {
-        if event.kind == Kind::Custom(LESSON_KIND) || event.kind == Kind::Custom(LEGACY_LESSON_KIND) {
+        if event.kind == Kind::Custom(LESSON_KIND) || event.kind == Kind::Custom(LEGACY_LESSON_KIND)
+        {
             lesson_count += 1;
             continue;
         }
@@ -553,7 +685,11 @@ fn cmd_config(relay: &str, nsecs: &[String]) {
     println!(
         "{}: {}",
         "Exists".bold(),
-        if path.exists() { "yes".green() } else { "no".red() }
+        if path.exists() {
+            "yes".green()
+        } else {
+            "no".red()
+        }
     );
     println!("{}: {}", "Relay".bold(), relay);
     println!("{}: {}", "Keys configured".bold(), nsecs.len());
@@ -576,7 +712,8 @@ async fn cmd_sync(relay_url: &str, nsecs: &[String]) -> Result<()> {
     let mut skipped = 0usize;
 
     for event in events.into_iter() {
-        if event.kind == Kind::Custom(LESSON_KIND) || event.kind == Kind::Custom(LEGACY_LESSON_KIND) {
+        if event.kind == Kind::Custom(LESSON_KIND) || event.kind == Kind::Custom(LEGACY_LESSON_KIND)
+        {
             continue;
         }
         let d_tag = get_tag_value(&event.tags, "d").unwrap_or_default();
@@ -654,21 +791,34 @@ async fn cmd_store(
     // Also match old v0.1 d-tags that resolve to the same topic
     let previous_event_id = {
         let events = mgr.fetch_memories(&_pubkeys).await?;
-        events.into_iter().find(|e| {
-            let raw_dtag = get_tag_value(&e.tags, "d").unwrap_or_default();
-            // Match against new v0.2 d-tag or parsed v0.1 topic
-            raw_dtag == d_tag || nomen::memory::parse_d_tag(&raw_dtag) == topic
-        }).map(|e| e.id)
+        events
+            .into_iter()
+            .find(|e| {
+                let raw_dtag = get_tag_value(&e.tags, "d").unwrap_or_default();
+                // Match against new v0.2 d-tag or parsed v0.1 topic
+                raw_dtag == d_tag || nomen::memory::parse_d_tag(&raw_dtag) == topic
+            })
+            .map(|e| e.id)
     };
 
     // Build version based on previous event
-    let version = if previous_event_id.is_some() { "2" } else { "1" };
+    let version = if previous_event_id.is_some() {
+        "2"
+    } else {
+        "1"
+    };
 
     // Build tags (v0.2: no tier or source tags — visibility is in d-tag, source is event.pubkey)
     let mut tags = vec![
         Tag::custom(TagKind::Custom("d".into()), vec![d_tag.clone()]),
-        Tag::custom(TagKind::Custom("model".into()), vec!["human/manual".to_string()]),
-        Tag::custom(TagKind::Custom("confidence".into()), vec![format!("{confidence:.2}")]),
+        Tag::custom(
+            TagKind::Custom("model".into()),
+            vec!["human/manual".to_string()],
+        ),
+        Tag::custom(
+            TagKind::Custom("confidence".into()),
+            vec![format!("{confidence:.2}")],
+        ),
         Tag::custom(TagKind::Custom("version".into()), vec![version.to_string()]),
     ];
 
@@ -683,14 +833,20 @@ async fn cmd_store(
     // Add topic tags for relay-side filtering (NIP-78 spec)
     for part in topic.split('/') {
         if !part.is_empty() {
-            tags.push(Tag::custom(TagKind::Custom("t".into()), vec![part.to_string()]));
+            tags.push(Tag::custom(
+                TagKind::Custom("t".into()),
+                vec![part.to_string()],
+            ));
         }
     }
 
     // Add h tag for group-scoped memories (NIP-29)
     if tier.starts_with("group") {
         if let Some(group_id) = tier.strip_prefix("group:") {
-            tags.push(Tag::custom(TagKind::Custom("h".into()), vec![group_id.to_string()]));
+            tags.push(Tag::custom(
+                TagKind::Custom("h".into()),
+                vec![group_id.to_string()],
+            ));
         }
     }
 
@@ -713,7 +869,11 @@ async fn cmd_store(
         d_tag: d_tag.clone(),
         source: mgr.public_key().to_hex(),
         content_raw: content_str,
-        detail: if detail.is_empty() { summary.to_string() } else { detail.to_string() },
+        detail: if detail.is_empty() {
+            summary.to_string()
+        } else {
+            detail.to_string()
+        },
     };
     let _ = db::store_memory_direct(&db, &parsed, &result.event_id.to_hex()).await;
 
@@ -769,8 +929,8 @@ async fn cmd_delete(
     };
 
     // Publish NIP-09 deletion event (kind 5)
-    let delete_builder = EventBuilder::new(Kind::Custom(5), "")
-        .tags(vec![Tag::event(target_event_id)]);
+    let delete_builder =
+        EventBuilder::new(Kind::Custom(5), "").tags(vec![Tag::event(target_event_id)]);
 
     let result = mgr.publish(delete_builder).await?;
 
@@ -928,11 +1088,7 @@ async fn cmd_embed(cli: &Cli, limit: usize) -> Result<()> {
         }
     }
 
-    println!(
-        "{}: {} memories embedded",
-        "Done".green().bold(),
-        embedded
-    );
+    println!("{}: {} memories embedded", "Done".green().bold(), embedded);
     Ok(())
 }
 
@@ -942,7 +1098,13 @@ async fn cmd_group(action: GroupAction) -> Result<()> {
     let db = db::init_db().await?;
 
     match action {
-        GroupAction::Create { id, name, members, nostr_group, relay } => {
+        GroupAction::Create {
+            id,
+            name,
+            members,
+            nostr_group,
+            relay,
+        } => {
             groups::create_group(
                 &db,
                 &id,
@@ -974,11 +1136,7 @@ async fn cmd_group(action: GroupAction) -> Result<()> {
                 return Ok(());
             }
 
-            println!(
-                "\n{}\n{}",
-                "Groups".bold(),
-                "═".repeat(60)
-            );
+            println!("\n{}\n{}", "Groups".bold(), "═".repeat(60));
 
             for group in all {
                 let parent_display = if group.parent.is_empty() {
@@ -1025,12 +1183,7 @@ async fn cmd_group(action: GroupAction) -> Result<()> {
         }
         GroupAction::AddMember { id, npub } => {
             groups::add_member(&db, &id, &npub).await?;
-            println!(
-                "{} {} to group {}",
-                "Added".green().bold(),
-                npub,
-                id.bold()
-            );
+            println!("{} {} to group {}", "Added".green().bold(), npub, id.bold());
         }
         GroupAction::RemoveMember { id, npub } => {
             groups::remove_member(&db, &id, &npub).await?;
@@ -1072,9 +1225,7 @@ async fn cmd_ingest(
         "Ingested".green().bold(),
         sender.bold(),
         source,
-        channel
-            .map(|c| format!(" #{c}"))
-            .unwrap_or_default()
+        channel.map(|c| format!(" #{c}")).unwrap_or_default()
     );
     debug!("Record ID: {id}");
     Ok(())
@@ -1112,11 +1263,7 @@ async fn cmd_messages(
         return Ok(());
     }
 
-    println!(
-        "\n{}\n{}",
-        "Raw Messages".bold(),
-        "═".repeat(60)
-    );
+    println!("\n{}\n{}", "Raw Messages".bold(), "═".repeat(60));
 
     for msg in &messages {
         let channel_display = if msg.channel.is_empty() {
@@ -1177,10 +1324,13 @@ async fn cmd_consolidate(
         .map(|p| Box::new(p) as Box<dyn consolidate::LlmProvider>)
         .unwrap_or_else(|| Box::new(consolidate::NoopLlmProvider));
 
-    let author_pubkey = relay_manager.as_ref()
+    let author_pubkey = relay_manager
+        .as_ref()
         .map(|mgr| mgr.public_key().to_hex())
         .or_else(|| {
-            config.all_nsecs().first()
+            config
+                .all_nsecs()
+                .first()
                 .and_then(|nsec| nostr_sdk::SecretKey::from_bech32(nsec).ok())
                 .map(|sk| nostr_sdk::Keys::new(sk).public_key().to_hex())
         });
@@ -1195,7 +1345,10 @@ async fn cmd_consolidate(
     };
 
     if dry_run {
-        println!("{} Running consolidation pipeline...", "[DRY RUN]".yellow().bold());
+        println!(
+            "{} Running consolidation pipeline...",
+            "[DRY RUN]".yellow().bold()
+        );
     } else {
         println!("Running consolidation pipeline...");
     }
@@ -1218,21 +1371,30 @@ async fn cmd_consolidate(
         };
         println!(
             "{}: {} messages → {} memories",
-            prefix,
-            report.messages_processed,
-            report.memories_created
+            prefix, report.messages_processed, report.memories_created
         );
         if report.events_published > 0 {
-            println!("  Published {} memories to relay (kind 31234)", report.events_published);
+            println!(
+                "  Published {} memories to relay (kind 31234)",
+                report.events_published
+            );
         }
         if report.events_deleted > 0 {
-            println!("  Deleted {} ephemeral events from relay (NIP-09)", report.events_deleted);
+            println!(
+                "  Deleted {} ephemeral events from relay (NIP-09)",
+                report.events_deleted
+            );
         }
         if !report.channels.is_empty() {
             println!("  Channels: {}", report.channels.join(", "));
         }
         for group in &report.groups {
-            println!("  {} → {} ({} messages)", group.key.dimmed(), group.topic.bold(), group.message_count);
+            println!(
+                "  {} → {} ({} messages)",
+                group.key.dimmed(),
+                group.topic.bold(),
+                group.message_count
+            );
         }
     }
 
@@ -1264,18 +1426,10 @@ async fn cmd_entities(kind_filter: Option<&str>) -> Result<()> {
         return Ok(());
     }
 
-    println!(
-        "\n{}\n{}",
-        "Entities".bold(),
-        "═".repeat(60)
-    );
+    println!("\n{}\n{}", "Entities".bold(), "═".repeat(60));
 
     for entity in &entity_list {
-        println!(
-            "\n  {} [{}]",
-            entity.name.bold(),
-            entity.kind.yellow()
-        );
+        println!("\n  {} [{}]", entity.name.bold(), entity.kind.yellow());
         println!("    Created: {}", entity.created_at.dimmed());
     }
 
@@ -1289,7 +1443,11 @@ async fn cmd_prune(days: u64, dry_run: bool) -> Result<()> {
     let db_handle = db::init_db().await?;
 
     if dry_run {
-        println!("{} Pruning memories (older than {} days)...", "[DRY RUN]".yellow().bold(), days);
+        println!(
+            "{} Pruning memories (older than {} days)...",
+            "[DRY RUN]".yellow().bold(),
+            days
+        );
     } else {
         println!("Pruning memories (older than {} days)...", days);
     }
@@ -1301,10 +1459,12 @@ async fn cmd_prune(days: u64, dry_run: bool) -> Result<()> {
     } else {
         println!("\n{} memories eligible for pruning:", report.pruned.len());
         for mem in &report.pruned {
-            let confidence_str = mem.confidence
+            let confidence_str = mem
+                .confidence
                 .map(|c| format!("{c:.2}"))
                 .unwrap_or("?".to_string());
-            let access_str = mem.access_count
+            let access_str = mem
+                .access_count
                 .map(|c| c.to_string())
                 .unwrap_or("0".to_string());
             println!(
@@ -1317,17 +1477,33 @@ async fn cmd_prune(days: u64, dry_run: bool) -> Result<()> {
         }
 
         if dry_run {
-            println!("\n{}: Would prune {} memories", "[DRY RUN]".yellow().bold(), report.memories_pruned);
+            println!(
+                "\n{}: Would prune {} memories",
+                "[DRY RUN]".yellow().bold(),
+                report.memories_pruned
+            );
         } else {
-            println!("\n{}: {} memories pruned", "Pruned".green().bold(), report.memories_pruned);
+            println!(
+                "\n{}: {} memories pruned",
+                "Pruned".green().bold(),
+                report.memories_pruned
+            );
         }
     }
 
     if report.raw_messages_pruned > 0 {
         if dry_run {
-            println!("{}: Would also prune {} consolidated raw messages", "[DRY RUN]".yellow().bold(), report.raw_messages_pruned);
+            println!(
+                "{}: Would also prune {} consolidated raw messages",
+                "[DRY RUN]".yellow().bold(),
+                report.raw_messages_pruned
+            );
         } else {
-            println!("{}: {} consolidated raw messages pruned", "Pruned".green().bold(), report.raw_messages_pruned);
+            println!(
+                "{}: {} consolidated raw messages pruned",
+                "Pruned".green().bold(),
+                report.raw_messages_pruned
+            );
         }
     }
 
@@ -1428,7 +1604,11 @@ async fn cmd_serve(
             }
             // Try relative to cwd
             let cwd = PathBuf::from("web/dist");
-            if cwd.is_dir() { Some(cwd) } else { None }
+            if cwd.is_dir() {
+                Some(cwd)
+            } else {
+                None
+            }
         });
 
         let http_state = nomen::http::AppState {
@@ -1449,7 +1629,11 @@ async fn cmd_serve(
                 }
             }
             let cwd = PathBuf::from("web/dist-landing");
-            if cwd.is_dir() { Some(cwd) } else { None }
+            if cwd.is_dir() {
+                Some(cwd)
+            } else {
+                None
+            }
         });
 
         return nomen::http::serve(&bind_addr, http_state, resolved_static, resolved_landing).await;
@@ -1487,7 +1671,13 @@ async fn cmd_serve(
 
         // Run MCP on stdio and Context-VM on Nostr concurrently
         let mcp_embedder = config.build_embedder();
-        let mcp_future = mcp::serve_stdio(db, mcp_embedder, relay_manager, group_store, default_channel);
+        let mcp_future = mcp::serve_stdio(
+            db,
+            mcp_embedder,
+            relay_manager,
+            group_store,
+            default_channel,
+        );
         let vm_future = vm_server.run();
 
         tokio::select! {
@@ -1511,7 +1701,10 @@ async fn cmd_init(force: bool, non_interactive: bool) -> Result<()> {
     // Check existing config
     if config_path.exists() && !force {
         if non_interactive {
-            bail!("Config already exists at {}. Use --force to overwrite.", config_path.display());
+            bail!(
+                "Config already exists at {}. Use --force to overwrite.",
+                config_path.display()
+            );
         }
         let overwrite = Confirm::new()
             .with_prompt("Config already exists. Overwrite?")
@@ -1539,8 +1732,7 @@ async fn cmd_init(force: bool, non_interactive: bool) -> Result<()> {
     let guardian_nsec: String = Password::new()
         .with_prompt("     Guardian nsec (your key)")
         .interact()?;
-    let guardian_keys = Keys::parse(&guardian_nsec)
-        .context("Invalid guardian nsec")?;
+    let guardian_keys = Keys::parse(&guardian_nsec).context("Invalid guardian nsec")?;
     let guardian_npub = guardian_keys.public_key().to_bech32()?;
     println!("     {} {}", "✓".green(), guardian_npub);
 
@@ -1552,11 +1744,8 @@ async fn cmd_init(force: bool, non_interactive: bool) -> Result<()> {
 
     if add_agents {
         loop {
-            let agent_nsec: String = Password::new()
-                .with_prompt("     Agent nsec")
-                .interact()?;
-            let agent_keys = Keys::parse(&agent_nsec)
-                .context("Invalid agent nsec")?;
+            let agent_nsec: String = Password::new().with_prompt("     Agent nsec").interact()?;
+            let agent_keys = Keys::parse(&agent_nsec).context("Invalid agent nsec")?;
             let agent_npub = agent_keys.public_key().to_bech32()?;
             let idx = agent_nsecs.len() + 1;
             println!("     {} {} (agent #{})", "✓".green(), agent_npub, idx);
@@ -1673,7 +1862,10 @@ async fn cmd_init(force: bool, non_interactive: bool) -> Result<()> {
             .with_prompt("     Listen address")
             .default("127.0.0.1:3000".to_string())
             .interact_text()?;
-        Some(ServerConfig { enabled: true, listen })
+        Some(ServerConfig {
+            enabled: true,
+            listen,
+        })
     } else {
         None
     };
@@ -1701,8 +1893,7 @@ async fn cmd_init(force: bool, non_interactive: bool) -> Result<()> {
     };
 
     // Write config
-    let toml_str = toml::to_string_pretty(&config)
-        .context("Failed to serialize config")?;
+    let toml_str = toml::to_string_pretty(&config).context("Failed to serialize config")?;
 
     if let Some(parent) = config_path.parent() {
         std::fs::create_dir_all(parent)
@@ -1711,7 +1902,11 @@ async fn cmd_init(force: bool, non_interactive: bool) -> Result<()> {
 
     std::fs::write(&config_path, &toml_str)
         .with_context(|| format!("Failed to write config: {}", config_path.display()))?;
-    println!("\n  {} Config written to {}", "✓".green(), config_path.display());
+    println!(
+        "\n  {} Config written to {}",
+        "✓".green(),
+        config_path.display()
+    );
 
     // Test relay connection
     print!("  {} Testing relay connection... ", "✓".green());
@@ -1719,7 +1914,11 @@ async fn cmd_init(force: bool, non_interactive: bool) -> Result<()> {
     match test_relay_connection(&relay, &all_nsecs).await {
         Ok(count) => {
             println!("connected");
-            println!("  {} Found {} existing memories for configured identities", "✓".green(), count);
+            println!(
+                "  {} Found {} existing memories for configured identities",
+                "✓".green(),
+                count
+            );
         }
         Err(e) => {
             println!("{}", "failed".red());
@@ -1741,8 +1940,7 @@ async fn cmd_init_non_interactive() -> Result<()> {
     let npub = keys.public_key().to_bech32()?;
     println!("  Guardian: {npub}");
 
-    let relay = std::env::var("NOMEN_RELAY")
-        .unwrap_or_else(|_| "wss://relay.damus.io".to_string());
+    let relay = std::env::var("NOMEN_RELAY").unwrap_or_else(|_| "wss://relay.damus.io".to_string());
 
     let config = Config {
         relay: Some(relay.clone()),
@@ -1773,21 +1971,28 @@ async fn cmd_init_non_interactive() -> Result<()> {
     };
 
     let config_path = Config::path();
-    let toml_str = toml::to_string_pretty(&config)
-        .context("Failed to serialize config")?;
+    let toml_str = toml::to_string_pretty(&config).context("Failed to serialize config")?;
 
     if let Some(parent) = config_path.parent() {
         std::fs::create_dir_all(parent)?;
     }
 
     std::fs::write(&config_path, &toml_str)?;
-    println!("  {} Config written to {}", "✓".green(), config_path.display());
+    println!(
+        "  {} Config written to {}",
+        "✓".green(),
+        config_path.display()
+    );
 
     // Test relay
     let all_nsecs = config.all_nsecs();
     match test_relay_connection(&relay, &all_nsecs).await {
         Ok(count) => {
-            println!("  {} Relay connected, {} existing memories", "✓".green(), count);
+            println!(
+                "  {} Relay connected, {} existing memories",
+                "✓".green(),
+                count
+            );
         }
         Err(e) => {
             println!("  {} Relay test failed: {e}", "✗".red());
@@ -1846,10 +2051,17 @@ async fn cmd_doctor() -> Result<()> {
         all_ok = false;
     } else {
         for (i, nsec) in nsecs.iter().enumerate() {
-            let label = if i == 0 { "Guardian".to_string() } else { format!("Agent #{i}") };
+            let label = if i == 0 {
+                "Guardian".to_string()
+            } else {
+                format!("Agent #{i}")
+            };
             match Keys::parse(nsec) {
                 Ok(keys) => {
-                    let npub = keys.public_key().to_bech32().unwrap_or_else(|_| "?".to_string());
+                    let npub = keys
+                        .public_key()
+                        .to_bech32()
+                        .unwrap_or_else(|_| "?".to_string());
                     println!("  {} key: {} {}", label, "✓".green(), npub);
                 }
                 Err(e) => {
@@ -1861,7 +2073,10 @@ async fn cmd_doctor() -> Result<()> {
     }
 
     // 3. Relay connectivity
-    let relay_url = config.relay.as_deref().unwrap_or("wss://zooid.atlantislabs.space");
+    let relay_url = config
+        .relay
+        .as_deref()
+        .unwrap_or("wss://zooid.atlantislabs.space");
     print!("  Relay ({relay_url}): ");
     if !nsecs.is_empty() {
         match test_relay_connection(relay_url, &nsecs).await {
@@ -1877,11 +2092,23 @@ async fn cmd_doctor() -> Result<()> {
 
     // 4. Embedding API key
     if let Some(ref emb) = config.embedding {
-        let key_set = std::env::var(&emb.api_key_env).map(|v| !v.is_empty()).unwrap_or(false);
+        let key_set = std::env::var(&emb.api_key_env)
+            .map(|v| !v.is_empty())
+            .unwrap_or(false);
         if key_set {
-            println!("  Embedding ({}): {} ${} is set", emb.provider, "✓".green(), emb.api_key_env);
+            println!(
+                "  Embedding ({}): {} ${} is set",
+                emb.provider,
+                "✓".green(),
+                emb.api_key_env
+            );
         } else {
-            println!("  Embedding ({}): {} ${} not set", emb.provider, "✗".red(), emb.api_key_env);
+            println!(
+                "  Embedding ({}): {} ${} not set",
+                emb.provider,
+                "✗".red(),
+                emb.api_key_env
+            );
             all_ok = false;
         }
     } else {
@@ -1900,11 +2127,23 @@ async fn cmd_doctor() -> Result<()> {
 
     // 6. Consolidation API key
     if let Some(llm_config) = config.consolidation_llm_config() {
-        let key_set = std::env::var(&llm_config.api_key_env).map(|v| !v.is_empty()).unwrap_or(false);
+        let key_set = std::env::var(&llm_config.api_key_env)
+            .map(|v| !v.is_empty())
+            .unwrap_or(false);
         if key_set {
-            println!("  Consolidation ({}): {} ${} is set", llm_config.provider, "✓".green(), llm_config.api_key_env);
+            println!(
+                "  Consolidation ({}): {} ${} is set",
+                llm_config.provider,
+                "✓".green(),
+                llm_config.api_key_env
+            );
         } else {
-            println!("  Consolidation ({}): {} ${} not set", llm_config.provider, "✗".red(), llm_config.api_key_env);
+            println!(
+                "  Consolidation ({}): {} ${} not set",
+                llm_config.provider,
+                "✗".red(),
+                llm_config.api_key_env
+            );
             all_ok = false;
         }
     } else {

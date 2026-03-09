@@ -1,7 +1,7 @@
-use anyhow::{Result, bail};
+use anyhow::{bail, Result};
 use serde::{Deserialize, Serialize};
-use surrealdb::Surreal;
 use surrealdb::engine::local::Db;
+use surrealdb::Surreal;
 use tracing::debug;
 
 use crate::config::GroupConfig;
@@ -154,7 +154,10 @@ pub async fn create_group(
     relay: Option<&str>,
 ) -> Result<()> {
     // Validate id: alphanumeric + dots only
-    if !id.chars().all(|c| c.is_alphanumeric() || c == '.' || c == '-' || c == '_') {
+    if !id
+        .chars()
+        .all(|c| c.is_alphanumeric() || c == '.' || c == '-' || c == '_')
+    {
         bail!("Group id must be alphanumeric with dots/hyphens/underscores: {id}");
     }
 
@@ -183,10 +186,10 @@ pub async fn create_group(
     }
 
     // Serialize members as JSON array string for SurrealDB
-        let members_json = serde_json::to_string(&group.members)?;
-        let record_id = format!("nomen_group:`{}`", group.id);
-        let sql = format!("CREATE {record_id} SET name = $name, parent = $parent, members = {members_json}, relay = $relay, nostr_group = $nostr_group, created_at = $created_at");
-        db.query(&sql)
+    let members_json = serde_json::to_string(&group.members)?;
+    let record_id = format!("nomen_group:`{}`", group.id);
+    let sql = format!("CREATE {record_id} SET name = $name, parent = $parent, members = {members_json}, relay = $relay, nostr_group = $nostr_group, created_at = $created_at");
+    db.query(&sql)
         .bind(("name", group.name))
         .bind(("parent", group.parent))
         .bind(("relay", group.relay))
@@ -350,15 +353,13 @@ mod tests {
 
     #[test]
     fn test_nostr_group_mapping() {
-        let store = GroupStore::from_config(&[
-            GroupConfig {
-                id: "atlantislabs.engineering".to_string(),
-                name: "Engineering".to_string(),
-                members: vec![],
-                nostr_group: Some("techteam".to_string()),
-                relay: None,
-            },
-        ]);
+        let store = GroupStore::from_config(&[GroupConfig {
+            id: "atlantislabs.engineering".to_string(),
+            name: "Engineering".to_string(),
+            members: vec![],
+            nostr_group: Some("techteam".to_string()),
+            relay: None,
+        }]);
 
         assert_eq!(
             store.resolve_nostr_group("techteam"),

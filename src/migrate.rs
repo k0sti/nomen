@@ -46,10 +46,7 @@ pub struct MigrationReport {
 ///
 /// Memories are imported with d-tag `snow:memory:<topic>` and will be
 /// upserted (existing memories with the same d-tag are overwritten).
-pub async fn migrate_from_sqlite(
-    sqlite_path: &str,
-    db: &Surreal<Db>,
-) -> Result<MigrationReport> {
+pub async fn migrate_from_sqlite(sqlite_path: &str, db: &Surreal<Db>) -> Result<MigrationReport> {
     let conn = Connection::open(sqlite_path)
         .with_context(|| format!("Failed to open SQLite database: {sqlite_path}"))?;
 
@@ -68,10 +65,16 @@ pub async fn migrate_from_sqlite(
                 topic: row.get(0)?,
                 summary: row.get(1)?,
                 detail: row.get(2)?,
-                tier: row.get::<_, String>(3).unwrap_or_else(|_| "public".to_string()),
+                tier: row
+                    .get::<_, String>(3)
+                    .unwrap_or_else(|_| "public".to_string()),
                 confidence: row.get::<_, f64>(4).unwrap_or(0.8),
-                model: row.get::<_, String>(5).unwrap_or_else(|_| "unknown".to_string()),
-                source: row.get::<_, String>(6).unwrap_or_else(|_| "sqlite-import".to_string()),
+                model: row
+                    .get::<_, String>(5)
+                    .unwrap_or_else(|_| "unknown".to_string()),
+                source: row
+                    .get::<_, String>(6)
+                    .unwrap_or_else(|_| "sqlite-import".to_string()),
                 created_at: row.get::<_, String>(7).unwrap_or_default(),
             })
         })

@@ -6,9 +6,9 @@ use std::io::{self, BufRead, Write};
 
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
-use surrealdb::Surreal;
+use serde_json::{json, Value};
 use surrealdb::engine::local::Db;
+use surrealdb::Surreal;
 use tracing::{debug, error, info};
 
 use crate::consolidate;
@@ -261,10 +261,7 @@ impl McpServer {
     }
 
     async fn handle_tool_call(&self, id: Value, params: &Value) -> JsonRpcResponse {
-        let tool_name = params
-            .get("name")
-            .and_then(|n| n.as_str())
-            .unwrap_or("");
+        let tool_name = params.get("name").and_then(|n| n.as_str()).unwrap_or("");
         let arguments = params.get("arguments").cloned().unwrap_or(json!({}));
 
         debug!(tool = tool_name, "MCP tool call");
@@ -314,10 +311,7 @@ impl McpServer {
             .unwrap_or("")
             .to_string();
         let mut tier = args.get("tier").and_then(|v| v.as_str()).map(String::from);
-        let limit = args
-            .get("limit")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(10) as usize;
+        let limit = args.get("limit").and_then(|v| v.as_u64()).unwrap_or(10) as usize;
 
         if query.is_empty() {
             anyhow::bail!("query parameter is required");
@@ -357,7 +351,11 @@ impl McpServer {
             ));
         }
 
-        Ok(format!("Found {} results:\n\n{}", results.len(), output.join("\n\n")))
+        Ok(format!(
+            "Found {} results:\n\n{}",
+            results.len(),
+            output.join("\n\n")
+        ))
     }
 
     async fn tool_store(&self, args: &Value) -> Result<String> {
@@ -376,10 +374,7 @@ impl McpServer {
             .and_then(|v| v.as_str())
             .unwrap_or("")
             .to_string();
-        let mut tier = args
-            .get("tier")
-            .and_then(|v| v.as_str())
-            .map(String::from);
+        let mut tier = args.get("tier").and_then(|v| v.as_str()).map(String::from);
         let confidence = args
             .get("confidence")
             .and_then(|v| v.as_f64())
@@ -408,7 +403,9 @@ impl McpServer {
 
         crate::Nomen::store_direct(&self.db, self.embedder.as_ref(), mem).await?;
 
-        Ok(format!("Stored memory: {topic} [{tier}] (confidence: {confidence:.2})"))
+        Ok(format!(
+            "Stored memory: {topic} [{tier}] (confidence: {confidence:.2})"
+        ))
     }
 
     async fn tool_ingest(&self, args: &Value) -> Result<String> {
@@ -472,15 +469,8 @@ impl McpServer {
                 .get("sender")
                 .and_then(|v| v.as_str())
                 .map(String::from),
-            since: args
-                .get("since")
-                .and_then(|v| v.as_str())
-                .map(String::from),
-            limit: Some(
-                args.get("limit")
-                    .and_then(|v| v.as_u64())
-                    .unwrap_or(50) as usize,
-            ),
+            since: args.get("since").and_then(|v| v.as_str()).map(String::from),
+            limit: Some(args.get("limit").and_then(|v| v.as_u64()).unwrap_or(50) as usize),
             consolidated_only: false,
         };
 
@@ -503,7 +493,11 @@ impl McpServer {
             ));
         }
 
-        Ok(format!("{} messages:\n\n{}", messages.len(), output.join("\n\n")))
+        Ok(format!(
+            "{} messages:\n\n{}",
+            messages.len(),
+            output.join("\n\n")
+        ))
     }
 
     async fn tool_entities(&self, args: &Value) -> Result<String> {
@@ -540,16 +534,28 @@ impl McpServer {
 
         let mut output = Vec::new();
         for e in &filtered {
-            output.push(format!("{} [{}] (created: {})", e.name, e.kind, e.created_at));
+            output.push(format!(
+                "{} [{}] (created: {})",
+                e.name, e.kind, e.created_at
+            ));
         }
 
-        Ok(format!("{} entities:\n{}", filtered.len(), output.join("\n")))
+        Ok(format!(
+            "{} entities:\n{}",
+            filtered.len(),
+            output.join("\n")
+        ))
     }
 
     async fn tool_consolidate(&self, _args: &Value) -> Result<String> {
         let config = consolidate::ConsolidationConfig::default();
-        let report =
-            consolidate::consolidate(&self.db, self.embedder.as_ref(), &config, self.relay.as_ref()).await?;
+        let report = consolidate::consolidate(
+            &self.db,
+            self.embedder.as_ref(),
+            &config,
+            self.relay.as_ref(),
+        )
+        .await?;
 
         if report.memories_created == 0 {
             Ok("Nothing to consolidate.".to_string())
@@ -568,10 +574,7 @@ impl McpServer {
     }
 
     async fn tool_groups(&self, args: &Value) -> Result<String> {
-        let action = args
-            .get("action")
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
+        let action = args.get("action").and_then(|v| v.as_str()).unwrap_or("");
 
         match action {
             "list" => {
@@ -588,7 +591,11 @@ impl McpServer {
                     };
                     output.push(format!("{} — {} [{}]", g.id, g.name, members_str));
                 }
-                Ok(format!("{} groups:\n{}", group_list.len(), output.join("\n")))
+                Ok(format!(
+                    "{} groups:\n{}",
+                    group_list.len(),
+                    output.join("\n")
+                ))
             }
             "members" => {
                 let id = args.get("id").and_then(|v| v.as_str()).unwrap_or("");
@@ -645,7 +652,9 @@ impl McpServer {
                 groups::remove_member(&self.db, id, npub).await?;
                 Ok(format!("Removed {npub} from group {id}"))
             }
-            _ => anyhow::bail!("Unknown action: {action}. Valid: list, members, create, add_member, remove_member"),
+            _ => anyhow::bail!(
+                "Unknown action: {action}. Valid: list, members, create, add_member, remove_member"
+            ),
         }
     }
 
@@ -661,14 +670,8 @@ impl McpServer {
     }
 
     async fn tool_send(&self, args: &Value) -> Result<String> {
-        let recipient = args
-            .get("recipient")
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
-        let content = args
-            .get("content")
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
+        let recipient = args.get("recipient").and_then(|v| v.as_str()).unwrap_or("");
+        let content = args.get("content").and_then(|v| v.as_str()).unwrap_or("");
         let channel = args
             .get("channel")
             .and_then(|v| v.as_str())
@@ -760,19 +763,15 @@ pub async fn serve_stdio(
         let req: JsonRpcRequest = match serde_json::from_str(line) {
             Ok(r) => r,
             Err(e) => {
-                let err_resp = JsonRpcResponse::error(
-                    Value::Null,
-                    -32700,
-                    format!("Parse error: {e}"),
-                );
+                let err_resp =
+                    JsonRpcResponse::error(Value::Null, -32700, format!("Parse error: {e}"));
                 let _ = write_response(&mut stdout, &err_resp);
                 continue;
             }
         };
 
         // Notifications (no id) don't get responses
-        let is_notification = req.id.is_none()
-            || req.method.starts_with("notifications/");
+        let is_notification = req.id.is_none() || req.method.starts_with("notifications/");
 
         let response = server.handle_request(&req).await;
 

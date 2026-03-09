@@ -5,7 +5,7 @@ use anyhow::{Context, Result};
 use nostr_sdk::prelude::*;
 use tracing::{debug, info, warn};
 
-use crate::kinds::{MEMORY_KIND, LESSON_KIND, LEGACY_APP_DATA_KIND, LEGACY_LESSON_KIND};
+use crate::kinds::{LEGACY_APP_DATA_KIND, LEGACY_LESSON_KIND, LESSON_KIND, MEMORY_KIND};
 use crate::signer::NomenSigner;
 
 /// Result of publishing an event to relays.
@@ -127,11 +127,7 @@ impl RelayManager {
 
         let event_id = *output.id();
 
-        let accepted: Vec<String> = output
-            .success
-            .iter()
-            .map(|url| url.to_string())
-            .collect();
+        let accepted: Vec<String> = output.success.iter().map(|url| url.to_string()).collect();
 
         let rejected: Vec<(String, String)> = output
             .failed

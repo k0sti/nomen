@@ -4,7 +4,7 @@
 
 ## Overview
 
-The nostr-memory-spec v0.2 introduces a new d-tag format that encodes visibility, context, and topic directly in the d-tag. This replaces the v0.1 format that used `snow:memory:` and `snowclaw:memory:` prefixes with separate `tier` and `source` tags.
+The nostr-memory-spec v0.2 introduces a new d-tag format that encodes visibility, scope, and topic directly in the d-tag. This replaces the v0.1 format that used `snow:memory:` and `snowclaw:memory:` prefixes with separate `tier` and `source` tags.
 
 ## Format Changes
 
@@ -48,9 +48,10 @@ The codebase now supports **both** formats on read:
 
 All new memory events are published with the v0.2 d-tag format:
 
-- CLI `nomen store` builds d-tags as `{visibility}:{context}:{topic}`
+- CLI `nomen store` builds d-tags as `{visibility}:{scope}:{topic}`
 - No `tier` or `source` tags are emitted
 - Tag names use clean names (no `snow:` prefix)
+- Provider-specific channel/container IDs are not part of the d-tag; they belong in raw-message provenance/metadata
 
 ## Migration Steps
 

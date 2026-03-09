@@ -1,7 +1,7 @@
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
-use surrealdb::Surreal;
 use surrealdb::engine::local::Db;
+use surrealdb::Surreal;
 use tracing::debug;
 
 /// A raw message from any source (telegram, nostr, webhook, CLI, etc.).

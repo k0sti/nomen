@@ -156,26 +156,58 @@ nomen send "hey" --to npub1abc... --channel telegram  # Telegram DM
 
 All sent messages are stored locally as `raw_message` with `source="nomen"`.
 
-## Session ID Model
+## Scope + Channel Model
 
-A session ID encodes recipient + channel + tier in a single string, eliminating the need to pass tier/scope separately on every call.
+Nomen now uses a simplified model:
 
-**Formats:**
+- **scope** = durable Nostr-native boundary used by memories and access control
+- **channel** = concrete message container where raw events were observed
 
-| Session ID | Type | Resolves to | Status |
-|---|---|---|---|
-| `public` | Public | tier=public, empty scope | ✅ |
-| `npub1abc...` | Private DM | tier=private, scope=npub hex | ✅ |
-| `telegram:npub1abc...` | Private DM (explicit channel) | tier=private, channel=telegram | ✅ |
-| `techteam` | Named group | tier=group, scope=group_id | ✅ |
-| `nostr:inner-circle` | Named group (via NIP-29 alias) | tier=group, resolved via `nostr_group` | ✅ |
-| `hash(sorted npubs)` | Ad-hoc npub set | tier=private, scope=hash | 📋 planned |
+This replaces the earlier idea of making `session_id` the main integration handle.
 
-**Resolution** (`src/session.rs`): `resolve_session(id, groups, default_channel) → ResolvedSession { tier, scope, channel, group_id, participants }`
+### Scope
 
-Named groups resolve via GroupStore lookup (by ID or `nostr_group` alias). Ad-hoc npub sets will resolve by looking up the hash in the session table.
+Scope is defined the same way everywhere memory uses it:
 
-**Integration:** All MCP tools accept optional `session_id` parameter. When provided, tier and scope are derived automatically — no risk of misconfiguring visibility.
+| Visibility | Scope value |
+|---|---|
+| `public` | empty |
+| `group` | NIP-29 group id |
+| `circle` | deterministic participant-set hash |
+| `personal` | hex pubkey |
+| `internal` | hex pubkey |
+
+### Channel
+
+Channel is provider-specific transport/container identity. Examples:
+
+- `nostr-group:wss://zooid.atlantislabs.space:techteam`
+- `nostr-dm:<peer-pubkey-hex>`
+- `telegram:-1003821690204:694`
+- `discord:<guild_id>:<channel_id>:<thread_id>`
+
+### Rule
+
+- durable memories attach to **scope**
+- raw messages attach to **channel** and resolve to a scope
+- channel metadata may vary across providers; scope semantics remain stable
+
+### Integration
+
+Host integrations should provide or resolve a `scope` for memory operations. They may also pass a `channel` when ingesting or querying raw message history, but channel/provider details should not be embedded into durable memory d-tags.
+
+## Zeroclaw/OpenClaw Compatibility
+
+Nomen is designed to interoperate with existing agent runtimes that expose a simpler memory API built around `key`, `category`, and optional `session_id` fields.
+
+Compatibility rules:
+
+- `category` is a host organizational bucket, not a Nomen visibility/scope primitive
+- `key` is a host identifier or topic hint, not always a canonical Nomen topic
+- `session_id` is a host compatibility hint for partitioning/filtering, not a canonical scope model
+- memories attach to `scope`; raw messages attach to `channel` and resolve to scope
+
+See `docs/zeroclaw-integration-spec.md` for the full adapter contract.
 
 ## Interfaces
 

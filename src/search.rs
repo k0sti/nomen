@@ -1,7 +1,7 @@
 use anyhow::Result;
 use nostr_sdk::Timestamp;
-use surrealdb::Surreal;
 use surrealdb::engine::local::Db;
+use surrealdb::Surreal;
 use tracing::debug;
 
 use crate::db;
@@ -110,7 +110,10 @@ pub async fn search(
         }
     };
 
-    debug!("Running hybrid search (vector_weight={}, text_weight={})", opts.vector_weight, opts.text_weight);
+    debug!(
+        "Running hybrid search (vector_weight={}, text_weight={})",
+        opts.vector_weight, opts.text_weight
+    );
 
     let rows = db::hybrid_search(
         db,
@@ -136,10 +139,7 @@ pub async fn search(
             let text_score = r.text_score.unwrap_or(0.0);
 
             // Apply confidence decay
-            let decay = confidence_decay_factor(
-                r.last_accessed.as_deref(),
-                &r.created_at,
-            );
+            let decay = confidence_decay_factor(r.last_accessed.as_deref(), &r.created_at);
             let raw_confidence = r.confidence.unwrap_or(0.5);
             let effective_confidence = raw_confidence * decay;
 
@@ -150,10 +150,8 @@ pub async fn search(
             let importance_norm = r.importance.unwrap_or(5) as f64 / 10.0;
 
             // Composite score per spec: semantic×0.4 + text×0.3 + recency×0.15 + importance×0.15
-            let decayed_score = vec_score * 0.4
-                + text_score * 0.3
-                + recency * 0.15
-                + importance_norm * 0.15;
+            let decayed_score =
+                vec_score * 0.4 + text_score * 0.3 + recency * 0.15 + importance_norm * 0.15;
 
             let match_type = if vec_score > 0.0 && text_score > 0.0 {
                 MatchType::Hybrid
@@ -179,7 +177,11 @@ pub async fn search(
         .collect();
 
     // Re-sort by decayed score
-    results.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+    results.sort_by(|a, b| {
+        b.score
+            .partial_cmp(&a.score)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
 
     // Aggregate similar results if requested
     if opts.aggregate {
@@ -187,10 +189,7 @@ pub async fn search(
     }
 
     // Update access tracking for all results
-    let d_tags: Vec<String> = results
-        .iter()
-        .filter_map(|r| r.d_tag.clone())
-        .collect();
+    let d_tags: Vec<String> = results.iter().filter_map(|r| r.d_tag.clone()).collect();
     if !d_tags.is_empty() {
         db::update_access_tracking_batch(db, &d_tags).await.ok();
     }
@@ -204,10 +203,7 @@ pub async fn search(
 /// component: `text_score × 0.3 + recency × 0.15 + importance × 0.15`.
 /// This ensures results have meaningful scores even when embeddings are disabled,
 /// preventing downstream filters from discarding all results.
-async fn text_only_search(
-    db: &Surreal<Db>,
-    opts: &SearchOptions,
-) -> Result<Vec<SearchResult>> {
+async fn text_only_search(db: &Surreal<Db>, opts: &SearchOptions) -> Result<Vec<SearchResult>> {
     let mut conditions = vec!["content @1@ $query".to_string()];
     if opts.tier.is_some() {
         conditions.push("tier = $tier".to_string());
@@ -250,10 +246,7 @@ async fn text_only_search(
             let text_score = r.text_score.unwrap_or(0.0);
 
             // Apply confidence decay
-            let decay = confidence_decay_factor(
-                r.last_accessed.as_deref(),
-                &r.created_at,
-            );
+            let decay = confidence_decay_factor(r.last_accessed.as_deref(), &r.created_at);
             let raw_confidence = r.confidence.unwrap_or(0.5);
             let effective_confidence = raw_confidence * decay;
 
@@ -262,9 +255,7 @@ async fn text_only_search(
 
             // Same composite as hybrid search, minus vector component:
             // text×0.3 + recency×0.15 + importance×0.15
-            let decayed_score = text_score * 0.3
-                + recency * 0.15
-                + importance_norm * 0.15;
+            let decayed_score = text_score * 0.3 + recency * 0.15 + importance_norm * 0.15;
 
             SearchResult {
                 tier: r.tier,
@@ -282,13 +273,14 @@ async fn text_only_search(
         .collect();
 
     // Re-sort by composite score
-    results.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+    results.sort_by(|a, b| {
+        b.score
+            .partial_cmp(&a.score)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
 
     // Update access tracking for text-only results too
-    let d_tags: Vec<String> = results
-        .iter()
-        .filter_map(|r| r.d_tag.clone())
-        .collect();
+    let d_tags: Vec<String> = results.iter().filter_map(|r| r.d_tag.clone()).collect();
     if !d_tags.is_empty() {
         db::update_access_tracking_batch(db, &d_tags).await.ok();
     }
@@ -312,7 +304,11 @@ fn cosine_similarity(a: &[f32], b: &[f32]) -> f64 {
         norm_b += y * y;
     }
     let denom = norm_a.sqrt() * norm_b.sqrt();
-    if denom == 0.0 { 0.0 } else { dot / denom }
+    if denom == 0.0 {
+        0.0
+    } else {
+        dot / denom
+    }
 }
 
 /// Aggregate search results: group results with >0.85 embedding similarity
@@ -367,7 +363,10 @@ fn aggregate_results(results: Vec<SearchResult>) -> Vec<SearchResult> {
             let best_idx = *group_indices
                 .iter()
                 .max_by(|&&a, &&b| {
-                    results[a].score.partial_cmp(&results[b].score).unwrap_or(std::cmp::Ordering::Equal)
+                    results[a]
+                        .score
+                        .partial_cmp(&results[b].score)
+                        .unwrap_or(std::cmp::Ordering::Equal)
                 })
                 .unwrap();
 
@@ -385,11 +384,16 @@ fn aggregate_results(results: Vec<SearchResult>) -> Vec<SearchResult> {
                 if !combined_detail.is_empty() {
                     combined_detail.push_str("\n---\n");
                 }
-                combined_detail.push_str(&format!("[{}] {}", results[idx].topic, results[idx].detail));
+                combined_detail
+                    .push_str(&format!("[{}] {}", results[idx].topic, results[idx].detail));
             }
 
             let topic_display = if topics.len() > 1 {
-                format!("{} (+{} related)", results[best_idx].topic, topics.len() - 1)
+                format!(
+                    "{} (+{} related)",
+                    results[best_idx].topic,
+                    topics.len() - 1
+                )
             } else {
                 results[best_idx].topic.clone()
             };

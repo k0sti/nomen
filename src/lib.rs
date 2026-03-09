@@ -24,13 +24,13 @@ pub mod migrate;
 
 // Binary-only modules — not part of the public library API.
 #[doc(hidden)]
-pub mod display;
-#[doc(hidden)]
-pub mod mcp;
-#[doc(hidden)]
 pub mod contextvm;
 #[doc(hidden)]
+pub mod display;
+#[doc(hidden)]
 pub mod http;
+#[doc(hidden)]
+pub mod mcp;
 
 use anyhow::Result;
 use surrealdb::engine::local::Db;
@@ -163,7 +163,11 @@ impl Nomen {
         let d_tag = memory::build_dtag_from_tier(&mem.tier, &author_pubkey_hex, &mem.topic);
         let source = mem.source.as_deref().unwrap_or("api");
         let model = mem.model.as_deref().unwrap_or("nomen/api");
-        let detail_text = if mem.detail.is_empty() { &mem.summary } else { &mem.detail };
+        let detail_text = if mem.detail.is_empty() {
+            &mem.summary
+        } else {
+            &mem.detail
+        };
         let content = serde_json::json!({
             "summary": mem.summary,
             "detail": detail_text,
@@ -208,20 +212,33 @@ impl Nomen {
 
             let mut tags = vec![
                 nostr_sdk::Tag::custom(nostr_sdk::TagKind::Custom("d".into()), vec![d_tag.clone()]),
-                nostr_sdk::Tag::custom(nostr_sdk::TagKind::Custom("model".into()), vec![model.to_string()]),
-                nostr_sdk::Tag::custom(nostr_sdk::TagKind::Custom("confidence".into()), vec![format!("{:.2}", mem.confidence)]),
-                nostr_sdk::Tag::custom(nostr_sdk::TagKind::Custom("version".into()), vec!["1".to_string()]),
+                nostr_sdk::Tag::custom(
+                    nostr_sdk::TagKind::Custom("model".into()),
+                    vec![model.to_string()],
+                ),
+                nostr_sdk::Tag::custom(
+                    nostr_sdk::TagKind::Custom("confidence".into()),
+                    vec![format!("{:.2}", mem.confidence)],
+                ),
+                nostr_sdk::Tag::custom(
+                    nostr_sdk::TagKind::Custom("version".into()),
+                    vec!["1".to_string()],
+                ),
             ];
 
             // Add h tag for group tier (NIP-29)
             if let Some(group_id) = mem.tier.strip_prefix("group:") {
-                tags.push(nostr_sdk::Tag::custom(nostr_sdk::TagKind::Custom("h".into()), vec![group_id.to_string()]));
+                tags.push(nostr_sdk::Tag::custom(
+                    nostr_sdk::TagKind::Custom("h".into()),
+                    vec![group_id.to_string()],
+                ));
             }
 
             let builder = nostr_sdk::EventBuilder::new(
                 nostr_sdk::Kind::Custom(crate::kinds::MEMORY_KIND),
                 final_content,
-            ).tags(tags);
+            )
+            .tags(tags);
 
             if let Err(e) = relay.publish(builder).await {
                 tracing::warn!("Failed to publish memory to relay: {e}");
@@ -255,7 +272,11 @@ impl Nomen {
         let d_tag = memory::build_dtag_from_tier(&mem.tier, author_pubkey_hex, &mem.topic);
         let source = mem.source.as_deref().unwrap_or("api");
         let model = mem.model.as_deref().unwrap_or("nomen/api");
-        let detail_text = if mem.detail.is_empty() { &mem.summary } else { &mem.detail };
+        let detail_text = if mem.detail.is_empty() {
+            &mem.summary
+        } else {
+            &mem.detail
+        };
         let content = serde_json::json!({
             "summary": mem.summary,
             "detail": detail_text,
@@ -301,11 +322,19 @@ impl Nomen {
         let config = ConsolidationConfig {
             batch_size: opts.batch_size,
             min_messages: opts.min_messages,
-            llm_provider: opts.llm_provider.unwrap_or_else(|| Box::new(NoopLlmProvider)),
+            llm_provider: opts
+                .llm_provider
+                .unwrap_or_else(|| Box::new(NoopLlmProvider)),
             author_pubkey,
             ..Default::default()
         };
-        consolidate::consolidate(&self.db, self.embedder.as_ref(), &config, self.relay.as_ref()).await
+        consolidate::consolidate(
+            &self.db,
+            self.embedder.as_ref(),
+            &config,
+            self.relay.as_ref(),
+        )
+        .await
     }
 
     /// Query raw messages with filters.

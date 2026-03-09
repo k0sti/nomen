@@ -4,8 +4,8 @@ use anyhow::Result;
 use async_trait::async_trait;
 use nostr_sdk::prelude::*;
 use serde::Deserialize;
-use surrealdb::Surreal;
 use surrealdb::engine::local::Db;
+use surrealdb::Surreal;
 use tracing::{debug, info, warn};
 
 use crate::embed::Embedder;
@@ -104,7 +104,11 @@ fn derive_topic_from_messages(messages: &[RawMessageRecord]) -> String {
         .first()
         .map(|m| m.channel.as_str())
         .unwrap_or("general");
-    let channel = if channel.is_empty() { "general" } else { channel };
+    let channel = if channel.is_empty() {
+        "general"
+    } else {
+        channel
+    };
 
     if senders.len() == 1 {
         let sender = senders[0];
@@ -121,7 +125,13 @@ fn derive_topic_from_messages(messages: &[RawMessageRecord]) -> String {
 fn sanitize_topic_component(s: &str) -> String {
     let cleaned: String = s
         .chars()
-        .map(|c| if c.is_alphanumeric() || c == '_' || c == '-' { c.to_ascii_lowercase() } else { '-' })
+        .map(|c| {
+            if c.is_alphanumeric() || c == '_' || c == '-' {
+                c.to_ascii_lowercase()
+            } else {
+                '-'
+            }
+        })
         .collect();
     // Collapse multiple dashes
     let mut result = String::new();
@@ -177,7 +187,8 @@ fn enforce_tier_guard(derived_tier: &str, source_tier: &str) -> String {
     match source_tier {
         "personal" | "internal" | "private" => {
             // Personal/internal sources can only produce personal memories
-            if derived_tier != "personal" && derived_tier != "internal" && derived_tier != "private" {
+            if derived_tier != "personal" && derived_tier != "internal" && derived_tier != "private"
+            {
                 warn!(
                     derived = derived_tier,
                     "Cross-group guard: downgrading tier to personal (source is {source_tier})"
@@ -227,13 +238,14 @@ impl OpenAiLlmProvider {
             return None;
         }
 
-        let base_url = config.base_url.clone().unwrap_or_else(|| {
-            match config.provider.as_str() {
+        let base_url = config
+            .base_url
+            .clone()
+            .unwrap_or_else(|| match config.provider.as_str() {
                 "openai" => "https://api.openai.com/v1".to_string(),
                 "openrouter" => "https://openrouter.ai/api/v1".to_string(),
                 _ => "https://openrouter.ai/api/v1".to_string(),
-            }
-        });
+            });
 
         Some(Self::new(&base_url, &api_key, &config.model))
     }
@@ -285,7 +297,11 @@ impl LlmProvider for OpenAiLlmProvider {
 
         let mut transcript = String::new();
         for msg in messages {
-            let channel = if msg.channel.is_empty() { "general" } else { &msg.channel };
+            let channel = if msg.channel.is_empty() {
+                "general"
+            } else {
+                &msg.channel
+            };
             transcript.push_str(&format!(
                 "[{}] #{} {}: {}\n",
                 msg.created_at, channel, msg.sender, msg.content
@@ -340,11 +356,10 @@ The topic should remain the same as the existing memory's topic.";
             .map(|c| c.message.content.as_str())
             .unwrap_or("{}");
 
-        let extracted: LlmExtracted = serde_json::from_str(content)
-            .unwrap_or_else(|e| {
-                warn!("Failed to parse LLM merge response as JSON: {e}");
-                LlmExtracted { memories: vec![] }
-            });
+        let extracted: LlmExtracted = serde_json::from_str(content).unwrap_or_else(|e| {
+            warn!("Failed to parse LLM merge response as JSON: {e}");
+            LlmExtracted { memories: vec![] }
+        });
 
         Ok(extracted
             .memories
@@ -368,7 +383,11 @@ The topic should remain the same as the existing memory's topic.";
         // Build message transcript
         let mut transcript = String::new();
         for msg in messages {
-            let channel = if msg.channel.is_empty() { "general" } else { &msg.channel };
+            let channel = if msg.channel.is_empty() {
+                "general"
+            } else {
+                &msg.channel
+            };
             transcript.push_str(&format!(
                 "[{}] #{} {}: {}\n",
                 msg.created_at, channel, msg.sender, msg.content
@@ -421,11 +440,10 @@ Return an empty memories array if nothing significant is found.";
             .map(|c| c.message.content.as_str())
             .unwrap_or("{}");
 
-        let extracted: LlmExtracted = serde_json::from_str(content)
-            .unwrap_or_else(|e| {
-                warn!("Failed to parse LLM response as JSON: {e}");
-                LlmExtracted { memories: vec![] }
-            });
+        let extracted: LlmExtracted = serde_json::from_str(content).unwrap_or_else(|e| {
+            warn!("Failed to parse LLM response as JSON: {e}");
+            LlmExtracted { memories: vec![] }
+        });
 
         Ok(extracted
             .memories
@@ -509,7 +527,9 @@ pub fn parse_duration_str(s: &str) -> Result<i64> {
     }
 
     let (num_str, unit) = s.split_at(s.len() - 1);
-    let num: i64 = num_str.parse().map_err(|_| anyhow::anyhow!("Invalid duration number: {num_str}"))?;
+    let num: i64 = num_str
+        .parse()
+        .map_err(|_| anyhow::anyhow!("Invalid duration number: {num_str}"))?;
 
     match unit {
         "s" => Ok(num),
@@ -584,7 +604,10 @@ pub async fn consolidate(
             min = config.min_messages,
             "Not enough unconsolidated messages to consolidate"
         );
-        return Ok(ConsolidationReport { dry_run: config.dry_run, ..Default::default() });
+        return Ok(ConsolidationReport {
+            dry_run: config.dry_run,
+            ..Default::default()
+        });
     }
 
     debug!(count = messages.len(), "Processing unconsolidated messages");
@@ -618,13 +641,15 @@ pub async fn consolidate(
         let derived_tier = derive_tier_from_messages(group_msgs);
         // Apply cross-group consolidation guard (TODO #7)
         let most_restrictive_source = if group_msgs.iter().any(|m| {
-            m.source == "dm" || m.source == "telegram_dm"
+            m.source == "dm"
+                || m.source == "telegram_dm"
                 || (m.source == "nostr" && (m.channel.is_empty() || m.channel == "dm"))
         }) {
             "personal"
-        } else if group_msgs.iter().any(|m| {
-            !m.channel.is_empty() && m.channel != "dm" && m.channel != "general"
-        }) {
+        } else if group_msgs
+            .iter()
+            .any(|m| !m.channel.is_empty() && m.channel != "dm" && m.channel != "general")
+        {
             "group"
         } else {
             "public"
@@ -651,24 +676,56 @@ pub async fn consolidate(
             // Check if a memory with this d-tag already exists (for merge)
             let existing = get_existing_memory(db, &d_tag).await;
 
-            let (final_summary, final_detail, final_confidence, final_importance, contradicts, is_merge) = if let Ok(Some(existing_mem)) = existing {
+            let (
+                final_summary,
+                final_detail,
+                final_confidence,
+                final_importance,
+                contradicts,
+                is_merge,
+            ) = if let Ok(Some(existing_mem)) = existing {
                 // Merge: re-prompt LLM with existing + new
                 debug!(topic = %memory.topic, "Merging into existing memory");
                 let existing_summary = existing_mem.summary.as_deref().unwrap_or("");
                 let existing_detail = &existing_mem.content;
 
-                match config.llm_provider.merge(existing_summary, existing_detail, group_msgs).await {
+                match config
+                    .llm_provider
+                    .merge(existing_summary, existing_detail, group_msgs)
+                    .await
+                {
                     Ok(merged) if !merged.is_empty() => {
                         let m = &merged[0];
-                        (m.summary.clone(), m.detail.clone(), m.confidence, m.importance, m.contradicts_existing, true)
+                        (
+                            m.summary.clone(),
+                            m.detail.clone(),
+                            m.confidence,
+                            m.importance,
+                            m.contradicts_existing,
+                            true,
+                        )
                     }
                     Ok(_) => {
                         // Merge returned empty, use extracted as-is
-                        (memory.summary.clone(), memory.detail.clone(), memory.confidence, memory.importance, false, true)
+                        (
+                            memory.summary.clone(),
+                            memory.detail.clone(),
+                            memory.confidence,
+                            memory.importance,
+                            false,
+                            true,
+                        )
                     }
                     Err(e) => {
                         warn!("LLM merge failed, using extracted memory: {e}");
-                        (memory.summary.clone(), memory.detail.clone(), memory.confidence, memory.importance, false, true)
+                        (
+                            memory.summary.clone(),
+                            memory.detail.clone(),
+                            memory.confidence,
+                            memory.importance,
+                            false,
+                            true,
+                        )
                     }
                 }
             } else {
@@ -685,9 +742,14 @@ pub async fn consolidate(
                                     "Found near-duplicate memory, merging"
                                 );
                                 // Fetch the similar memory and merge
-                                if let Ok(Some(sim_mem)) = get_existing_memory(db, &sim_dtag).await {
+                                if let Ok(Some(sim_mem)) = get_existing_memory(db, &sim_dtag).await
+                                {
                                     let sim_summary = sim_mem.summary.as_deref().unwrap_or("");
-                                    match config.llm_provider.merge(sim_summary, &sim_mem.content, group_msgs).await {
+                                    match config
+                                        .llm_provider
+                                        .merge(sim_summary, &sim_mem.content, group_msgs)
+                                        .await
+                                    {
                                         Ok(merged) if !merged.is_empty() => {
                                             let m = &merged[0];
                                             is_dedup_merge = true;
@@ -701,14 +763,19 @@ pub async fn consolidate(
                                                 source: Some("consolidation".to_string()),
                                                 model: Some("nomen/consolidation".to_string()),
                                             };
-                                            let stored_dtag = crate::Nomen::store_direct(db, embedder, mem).await?;
+                                            let stored_dtag =
+                                                crate::Nomen::store_direct(db, embedder, mem)
+                                                    .await?;
                                             // Bump version
                                             bump_memory_version(db, &stored_dtag).await.ok();
                                             crate::db::set_consolidation_tags(
-                                                db, &stored_dtag,
+                                                db,
+                                                &stored_dtag,
                                                 &group_msgs.len().to_string(),
                                                 &now_timestamp.to_string(),
-                                            ).await.ok();
+                                            )
+                                            .await
+                                            .ok();
                                             report.memories_updated += 1;
                                         }
                                         _ => {}
@@ -721,14 +788,24 @@ pub async fn consolidate(
 
                 if is_dedup_merge {
                     // Track channel for reporting
-                    let channel = group_msgs.first().map(|m| m.channel.as_str()).unwrap_or("general");
+                    let channel = group_msgs
+                        .first()
+                        .map(|m| m.channel.as_str())
+                        .unwrap_or("general");
                     if !channel.is_empty() && !report.channels.contains(&channel.to_string()) {
                         report.channels.push(channel.to_string());
                     }
                     continue;
                 }
 
-                (memory.summary.clone(), memory.detail.clone(), memory.confidence, memory.importance, false, false)
+                (
+                    memory.summary.clone(),
+                    memory.detail.clone(),
+                    memory.confidence,
+                    memory.importance,
+                    false,
+                    false,
+                )
             };
 
             let summary_for_entities = final_summary.clone();
@@ -776,12 +853,10 @@ pub async fn consolidate(
             // Handle conflict detection: create contradicts edge
             if contradicts && is_merge {
                 let existing_d_tag = memory.topic.clone();
-                if let Err(e) = crate::db::create_references_edge(
-                    db,
-                    &d_tag,
-                    &existing_d_tag,
-                    "contradicts",
-                ).await {
+                if let Err(e) =
+                    crate::db::create_references_edge(db, &d_tag, &existing_d_tag, "contradicts")
+                        .await
+                {
                     warn!("Failed to create contradicts edge: {e}");
                 } else {
                     debug!(topic = %memory.topic, "Created contradicts edge for conflicting merge");
@@ -791,7 +866,9 @@ pub async fn consolidate(
             // Create consolidated_from edges
             if let Ok(record_id) = get_memory_record_id(db, &d_tag).await {
                 for msg in group_msgs {
-                    if let Err(e) = crate::db::create_consolidated_edge(db, &record_id, &msg.id).await {
+                    if let Err(e) =
+                        crate::db::create_consolidated_edge(db, &record_id, &msg.id).await
+                    {
                         warn!("Failed to create consolidated_from edge: {e}");
                     }
                 }
@@ -800,16 +877,29 @@ pub async fn consolidate(
             // Entity extraction from consolidated memory
             {
                 let entity_text = format!("{} {}", summary_for_entities, detail_for_entities);
-                let extracted_entities = crate::entities::extract_entities_heuristic(&entity_text, &[]);
+                let extracted_entities =
+                    crate::entities::extract_entities_heuristic(&entity_text, &[]);
                 if let Ok(record_id) = get_memory_record_id(db, &d_tag).await {
                     for entity in &extracted_entities {
                         match crate::db::store_entity(db, &entity.name, &entity.kind).await {
                             Ok(entity_id) => {
                                 // Parse entity_id to get just the ID part
-                                let eid = entity_id.split_once(':').map(|(_, id)| id).unwrap_or(&entity_id);
-                                let mid = record_id.split_once(':').map(|(_, id)| id).unwrap_or(&record_id);
-                                if let Err(e) = crate::db::create_mention_edge(db, mid, eid, entity.relevance).await {
-                                    warn!("Failed to create mention edge for entity '{}': {e}", entity.name);
+                                let eid = entity_id
+                                    .split_once(':')
+                                    .map(|(_, id)| id)
+                                    .unwrap_or(&entity_id);
+                                let mid = record_id
+                                    .split_once(':')
+                                    .map(|(_, id)| id)
+                                    .unwrap_or(&record_id);
+                                if let Err(e) =
+                                    crate::db::create_mention_edge(db, mid, eid, entity.relevance)
+                                        .await
+                                {
+                                    warn!(
+                                        "Failed to create mention edge for entity '{}': {e}",
+                                        entity.name
+                                    );
                                 }
                             }
                             Err(e) => {
@@ -853,29 +943,51 @@ pub async fn consolidate(
                 let version_str = if is_merge { "2" } else { "1" };
                 let mut event_tags = vec![
                     Tag::custom(TagKind::Custom("d".into()), vec![d_tag.clone()]),
-                    Tag::custom(TagKind::Custom("model".into()), vec!["nomen/consolidation".to_string()]),
-                    Tag::custom(TagKind::Custom("confidence".into()), vec![format!("{:.2}", final_confidence)]),
-                    Tag::custom(TagKind::Custom("version".into()), vec![version_str.to_string()]),
-                    Tag::custom(TagKind::Custom("consolidated_from".into()), vec![consolidated_from_count.clone()]),
-                    Tag::custom(TagKind::Custom("consolidated_at".into()), vec![consolidated_at.clone()]),
+                    Tag::custom(
+                        TagKind::Custom("model".into()),
+                        vec!["nomen/consolidation".to_string()],
+                    ),
+                    Tag::custom(
+                        TagKind::Custom("confidence".into()),
+                        vec![format!("{:.2}", final_confidence)],
+                    ),
+                    Tag::custom(
+                        TagKind::Custom("version".into()),
+                        vec![version_str.to_string()],
+                    ),
+                    Tag::custom(
+                        TagKind::Custom("consolidated_from".into()),
+                        vec![consolidated_from_count.clone()],
+                    ),
+                    Tag::custom(
+                        TagKind::Custom("consolidated_at".into()),
+                        vec![consolidated_at.clone()],
+                    ),
                 ];
 
                 // Add topic tags from the LLM-derived topic
                 for part in memory.topic.split('/') {
                     if !part.is_empty() {
-                        event_tags.push(Tag::custom(TagKind::Custom("t".into()), vec![part.to_string()]));
+                        event_tags.push(Tag::custom(
+                            TagKind::Custom("t".into()),
+                            vec![part.to_string()],
+                        ));
                     }
                 }
 
                 // Add h tag for group-scoped memories (NIP-29)
                 if tier.starts_with("group:") {
                     if let Some(group_id) = tier.strip_prefix("group:") {
-                        event_tags.push(Tag::custom(TagKind::Custom("h".into()), vec![group_id.to_string()]));
+                        event_tags.push(Tag::custom(
+                            TagKind::Custom("h".into()),
+                            vec![group_id.to_string()],
+                        ));
                     }
                 }
 
-                let builder = EventBuilder::new(Kind::Custom(crate::kinds::MEMORY_KIND), final_content)
-                    .tags(event_tags);
+                let builder =
+                    EventBuilder::new(Kind::Custom(crate::kinds::MEMORY_KIND), final_content)
+                        .tags(event_tags);
 
                 match relay.publish(builder).await {
                     Ok(result) => {
@@ -893,7 +1005,10 @@ pub async fn consolidate(
             }
 
             // Track channel for reporting
-            let channel = group_msgs.first().map(|m| m.channel.as_str()).unwrap_or("general");
+            let channel = group_msgs
+                .first()
+                .map(|m| m.channel.as_str())
+                .unwrap_or("general");
             if !channel.is_empty() && !report.channels.contains(&channel.to_string()) {
                 report.channels.push(channel.to_string());
             }
@@ -968,8 +1083,7 @@ async fn publish_deletion_events(
             continue;
         }
 
-        let delete_builder = EventBuilder::new(Kind::Custom(5), "consolidated")
-            .tags(tags);
+        let delete_builder = EventBuilder::new(Kind::Custom(5), "consolidated").tags(tags);
 
         match relay.publish(delete_builder).await {
             Ok(result) => {
@@ -1000,7 +1114,9 @@ async fn get_existing_memory(db: &Surreal<Db>, d_tag: &str) -> Result<Option<Exi
         confidence: Option<f64>,
     }
     let rows: Vec<Row> = db
-        .query("SELECT content, summary, version, confidence FROM memory WHERE d_tag = $d_tag LIMIT 1")
+        .query(
+            "SELECT content, summary, version, confidence FROM memory WHERE d_tag = $d_tag LIMIT 1",
+        )
         .bind(("d_tag", d_tag.to_string()))
         .await?
         .check()?
@@ -1049,7 +1165,7 @@ async fn find_similar_memory(
         .query(
             "SELECT d_tag, vector::similarity::cosine(embedding, $vec) AS similarity \
              FROM memory WHERE embedding IS NOT NONE \
-             ORDER BY similarity DESC LIMIT 1"
+             ORDER BY similarity DESC LIMIT 1",
         )
         .bind(("vec", embedding.to_vec()))
         .await?

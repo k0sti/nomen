@@ -1,8 +1,8 @@
 //! Integration tests for Nomen using temp-dir SurrealDB (SurrealKv).
 
 use anyhow::Result;
-use surrealdb::Surreal;
 use surrealdb::engine::local::{Db, SurrealKv};
+use surrealdb::Surreal;
 
 /// Initialize a SurrealDB instance in a temp directory with the nomen schema.
 async fn init_test_db() -> Result<(Surreal<Db>, tempfile::TempDir)> {
@@ -31,7 +31,8 @@ async fn test_store_and_search() -> Result<()> {
         content_raw: serde_json::json!({
             "summary": "Use anyhow for application errors",
             "detail": "anyhow provides easy error context chaining"
-        }).to_string(),
+        })
+        .to_string(),
         detail: "anyhow provides easy error context chaining".to_string(),
     };
 
@@ -39,7 +40,10 @@ async fn test_store_and_search() -> Result<()> {
 
     // Search for it using text search
     let results = nomen::db::search_memories(&db, "anyhow error", None, None, 10).await?;
-    assert!(!results.is_empty(), "Should find stored memory via text search");
+    assert!(
+        !results.is_empty(),
+        "Should find stored memory via text search"
+    );
     assert_eq!(results[0].topic, "rust/error-handling");
 
     // Delete it
@@ -86,7 +90,10 @@ async fn test_ingest_and_consolidate() -> Result<()> {
     };
     let report = nomen::consolidate::consolidate(&db, &embedder, &config, None).await?;
     assert_eq!(report.messages_processed, 5);
-    assert!(report.memories_created > 0, "Should create at least 1 memory");
+    assert!(
+        report.memories_created > 0,
+        "Should create at least 1 memory"
+    );
 
     // Verify messages are marked consolidated
     let query_consolidated = nomen::ingest::MessageQuery {
@@ -112,7 +119,8 @@ async fn test_groups() -> Result<()> {
         &["npub1abc".to_string(), "npub1def".to_string()],
         None,
         None,
-    ).await?;
+    )
+    .await?;
 
     // Create child group
     nomen::groups::create_group(
@@ -122,17 +130,32 @@ async fn test_groups() -> Result<()> {
         &["npub1abc".to_string()],
         Some("techteam"),
         None,
-    ).await?;
+    )
+    .await?;
 
     // Debug: count records
     #[derive(serde::Deserialize, Debug)]
-    struct CountResult { count: usize }
-    let count: Option<CountResult> = db.query("SELECT count() AS count FROM nomen_group GROUP ALL").await?.check()?.take(0)?;
+    struct CountResult {
+        count: usize,
+    }
+    let count: Option<CountResult> = db
+        .query("SELECT count() AS count FROM nomen_group GROUP ALL")
+        .await?
+        .check()?
+        .take(0)?;
     eprintln!("DEBUG: nomen_group count: {:?}", count);
 
     // Debug: try meta::id query
     #[derive(serde::Deserialize, Debug)]
-    struct IdGroup { id: String, name: String, parent: String, members: Vec<String>, relay: String, nostr_group: String, created_at: String }
+    struct IdGroup {
+        id: String,
+        name: String,
+        parent: String,
+        members: Vec<String>,
+        relay: String,
+        nostr_group: String,
+        created_at: String,
+    }
     let id_groups: Vec<IdGroup> = db.query("SELECT meta::id(id) AS id, name, parent, members, relay, nostr_group, created_at FROM nomen_group ORDER BY id").await?.check()?.take(0)?;
     eprintln!("DEBUG: id_groups: {:?}", id_groups);
 

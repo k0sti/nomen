@@ -339,7 +339,9 @@ async fn api_consolidation_status(
     State(state): State<SharedState>,
 ) -> Result<Json<Value>, AppError> {
     let cfg = state.config.read().await;
-    let consol_config = cfg.memory.as_ref()
+    let consol_config = cfg
+        .memory
+        .as_ref()
         .and_then(|m| m.consolidation.clone())
         .unwrap_or(crate::config::MemoryConsolidationConfig {
             enabled: true,
@@ -360,7 +362,10 @@ async fn api_consolidation_status(
     let mut val = serde_json::to_value(&status)?;
     if let Some(obj) = val.as_object_mut() {
         obj.insert("enabled".to_string(), json!(consol_config.enabled));
-        obj.insert("ephemeral_ttl_minutes".to_string(), json!(consol_config.ephemeral_ttl_minutes));
+        obj.insert(
+            "ephemeral_ttl_minutes".to_string(),
+            json!(consol_config.ephemeral_ttl_minutes),
+        );
     }
 
     Ok(Json(val))
@@ -391,7 +396,13 @@ async fn api_consolidate(
         ..Default::default()
     };
 
-    let report = consolidate::consolidate(&state.db, state.embedder.as_ref(), &config, state.relay.as_ref()).await?;
+    let report = consolidate::consolidate(
+        &state.db,
+        state.embedder.as_ref(),
+        &config,
+        state.relay.as_ref(),
+    )
+    .await?;
 
     Ok(Json(json!({
         "messages_processed": report.messages_processed,
@@ -421,9 +432,7 @@ async fn api_delete_memory(
     Ok(Json(json!({ "deleted": topic })))
 }
 
-async fn api_list_groups(
-    State(state): State<SharedState>,
-) -> Result<Json<Value>, AppError> {
+async fn api_list_groups(State(state): State<SharedState>) -> Result<Json<Value>, AppError> {
     let group_list = groups::list_groups(&state.db).await?;
     Ok(Json(json!({ "groups": group_list })))
 }
@@ -482,7 +491,9 @@ fn strip_config_secrets(config: &Config) -> Value {
     });
 
     // Resolve consolidation config
-    let consolidation = config.memory.as_ref()
+    let consolidation = config
+        .memory
+        .as_ref()
         .and_then(|m| m.consolidation.as_ref())
         .map(|c| {
             json!({
@@ -495,21 +506,27 @@ fn strip_config_secrets(config: &Config) -> Value {
                 "dry_run": c.dry_run,
             })
         })
-        .or_else(|| config.consolidation.as_ref().map(|c| {
-            json!({
-                "enabled": true,
-                "provider": c.provider,
-                "model": c.model,
+        .or_else(|| {
+            config.consolidation.as_ref().map(|c| {
+                json!({
+                    "enabled": true,
+                    "provider": c.provider,
+                    "model": c.model,
+                })
             })
-        }));
+        });
 
-    let groups: Vec<Value> = config.groups.iter().map(|g| {
-        json!({
-            "id": g.id,
-            "name": g.name,
-            "member_count": g.members.len(),
+    let groups: Vec<Value> = config
+        .groups
+        .iter()
+        .map(|g| {
+            json!({
+                "id": g.id,
+                "name": g.name,
+                "member_count": g.members.len(),
+            })
         })
-    }).collect();
+        .collect();
 
     json!({
         "relay": config.relay,
@@ -520,16 +537,12 @@ fn strip_config_secrets(config: &Config) -> Value {
     })
 }
 
-async fn api_get_config(
-    State(state): State<SharedState>,
-) -> Result<Json<Value>, AppError> {
+async fn api_get_config(State(state): State<SharedState>) -> Result<Json<Value>, AppError> {
     let config = state.config.read().await;
     Ok(Json(strip_config_secrets(&config)))
 }
 
-async fn api_reload_config(
-    State(state): State<SharedState>,
-) -> Result<Json<Value>, AppError> {
+async fn api_reload_config(State(state): State<SharedState>) -> Result<Json<Value>, AppError> {
     let new_config = Config::load()?;
     let stripped = strip_config_secrets(&new_config);
     let mut config = state.config.write().await;
@@ -537,9 +550,7 @@ async fn api_reload_config(
     Ok(Json(stripped))
 }
 
-async fn api_stats(
-    State(state): State<SharedState>,
-) -> Result<Json<Value>, AppError> {
+async fn api_stats(State(state): State<SharedState>) -> Result<Json<Value>, AppError> {
     let (total, named, pending) = db::count_memories_by_type(&state.db).await?;
     let entities = db::list_entities(&state.db, None).await?.len();
     let groups = groups::list_groups(&state.db).await?.len();
@@ -599,19 +610,28 @@ async fn api_prune(
 
     // Record last prune time if not dry run
     if !dry_run {
-        let _ = db::set_meta(&state.db, "last_prune_run", &chrono::Utc::now().to_rfc3339()).await;
+        let _ = db::set_meta(
+            &state.db,
+            "last_prune_run",
+            &chrono::Utc::now().to_rfc3339(),
+        )
+        .await;
     }
 
-    let pruned_items: Vec<Value> = report.pruned.iter().map(|m| {
-        let age_days = chrono::DateTime::parse_from_rfc3339(&m.created_at)
-            .map(|dt| (chrono::Utc::now() - dt.with_timezone(&chrono::Utc)).num_days())
-            .unwrap_or(0);
-        json!({
-            "topic": m.topic,
-            "confidence": m.confidence,
-            "age_days": age_days,
+    let pruned_items: Vec<Value> = report
+        .pruned
+        .iter()
+        .map(|m| {
+            let age_days = chrono::DateTime::parse_from_rfc3339(&m.created_at)
+                .map(|dt| (chrono::Utc::now() - dt.with_timezone(&chrono::Utc)).num_days())
+                .unwrap_or(0);
+            json!({
+                "topic": m.topic,
+                "confidence": m.confidence,
+                "age_days": age_days,
+            })
         })
-    }).collect();
+        .collect();
 
     Ok(Json(json!({
         "memories_pruned": report.memories_pruned,

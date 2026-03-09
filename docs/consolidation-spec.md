@@ -28,8 +28,9 @@ Named Memories (low volume, high value, topic-keyed)
 
 Stored in the `raw_message` table. Created by `nomen ingest` or auto-save from agent frameworks.
 
-- **D-tag pattern:** `conv:*`, `group:<id>:*`
-- **Lifecycle:** Short — consumed by consolidation, then deleted
+- **Canonical identity:** underlying Nostr event id + timestamp
+- **Grouping fields:** `channel` (provider/container identity) and resolved `scope`
+- **Lifecycle:** Short — consumed by consolidation, then deleted or marked superseded
 - **Source:** Auto-save, ingest command, webhook
 
 ### Named Memories (consolidated)
@@ -95,9 +96,10 @@ LIMIT $batch_size
 
 ### Stage 2: Grouping
 
-Messages are grouped by **identity + time window** before LLM processing:
+Messages are grouped by **scope/channel identity + time window** before LLM processing:
 
-- **Identity:** sender npub for DMs, channel/group ID for group messages
+- **Scope:** Nostr-native durable boundary used for resulting memory visibility
+- **Channel:** concrete conversation container the messages came from
 - **Time window:** 4-hour blocks (configurable via `TIME_WINDOW_SECS`)
 - Groups smaller than `min_messages` are skipped (will be picked up in a later run when more messages accumulate)
 
@@ -162,10 +164,12 @@ Each extracted memory becomes a kind 31234 replaceable event:
 }
 ```
 
-**Tier assignment:** Derived from source messages' context:
-- DM messages → `private`
+**Scope/visibility assignment:** Derived from source messages' resolved scope:
+- DM messages → `personal` or `internal` depending on memory class
 - Group messages → `group` (scoped to that group)
 - Public/CLI → `public`
+
+Provider-specific channel/container identifiers remain provenance metadata; they do not become part of the durable memory d-tag.
 
 **Deduplication:** Before creating a new memory, check if a memory with the same topic d-tag already exists. If it does:
 1. Merge the new information into the existing memory

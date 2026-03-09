@@ -57,7 +57,10 @@ pub fn parse_d_tag(d_tag: &str) -> String {
 /// Check if a d-tag uses the v0.2 format: `{visibility}:{context}:{topic}`.
 pub fn is_v2_dtag(d_tag: &str) -> bool {
     let prefix = d_tag.split(':').next().unwrap_or("");
-    matches!(prefix, "public" | "group" | "circle" | "personal" | "internal" | "private")
+    matches!(
+        prefix,
+        "public" | "group" | "circle" | "personal" | "internal" | "private"
+    )
 }
 
 /// Extract the topic component from a v0.2 d-tag.
@@ -108,15 +111,16 @@ pub fn build_dtag_from_tier(tier: &str, author_pubkey_hex: &str, topic: &str) ->
 /// Normalizes "private" → "personal" (canonical 4-tier model).
 pub fn parse_tier(tags: &Tags) -> String {
     // Try tier tag first (legacy/compat)
-    let tier_from_tag = get_tag_value(tags, "tier")
-        .or_else(|| get_tag_value(tags, "snow:tier"));
+    let tier_from_tag = get_tag_value(tags, "tier").or_else(|| get_tag_value(tags, "snow:tier"));
 
     // Try extracting from v0.2 d-tag format: {visibility}:{context}:{topic}
     let tier_val = tier_from_tag.unwrap_or_else(|| {
         if let Some(d) = get_tag_value(tags, "d") {
             if let Some(vis) = d.split(':').next() {
                 match vis {
-                    "public" | "group" | "personal" | "internal" | "circle" => return vis.to_string(),
+                    "public" | "group" | "personal" | "internal" | "circle" => {
+                        return vis.to_string()
+                    }
                     "private" => return "personal".to_string(),
                     _ => {}
                 }
@@ -126,7 +130,11 @@ pub fn parse_tier(tags: &Tags) -> String {
     });
 
     // Normalize legacy "private" → "personal"
-    let tier_val = if tier_val == "private" { "personal".to_string() } else { tier_val };
+    let tier_val = if tier_val == "private" {
+        "personal".to_string()
+    } else {
+        tier_val
+    };
 
     if tier_val == "group" {
         if let Some(h) = get_tag_value(tags, "h") {
@@ -160,8 +168,7 @@ pub fn get_tag_value(tags: &Tags, name: &str) -> Option<String> {
 
 /// Get a tag value, checking new name first, then legacy "snow:" prefixed name.
 fn get_tag_compat(tags: &Tags, name: &str) -> Option<String> {
-    get_tag_value(tags, name)
-        .or_else(|| get_tag_value(tags, &format!("snow:{name}")))
+    get_tag_value(tags, name).or_else(|| get_tag_value(tags, &format!("snow:{name}")))
 }
 
 /// Try to decrypt NIP-44 encrypted content using the provided signer.

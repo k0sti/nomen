@@ -1,14 +1,16 @@
 use anyhow::{Context, Result};
 use nostr_sdk::prelude::*;
 use serde::{Deserialize, Deserializer, Serialize};
-use surrealdb::Surreal;
 use surrealdb::engine::local::{Db, SurrealKv};
+use surrealdb::Surreal;
 use tracing::debug;
 
 use crate::memory::ParsedMemory;
 
 /// Deserialize SurrealDB NONE/null as None for Option<String>.
-pub fn deserialize_option_string<'de, D>(deserializer: D) -> std::result::Result<Option<String>, D::Error>
+pub fn deserialize_option_string<'de, D>(
+    deserializer: D,
+) -> std::result::Result<Option<String>, D::Error>
 where
     D: Deserializer<'de>,
 {
@@ -19,9 +21,16 @@ where
         fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
             f.write_str("a string, null, or NONE")
         }
-        fn visit_none<E: de::Error>(self) -> std::result::Result<Option<String>, E> { Ok(None) }
-        fn visit_unit<E: de::Error>(self) -> std::result::Result<Option<String>, E> { Ok(None) }
-        fn visit_some<D2: Deserializer<'de>>(self, d: D2) -> std::result::Result<Option<String>, D2::Error> {
+        fn visit_none<E: de::Error>(self) -> std::result::Result<Option<String>, E> {
+            Ok(None)
+        }
+        fn visit_unit<E: de::Error>(self) -> std::result::Result<Option<String>, E> {
+            Ok(None)
+        }
+        fn visit_some<D2: Deserializer<'de>>(
+            self,
+            d: D2,
+        ) -> std::result::Result<Option<String>, D2::Error> {
             Ok(Some(String::deserialize(d)?))
         }
         fn visit_str<E: de::Error>(self, v: &str) -> std::result::Result<Option<String>, E> {
@@ -30,7 +39,10 @@ where
         fn visit_string<E: de::Error>(self, v: String) -> std::result::Result<Option<String>, E> {
             Ok(Some(v))
         }
-        fn visit_enum<A: de::EnumAccess<'de>>(self, data: A) -> std::result::Result<Option<String>, A::Error> {
+        fn visit_enum<A: de::EnumAccess<'de>>(
+            self,
+            data: A,
+        ) -> std::result::Result<Option<String>, A::Error> {
             // SurrealDB NONE comes as an enum variant
             let _ = data.variant::<String>()?;
             Ok(None)
@@ -57,21 +69,33 @@ where
         fn visit_string<E: de::Error>(self, v: String) -> std::result::Result<String, E> {
             Ok(v)
         }
-        fn visit_map<A: de::MapAccess<'de>>(self, mut map: A) -> std::result::Result<String, A::Error> {
+        fn visit_map<A: de::MapAccess<'de>>(
+            self,
+            mut map: A,
+        ) -> std::result::Result<String, A::Error> {
             let mut tb = String::new();
             let mut id = String::new();
             while let Some(key) = map.next_key::<String>()? {
                 match key.as_str() {
                     "tb" => tb = map.next_value()?,
                     "id" => {
-                        id = map.next_value::<serde_json::Value>()?.to_string().trim_matches('"').to_string();
-                    },
-                    _ => { let _ = map.next_value::<serde_json::Value>()?; }
+                        id = map
+                            .next_value::<serde_json::Value>()?
+                            .to_string()
+                            .trim_matches('"')
+                            .to_string();
+                    }
+                    _ => {
+                        let _ = map.next_value::<serde_json::Value>()?;
+                    }
                 }
             }
             Ok(format!("{tb}:{id}"))
         }
-        fn visit_enum<A: de::EnumAccess<'de>>(self, data: A) -> std::result::Result<String, A::Error> {
+        fn visit_enum<A: de::EnumAccess<'de>>(
+            self,
+            data: A,
+        ) -> std::result::Result<String, A::Error> {
             // SurrealDB Thing can be serialized as an enum (internal representation)
             let (variant, _): (String, _) = data.variant()?;
             Ok(variant)
@@ -278,13 +302,17 @@ pub async fn init_db_with_dimensions(dimensions: usize) -> Result<Surreal<Db>> {
 
     db.use_ns("nomen").use_db("nomen").await?;
 
-    db.query(SCHEMA_BASE).await.context("Failed to apply base schema")?;
+    db.query(SCHEMA_BASE)
+        .await
+        .context("Failed to apply base schema")?;
 
     // Apply HNSW index with configurable dimensions
     let hnsw_sql = format!(
         "DEFINE INDEX IF NOT EXISTS memory_embedding ON memory FIELDS embedding HNSW DIMENSION {dimensions} DIST COSINE EFC 150 M 12"
     );
-    db.query(&hnsw_sql).await.context("Failed to apply HNSW index")?;
+    db.query(&hnsw_sql)
+        .await
+        .context("Failed to apply HNSW index")?;
     debug!(dimensions, "Schema applied with HNSW dimensions");
 
     Ok(db)
@@ -323,11 +351,7 @@ fn build_record(parsed: &ParsedMemory, nostr_id: &str) -> MemoryRecord {
 }
 
 /// Store a parsed memory into SurrealDB. Returns Ok(true) if inserted/updated, Ok(false) if skipped.
-pub async fn store_memory(
-    db: &Surreal<Db>,
-    parsed: &ParsedMemory,
-    event: &Event,
-) -> Result<bool> {
+pub async fn store_memory(db: &Surreal<Db>, parsed: &ParsedMemory, event: &Event) -> Result<bool> {
     let record = build_record(parsed, &event.id.to_hex());
 
     // Check existing version
@@ -348,7 +372,7 @@ pub async fn store_memory(
     // Upsert: delete then create
     db.query(
         "DELETE FROM memory WHERE d_tag = $d_tag; \
-         CREATE memory CONTENT $record"
+         CREATE memory CONTENT $record",
     )
     .bind(("d_tag", d_tag_owned))
     .bind(("record", record))
@@ -435,11 +459,7 @@ pub async fn search_memories(
 }
 
 /// Update an existing memory's embedding by d-tag.
-pub async fn store_embedding(
-    db: &Surreal<Db>,
-    d_tag: &str,
-    embedding: Vec<f32>,
-) -> Result<()> {
+pub async fn store_embedding(db: &Surreal<Db>, d_tag: &str, embedding: Vec<f32>) -> Result<()> {
     db.query("UPDATE memory SET embedding = $embedding, updated_at = $now WHERE d_tag = $d_tag")
         .bind(("d_tag", d_tag.to_string()))
         .bind(("embedding", embedding))
@@ -462,9 +482,7 @@ pub async fn list_memories(
         );
         bind_tier = Some(t.to_string());
     } else {
-        sql = format!(
-            "SELECT * FROM memory ORDER BY created_at DESC LIMIT {limit}"
-        );
+        sql = format!("SELECT * FROM memory ORDER BY created_at DESC LIMIT {limit}");
         bind_tier = None;
     }
 
@@ -486,9 +504,8 @@ pub async fn get_memories_without_embeddings(
     db: &Surreal<Db>,
     limit: usize,
 ) -> Result<Vec<MissingEmbeddingRow>> {
-    let sql = format!(
-        "SELECT d_tag, content, summary FROM memory WHERE embedding IS NONE LIMIT {limit}"
-    );
+    let sql =
+        format!("SELECT d_tag, content, summary FROM memory WHERE embedding IS NONE LIMIT {limit}");
     let results: Vec<MissingEmbeddingRow> = db.query(&sql).await?.check()?.take(0)?;
     Ok(results)
 }
@@ -615,9 +632,15 @@ fn extract_scope(d_tag: &str) -> String {
 
     // v0.1 legacy formats
     if d_tag.starts_with("snowclaw:memory:npub:") {
-        d_tag.strip_prefix("snowclaw:memory:npub:").unwrap_or("").to_string()
+        d_tag
+            .strip_prefix("snowclaw:memory:npub:")
+            .unwrap_or("")
+            .to_string()
     } else if d_tag.starts_with("snowclaw:memory:group:") {
-        d_tag.strip_prefix("snowclaw:memory:group:").unwrap_or("").to_string()
+        d_tag
+            .strip_prefix("snowclaw:memory:group:")
+            .unwrap_or("")
+            .to_string()
     } else {
         String::new()
     }
@@ -625,8 +648,8 @@ fn extract_scope(d_tag: &str) -> String {
 
 // ── Raw Message CRUD ────────────────────────────────────────────────
 
-use crate::ingest::{RawMessage, RawMessageRecord, MessageQuery};
-use crate::entities::{EntityRecord, EntityKind};
+use crate::entities::{EntityKind, EntityRecord};
+use crate::ingest::{MessageQuery, RawMessage, RawMessageRecord};
 
 /// Store a raw message into SurrealDB.
 pub async fn store_raw_message(db: &Surreal<Db>, msg: &RawMessage) -> Result<String> {
@@ -725,7 +748,10 @@ pub async fn query_raw_messages(
 pub async fn mark_messages_consolidated(db: &Surreal<Db>, ids: &[String]) -> Result<()> {
     for id in ids {
         db.query("UPDATE $id SET consolidated = true")
-            .bind(("id", surrealdb::sql::Thing::from(("raw_message", id.as_str()))))
+            .bind((
+                "id",
+                surrealdb::sql::Thing::from(("raw_message", id.as_str())),
+            ))
             .await?
             .check()?;
     }
@@ -776,12 +802,14 @@ pub async fn set_consolidation_tags(
     consolidated_from: &str,
     consolidated_at: &str,
 ) -> Result<()> {
-    db.query("UPDATE memory SET consolidated_from = $from, consolidated_at = $at WHERE d_tag = $d_tag")
-        .bind(("d_tag", d_tag.to_string()))
-        .bind(("from", consolidated_from.to_string()))
-        .bind(("at", consolidated_at.to_string()))
-        .await?
-        .check()?;
+    db.query(
+        "UPDATE memory SET consolidated_from = $from, consolidated_at = $at WHERE d_tag = $d_tag",
+    )
+    .bind(("d_tag", d_tag.to_string()))
+    .bind(("from", consolidated_from.to_string()))
+    .bind(("at", consolidated_at.to_string()))
+    .await?
+    .check()?;
     Ok(())
 }
 
@@ -821,8 +849,14 @@ pub async fn create_references_edge(
         .check()?
         .take(0)?;
 
-    let from_id = from_rows.first().map(|r| &r.id).ok_or_else(|| anyhow::anyhow!("Memory not found: {from_d_tag}"))?;
-    let to_id = to_rows.first().map(|r| &r.id).ok_or_else(|| anyhow::anyhow!("Memory not found: {to_d_tag}"))?;
+    let from_id = from_rows
+        .first()
+        .map(|r| &r.id)
+        .ok_or_else(|| anyhow::anyhow!("Memory not found: {from_d_tag}"))?;
+    let to_id = to_rows
+        .first()
+        .map(|r| &r.id)
+        .ok_or_else(|| anyhow::anyhow!("Memory not found: {to_d_tag}"))?;
 
     // Parse table:id format
     let (from_tb, from_rid) = from_id.split_once(':').unwrap_or(("memory", from_id));
@@ -859,7 +893,9 @@ pub async fn get_ephemeral_messages_before(
 /// Delete ephemeral raw messages older than a cutoff.
 pub async fn delete_ephemeral_before(db: &Surreal<Db>, before: &str) -> Result<usize> {
     #[derive(Deserialize)]
-    struct CountResult { count: usize }
+    struct CountResult {
+        count: usize,
+    }
     let count_result: Option<CountResult> = db
         .query("SELECT count() AS count FROM raw_message WHERE created_at < $before GROUP ALL")
         .bind(("before", before.to_string()))
@@ -879,7 +915,9 @@ pub async fn delete_ephemeral_before(db: &Surreal<Db>, before: &str) -> Result<u
 /// Count memories by type (ephemeral vs named).
 pub async fn count_memories_by_type(db: &Surreal<Db>) -> Result<(usize, usize, usize)> {
     #[derive(Deserialize)]
-    struct CountRow { count: usize }
+    struct CountRow {
+        count: usize,
+    }
 
     // Named memories (have a topic that doesn't start with "consolidated/" or "conv:")
     let named: Option<CountRow> = db
@@ -917,7 +955,9 @@ pub async fn query_messages_around(
 ) -> Result<Vec<RawMessageRecord>> {
     // First, find the target message's created_at
     #[derive(Deserialize)]
-    struct TimeRow { created_at: String }
+    struct TimeRow {
+        created_at: String,
+    }
 
     let target: Option<TimeRow> = db
         .query("SELECT created_at FROM raw_message WHERE source_id = $source_id LIMIT 1")
@@ -961,7 +1001,9 @@ pub async fn query_messages_around(
 /// Count consolidated raw messages older than the given cutoff date (RFC3339).
 pub async fn count_old_messages(db: &Surreal<Db>, before: &str) -> Result<usize> {
     #[derive(Deserialize)]
-    struct CountResult { count: usize }
+    struct CountResult {
+        count: usize,
+    }
     let result: Option<CountResult> = db
         .query("SELECT count() AS count FROM raw_message WHERE consolidated = true AND created_at < $before GROUP ALL")
         .bind(("before", before.to_string()))
@@ -1103,11 +1145,7 @@ pub async fn prune_memories(db: &Surreal<Db>, days: u64, dry_run: bool) -> Resul
 // ── Entity CRUD ─────────────────────────────────────────────────────
 
 /// Store an entity (upsert by name).
-pub async fn store_entity(
-    db: &Surreal<Db>,
-    name: &str,
-    kind: &EntityKind,
-) -> Result<String> {
+pub async fn store_entity(db: &Surreal<Db>, name: &str, kind: &EntityKind) -> Result<String> {
     let now = chrono::Utc::now().to_rfc3339();
     let kind_str = kind.as_str();
 
@@ -1130,7 +1168,7 @@ pub async fn store_entity(
                 kind: $kind, \
                 attributes: NONE, \
                 created_at: $created_at \
-            }"
+            }",
         )
         .bind(("name", name.to_string()))
         .bind(("kind", kind_str.to_string()))
@@ -1139,10 +1177,7 @@ pub async fn store_entity(
         .check()?
         .take(0)?;
 
-    let id = result
-        .first()
-        .map(|r| r.id.clone())
-        .unwrap_or_default();
+    let id = result.first().map(|r| r.id.clone()).unwrap_or_default();
     Ok(id)
 }
 
@@ -1190,7 +1225,10 @@ pub async fn create_consolidated_edge(
 ) -> Result<()> {
     db.query("RELATE $from->consolidated_from->$to")
         .bind(("from", surrealdb::sql::Thing::from(("memory", memory_id))))
-        .bind(("to", surrealdb::sql::Thing::from(("raw_message", raw_message_id))))
+        .bind((
+            "to",
+            surrealdb::sql::Thing::from(("raw_message", raw_message_id)),
+        ))
         .await?
         .check()?;
     Ok(())
@@ -1201,7 +1239,9 @@ pub async fn create_consolidated_edge(
 /// Get a meta value by key.
 pub async fn get_meta(db: &Surreal<Db>, key: &str) -> Result<Option<String>> {
     #[derive(Deserialize)]
-    struct MetaRow { val: String }
+    struct MetaRow {
+        val: String,
+    }
     let result: Option<MetaRow> = db
         .query("SELECT val FROM kv_meta WHERE key = $key LIMIT 1")
         .bind(("key", key.to_string()))
@@ -1226,7 +1266,9 @@ pub async fn set_meta(db: &Surreal<Db>, key: &str, val: &str) -> Result<()> {
 /// Count unconsolidated raw messages.
 pub async fn count_unconsolidated_messages(db: &Surreal<Db>) -> Result<usize> {
     #[derive(Deserialize)]
-    struct CountRow { count: usize }
+    struct CountRow {
+        count: usize,
+    }
     let result: Option<CountRow> = db
         .query("SELECT count() AS count FROM raw_message WHERE consolidated = false GROUP ALL")
         .await?

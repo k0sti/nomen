@@ -25,7 +25,7 @@ All memory events use **kind 31234** (Nomen Memory). This is an addressable/repl
 ### Structure
 
 ```
-{visibility}:{context}:{topic}
+{visibility}:{scope}:{topic}
 ```
 
 The d-tag encodes three dimensions separated by colons:
@@ -33,8 +33,10 @@ The d-tag encodes three dimensions separated by colons:
 | Field | Description | Examples |
 |-------|-------------|---------|
 | **visibility** | Access level — who can read this memory | `public`, `group`, `circle`, `personal`, `internal` |
-| **context** | Boundary — whose memory this is or where it belongs | group name, pubkey hash, npub, or empty |
+| **scope** | Nostr-native boundary — whose memory this is or where it belongs | group id, pubkey hash, circle hash, or empty |
 | **topic** | Subject identifier — what this memory is about | `api-patterns`, `ssh-config` |
+
+**Terminology:** `scope` is the durable Nostr-native boundary used by memories. Provider-specific transport/container details (Telegram topic IDs, Discord thread IDs, etc.) do **not** belong in `scope`; they belong in `channel` metadata attached to raw messages and provenance records.
 
 ### Visibility Values
 
@@ -128,7 +130,7 @@ No metadata in content — that's what tags are for.
 
 | Tag | Required | Description |
 |-----|----------|-------------|
-| `d` | Yes | `{visibility}:{context}:{topic}` — addressable/replaceable key |
+| `d` | Yes | `{visibility}:{scope}:{topic}` — addressable/replaceable key |
 | `model` | Yes | Model that generated this memory (e.g. `anthropic/claude-opus-4-6`) |
 | `confidence` | Yes | Self-assessed confidence score, float in [0.0, 1.0] |
 | `version` | Yes | Version number (monotonically increasing per d-tag) |
@@ -314,7 +316,39 @@ For verified owner-agent relationship, both must exist:
 
 ---
 
-## 8. Relay Subscription Filters
+## 8. Scope and Channel Model
+
+### Scope
+
+`scope` is defined exactly as in the memory model and is always Nostr-native:
+
+- `public` → empty scope
+- `group` → NIP-29 group id
+- `circle` → deterministic participant-set hash
+- `personal` / `internal` → hex pubkey
+
+Scope is the durable boundary for visibility, access control, and memory ownership.
+
+### Channel
+
+`channel` identifies the concrete conversation container where raw messages were observed. It is provider-specific and may refer to Nostr or bridged transports.
+
+Examples:
+
+- `nostr-group:wss://zooid.atlantislabs.space:techteam`
+- `nostr-dm:<peer-pubkey-hex>`
+- `telegram:-1003821690204:694`
+- `discord:<guild_id>:<channel_id>:<thread_id>`
+
+### Rule
+
+- **Memories attach to scope.**
+- **Messages attach to channel and resolve to a scope.**
+- Non-Nostr provider identifiers MUST NOT be embedded into the memory scope or d-tag.
+
+This keeps the durable memory model transport-neutral while still allowing multi-channel ingestion and provenance.
+
+## 9. Relay Subscription Filters
 
 ### Memory Events
 

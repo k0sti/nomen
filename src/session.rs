@@ -10,7 +10,7 @@
 //!   - `"<group_name>"` → group tier (resolved via GroupStore)
 //!   - `"<channel>:<group_name>"` → group tier with explicit channel
 
-use anyhow::{Result, bail};
+use anyhow::{bail, Result};
 use nostr_sdk::prelude::*;
 use serde::{Deserialize, Serialize};
 
@@ -177,15 +177,13 @@ mod tests {
     use crate::config::GroupConfig;
 
     fn test_groups() -> GroupStore {
-        GroupStore::from_config(&[
-            GroupConfig {
-                id: "techteam".to_string(),
-                name: "Tech Team".to_string(),
-                members: vec!["npub1abc".to_string()],
-                nostr_group: Some("inner-circle".to_string()),
-                relay: None,
-            },
-        ])
+        GroupStore::from_config(&[GroupConfig {
+            id: "techteam".to_string(),
+            name: "Tech Team".to_string(),
+            members: vec!["npub1abc".to_string()],
+            nostr_group: Some("inner-circle".to_string()),
+            relay: None,
+        }])
     }
 
     #[test]

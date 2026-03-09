@@ -13,9 +13,9 @@ use std::sync::Mutex;
 use anyhow::Result;
 use nostr_sdk::prelude::*;
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
-use surrealdb::Surreal;
+use serde_json::{json, Value};
 use surrealdb::engine::local::Db;
+use surrealdb::Surreal;
 use tracing::{debug, error, info, warn};
 
 use crate::consolidate;
@@ -122,7 +122,15 @@ impl ContextVmServer {
         groups: GroupStore,
         default_channel: String,
     ) -> Self {
-        Self::with_rate_limit(db, embedder, relay, allowed_npubs, 30, groups, default_channel)
+        Self::with_rate_limit(
+            db,
+            embedder,
+            relay,
+            allowed_npubs,
+            30,
+            groups,
+            default_channel,
+        )
     }
 
     pub fn with_rate_limit(
@@ -208,7 +216,10 @@ impl ContextVmServer {
         }
 
         // Rate limit check
-        if !self.rate_limiter.check(&requester, Timestamp::now().as_u64()) {
+        if !self
+            .rate_limiter
+            .check(&requester, Timestamp::now().as_u64())
+        {
             warn!(
                 requester = %requester,
                 "Rate-limited Context-VM request"
@@ -223,7 +234,10 @@ impl ContextVmServer {
         );
 
         // Decrypt content (NIP-44, encrypted to our pubkey)
-        let plaintext = self.relay.signer().decrypt_from(&event.content, &event.pubkey)
+        let plaintext = self
+            .relay
+            .signer()
+            .decrypt_from(&event.content, &event.pubkey)
             .map_err(|e| anyhow::anyhow!("NIP-44 decryption failed: {e}"))?;
 
         // Parse request
@@ -259,11 +273,18 @@ impl ContextVmServer {
         Ok(())
     }
 
-    async fn send_response(&self, request_event: &Event, response: &ContextVmResponse) -> Result<()> {
+    async fn send_response(
+        &self,
+        request_event: &Event,
+        response: &ContextVmResponse,
+    ) -> Result<()> {
         let response_json = serde_json::to_string(response)?;
 
         // Encrypt to requester's pubkey
-        let encrypted = self.relay.signer().encrypt_to(&response_json, &request_event.pubkey)
+        let encrypted = self
+            .relay
+            .signer()
+            .encrypt_to(&response_json, &request_event.pubkey)
             .map_err(|e| anyhow::anyhow!("NIP-44 encryption failed: {e}"))?;
 
         let expiration = Timestamp::from(Timestamp::now().as_u64() + 60);
@@ -301,12 +322,15 @@ impl ContextVmServer {
             return Ok(ContextVmResponse::err("query parameter is required"));
         }
 
-        let tier = params.get("tier").and_then(|v| v.as_str()).map(String::from);
-        let limit = params
-            .get("limit")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(10) as usize;
-        let scope = params.get("scope").and_then(|v| v.as_str()).map(String::from);
+        let tier = params
+            .get("tier")
+            .and_then(|v| v.as_str())
+            .map(String::from);
+        let limit = params.get("limit").and_then(|v| v.as_u64()).unwrap_or(10) as usize;
+        let scope = params
+            .get("scope")
+            .and_then(|v| v.as_str())
+            .map(String::from);
 
         let opts = search::SearchOptions {
             query,
@@ -466,7 +490,8 @@ impl ContextVmServer {
     async fn handle_consolidate(&self, _params: &Value) -> Result<ContextVmResponse> {
         let config = consolidate::ConsolidationConfig::default();
         let report =
-            consolidate::consolidate(&self.db, self.embedder.as_ref(), &config, Some(&self.relay)).await?;
+            consolidate::consolidate(&self.db, self.embedder.as_ref(), &config, Some(&self.relay))
+                .await?;
 
         Ok(ContextVmResponse::ok(json!({
             "messages_processed": report.messages_processed,
@@ -493,12 +518,7 @@ impl ContextVmServer {
                 .get("since")
                 .and_then(|v| v.as_str())
                 .map(String::from),
-            limit: Some(
-                params
-                    .get("limit")
-                    .and_then(|v| v.as_u64())
-                    .unwrap_or(50) as usize,
-            ),
+            limit: Some(params.get("limit").and_then(|v| v.as_u64()).unwrap_or(50) as usize),
             consolidated_only: false,
         };
 
@@ -551,10 +571,7 @@ impl ContextVmServer {
             .get("recipient")
             .and_then(|v| v.as_str())
             .unwrap_or("");
-        let content = params
-            .get("content")
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
+        let content = params.get("content").and_then(|v| v.as_str()).unwrap_or("");
 
         if recipient.is_empty() || content.is_empty() {
             return Ok(ContextVmResponse::err("recipient and content are required"));
@@ -566,8 +583,7 @@ impl ContextVmServer {
             .map(String::from);
         let metadata = params.get("metadata").cloned();
 
-        let target = send::parse_recipient(recipient)
-            .map_err(|e| anyhow::anyhow!("{e}"))?;
+        let target = send::parse_recipient(recipient).map_err(|e| anyhow::anyhow!("{e}"))?;
 
         let opts = send::SendOptions {
             target,
@@ -586,4 +602,3 @@ impl ContextVmServer {
         })))
     }
 }
-
