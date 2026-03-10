@@ -1,22 +1,37 @@
 # Nomen — build, deploy, and manage
 
-# Build and restart everything
-deploy: build-all restart
+# Show available commands
+default:
+    @just --list
+
+# Alias for explicit help
+help:
+    @just --list
+
+# Install the Nomen CLI locally
+install:
+    cargo install --path . --locked
 
 # Build web UI only
 build-web:
     cd web && npm run build
 
-# Build Rust backend only
+# Build Rust backend / CLI only
 build-rust:
     cargo build --release
 
 # Build everything
 build-all: build-web build-rust
 
+# Build and restart everything
+deploy: build-all restart
+
 # Restart the nomen service
 restart:
     sudo systemctl restart nomen
+    @echo "✅ Nomen restarted"
+    @sleep 2
+    @systemctl status nomen --no-pager | head -15
 
 # Deploy web UI (build + restart)
 deploy-web: build-web restart

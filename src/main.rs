@@ -1724,15 +1724,15 @@ async fn cmd_init(force: bool, non_interactive: bool) -> Result<()> {
     println!("  {}", "1. Relay".bold());
     let relay: String = Input::new()
         .with_prompt("     Nostr relay URL")
-        .default("wss://relay.damus.io".to_string())
+        .default("wss://zooid.atlantislabs.space".to_string())
         .interact_text()?;
 
     // 2. Identities
     println!("\n  {}", "2. Identities".bold());
     let guardian_nsec: String = Password::new()
-        .with_prompt("     Guardian nsec (your key)")
+        .with_prompt("     User nsec (your key)")
         .interact()?;
-    let guardian_keys = Keys::parse(&guardian_nsec).context("Invalid guardian nsec")?;
+    let guardian_keys = Keys::parse(&guardian_nsec).context("Invalid user nsec")?;
     let guardian_npub = guardian_keys.public_key().to_bech32()?;
     println!("     {} {}", "✓".green(), guardian_npub);
 
