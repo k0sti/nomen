@@ -520,6 +520,9 @@ struct GroupKey {
     identity: String,
     /// Time window index (created_at / TIME_WINDOW_SECS)
     window: i64,
+    /// Resolved scope prevents cross-group consolidation (TODO #7).
+    /// Messages from different scopes are never mixed in the same batch.
+    scope: String,
 }
 
 /// Parse a duration string like "30m", "1h", "7d" into seconds.
@@ -544,7 +547,43 @@ pub fn parse_duration_str(s: &str) -> Result<i64> {
     }
 }
 
-/// Group messages by sender + time window (4-hour blocks).
+/// Resolve the scope for a single raw message.
+///
+/// Scope determines the privacy/group boundary:
+/// - DM sources → "personal"
+/// - Group sources with a specific channel → "group:{channel}"
+/// - Everything else → "public"
+///
+/// This is used to partition messages so that different scopes are never
+/// consolidated together (cross-group guard, TODO #7).
+fn resolve_message_scope(msg: &RawMessageRecord) -> String {
+    let is_dm = msg.source == "dm"
+        || msg.source == "telegram_dm"
+        || (msg.source == "nostr" && (msg.channel.is_empty() || msg.channel == "dm"));
+
+    if is_dm {
+        return "personal".to_string();
+    }
+
+    let is_group = !msg.channel.is_empty()
+        && msg.channel != "dm"
+        && msg.channel != "general"
+        && (msg.source == "nostr"
+            || msg.source == "telegram"
+            || msg.source.starts_with("group"));
+
+    if is_group {
+        return format!("group:{}", msg.channel);
+    }
+
+    "public".to_string()
+}
+
+/// Group messages by sender + time window (4-hour blocks) + scope.
+///
+/// The scope field in the group key ensures messages from different
+/// visibility/group scopes are never mixed in the same consolidation
+/// batch, preventing information leakage across tiers (TODO #7).
 fn group_messages(messages: Vec<RawMessageRecord>) -> HashMap<GroupKey, Vec<RawMessageRecord>> {
     let mut groups: HashMap<GroupKey, Vec<RawMessageRecord>> = HashMap::new();
 
@@ -562,7 +601,14 @@ fn group_messages(messages: Vec<RawMessageRecord>) -> HashMap<GroupKey, Vec<RawM
             msg.channel.clone()
         };
 
-        let key = GroupKey { identity, window };
+        // Resolve scope to prevent cross-group consolidation
+        let scope = resolve_message_scope(&msg);
+
+        let key = GroupKey {
+            identity,
+            window,
+            scope,
+        };
         groups.entry(key).or_default().push(msg);
     }
 
@@ -615,9 +661,11 @@ pub async fn consolidate(
 
     debug!(count = messages.len(), "Processing unconsolidated messages");
 
-    // Group messages by sender/channel + time window
+    // Group messages by sender/channel + time window + scope
+    // Scope partitioning ensures messages from different groups/tiers
+    // are never consolidated together (cross-group guard).
     let grouped = group_messages(messages.clone());
-    debug!(groups = grouped.len(), "Grouped messages into time windows");
+    debug!(groups = grouped.len(), "Grouped messages into time windows (scope-partitioned)");
 
     let mut report = ConsolidationReport {
         messages_processed: messages.len(),
@@ -632,6 +680,7 @@ pub async fn consolidate(
         if group_msgs.len() < config.min_messages {
             debug!(
                 key = %key.identity,
+                scope = %key.scope,
                 count = group_msgs.len(),
                 "Skipping group with too few messages"
             );
@@ -640,9 +689,9 @@ pub async fn consolidate(
 
         let extracted = config.llm_provider.consolidate(group_msgs).await?;
 
-        // Derive tier from source messages (TODO #1)
+        // Derive tier from source messages
         let derived_tier = derive_tier_from_messages(group_msgs);
-        // Apply cross-group consolidation guard (TODO #7)
+        // Apply cross-group consolidation guard (scope partitioning in GroupKey + tier guard)
         let most_restrictive_source = if group_msgs.iter().any(|m| {
             m.source == "dm"
                 || m.source == "telegram_dm"
