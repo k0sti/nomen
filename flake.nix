@@ -26,7 +26,12 @@
             pname = "nomen";
             version = "0.1.0";
             src = ./.;
-            cargoLock.lockFile = ./Cargo.lock;
+            cargoLock = {
+              lockFile = ./Cargo.lock;
+              outputHashes = {
+                "contextvm-sdk-0.1.0" = "sha256-34Gk/6cO6N51wptzMmraGe/Gkb16x6+WrTJ+EEOIb4A=";
+              };
+            };
             buildFeatures = [ "migrate" ];
             nativeBuildInputs = with pkgs; [ pkg-config ];
             buildInputs = with pkgs; [ openssl ];
