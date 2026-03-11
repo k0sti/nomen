@@ -21,14 +21,14 @@
 
 ### Problem
 
-Nomen has graph edges in SurrealDB (`mentions`, `references`, `contradicts`, `consolidated_from`, `related_to`) but search only uses vector+BM25. The graph is write-only — provenance is recorded but never exploited for retrieval.
+Nomen has graph edges in SurrealDB (`mentions`, `references`, `consolidated_from`, `related_to`) but search only uses vector+BM25. The graph is write-only — provenance is recorded but never exploited for retrieval. (Contradictions are stored as `references` edges with `relation: "contradicts"` rather than a separate edge table.)
 
-When an agent searches for "Alhovuori business plan", it finds the memory about the business plan but NOT the related memories about Tommi Ullgrén (linked via `mentions`), the property holding model (linked via `references`), or the contradicted earlier revenue estimate (linked via `contradicts`). The agent loses relational context.
+When an agent searches for "Alhovuori business plan", it finds the memory about the business plan but NOT the related memories about Tommi Ullgrén (linked via `mentions`), the property holding model (linked via `references`), or the contradicted earlier revenue estimate (linked via `references` with `relation: "contradicts"`). The agent loses relational context.
 
 ### What This Enables
 
 - **Multi-hop reasoning** — "Who is involved in the Alhovuori project?" traverses memory→mentions→entity→mentions→memory to find all related people and their context
-- **Contradiction surfacing** — When retrieving a memory, automatically surface any memories linked via `contradicts` edges, so the agent sees conflicting information
+- **Contradiction surfacing** — When retrieving a memory, automatically surface any memories linked via `references` edges where `relation = "contradicts"`, so the agent sees conflicting information
 - **Provenance exploration** — "Where did this knowledge come from?" walks `consolidated_from` edges back to source messages
 - **Related topic discovery** — "What else is relevant?" follows `references` and `related_to` edges to find adjacent knowledge the agent didn't explicitly search for
 - **Entity-centric views** — "Everything about k0" traverses all `mentions` edges pointing to the k0 entity, returning a coherent profile assembled from many memories
@@ -51,7 +51,7 @@ hybrid_search(query)
 |-----------|-----------|--------|-----------|
 | `mentions` | memory→entity→memory | 0.7 | Entity co-occurrence is strong signal |
 | `references` (supports) | memory→memory | 0.6 | Supporting evidence |
-| `contradicts` | memory→memory | 0.8 | Conflicts are critical context |
+| `references` (contradicts) | memory→memory | 0.8 | Conflicts are critical context (stored as `references` edge with `relation: "contradicts"`) |
 | `consolidated_from` | memory→raw_message | 0.3 | Provenance, lower relevance |
 | `related_to` | entity→entity | 0.5 | Indirect association |
 
@@ -89,7 +89,7 @@ async fn graph_expand(
              FROM memory WHERE d_tag = $d_tag"
         ).bind(("d_tag", d_tag)).await?;
 
-        // 3. Follow contradicts edges (high priority)
+        // 3. Follow contradicts relations on references edges (high priority)
         let contradictions = db.query(
             "SELECT ->references[WHERE relation = 'contradicts']->memory.* AS conflicts
              FROM memory WHERE d_tag = $d_tag"
