@@ -21,7 +21,7 @@ pub struct GroupConfig {
     pub relay: Option<String>,
 }
 
-#[derive(Deserialize, Serialize, Default)]
+#[derive(Clone, Deserialize, Serialize, Default)]
 pub struct Config {
     #[serde(default)]
     pub relay: Option<String>,
