@@ -59,6 +59,38 @@ pub struct MemorySection {
     /// Consolidation settings per spec: [memory.consolidation]
     #[serde(default)]
     pub consolidation: Option<MemoryConsolidationConfig>,
+    /// Cluster fusion settings: [memory.cluster]
+    #[serde(default)]
+    pub cluster: Option<MemoryClusterConfig>,
+}
+
+/// Cluster fusion config matching the spec [memory.cluster] section.
+#[derive(Deserialize, Serialize, Clone)]
+pub struct MemoryClusterConfig {
+    /// Whether cluster fusion is enabled
+    #[serde(default)]
+    pub enabled: bool,
+    /// Minimum memories per cluster to trigger synthesis
+    #[serde(default = "default_cluster_min_members")]
+    pub min_members: usize,
+    /// How deep to group by namespace prefix (e.g. 2 for "user/k0")
+    #[serde(default = "default_cluster_namespace_depth")]
+    pub namespace_depth: usize,
+    /// Run cluster fusion every N hours
+    #[serde(default = "default_cluster_interval_hours")]
+    pub interval_hours: u32,
+}
+
+fn default_cluster_min_members() -> usize {
+    3
+}
+
+fn default_cluster_namespace_depth() -> usize {
+    2
+}
+
+fn default_cluster_interval_hours() -> u32 {
+    24
 }
 
 /// Full consolidation config matching the spec [memory.consolidation] section.
