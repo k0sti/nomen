@@ -51,6 +51,9 @@ pub struct Config {
     /// HTTP server configuration
     #[serde(default)]
     pub server: Option<ServerConfig>,
+    /// Entity extraction LLM configuration
+    #[serde(default)]
+    pub entities: Option<EntityExtractionConfig>,
 }
 
 /// The [memory] config section, per spec.
@@ -202,6 +205,35 @@ pub struct ServerConfig {
 
 fn default_listen() -> String {
     "127.0.0.1:3000".to_string()
+}
+
+/// Entity extraction LLM configuration [entities] section.
+#[derive(Deserialize, Serialize, Clone)]
+pub struct EntityExtractionConfig {
+    /// Provider: "openrouter", "openai", "heuristic", or "none"
+    #[serde(default = "default_entity_provider")]
+    pub provider: String,
+    /// Model name (e.g. "anthropic/claude-sonnet-4-6")
+    #[serde(default = "default_entity_model")]
+    pub model: String,
+    /// Environment variable name containing the API key
+    #[serde(default = "default_entity_api_key_env")]
+    pub api_key_env: String,
+    /// Base URL override
+    #[serde(default)]
+    pub base_url: Option<String>,
+}
+
+fn default_entity_provider() -> String {
+    "openrouter".to_string()
+}
+
+fn default_entity_model() -> String {
+    "anthropic/claude-sonnet-4-6".to_string()
+}
+
+fn default_entity_api_key_env() -> String {
+    "OPENROUTER_API_KEY".to_string()
 }
 
 impl Default for EmbeddingConfig {

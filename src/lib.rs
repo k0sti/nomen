@@ -75,6 +75,7 @@ pub struct ConsolidateOptions {
     pub batch_size: usize,
     pub min_messages: usize,
     pub llm_provider: Option<Box<dyn consolidate::LlmProvider>>,
+    pub entity_extractor: Option<Box<dyn entities::EntityExtractor>>,
 }
 
 impl Default for ConsolidateOptions {
@@ -83,6 +84,7 @@ impl Default for ConsolidateOptions {
             batch_size: 50,
             min_messages: 3,
             llm_provider: None,
+            entity_extractor: None,
         }
     }
 }
@@ -374,6 +376,9 @@ impl Nomen {
             llm_provider: opts
                 .llm_provider
                 .unwrap_or_else(|| Box::new(NoopLlmProvider)),
+            entity_extractor: opts
+                .entity_extractor
+                .unwrap_or_else(|| Box::new(entities::HeuristicExtractor)),
             author_pubkey,
             ..Default::default()
         };
@@ -395,6 +400,14 @@ impl Nomen {
     pub async fn entities(&self, kind: Option<&str>) -> Result<Vec<EntityRecord>> {
         let kind = kind.and_then(EntityKind::from_str);
         db::list_entities(&self.db, kind.as_ref()).await
+    }
+
+    /// List entity relationships, optionally filtered by entity name.
+    pub async fn entity_relationships(
+        &self,
+        entity_name: Option<&str>,
+    ) -> Result<Vec<entities::RelationshipRecord>> {
+        db::list_entity_relationships(&self.db, entity_name).await
     }
 
     /// Delete a memory by topic or event ID.
