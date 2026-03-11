@@ -485,8 +485,8 @@
         </div>
         <div class="card">
           <h3>Context-VM</h3>
-          <p class="body"><strong>Nostr-native path.</strong> Agent publishes kind 21900 requests, Nomen responds with kind 21901. All payloads NIP-44 encrypted. Also enables payments - memory access can be metered over Lightning.</p>
-          <p class="body" style="margin-top:10px;color:var(--accent);">Best for: Nostr-native agents. No transport dependency beyond relays. Supports paid memory services.</p>
+          <p class="body"><strong>Nostr-native path.</strong> Uses the <a href="https://github.com/ContextVM/sdk" style="color:var(--accent);">ContextVM protocol</a> — kind 25910 messages with NIP-44/NIP-59 encryption. Supports discovery via kinds 11316-11320. Also enables payments — memory access can be metered over Lightning.</p>
+          <p class="body" style="margin-top:10px;color:var(--accent);">Best for: Nostr-native agents. No transport dependency beyond relays. Server discoverable via kind 11316 announcements.</p>
         </div>
         <div class="card">
           <h3>Library</h3>
@@ -537,7 +537,7 @@ nomen serve --http 127.0.0.1:3000</code>
         <div class="cmd">
           <code>nomen serve --stdio --context-vm \
   --allowed-npubs &lt;hex-pubkey&gt;</code>
-          <p>Context-VM: pure Nostr request/response (kind 21900→21901, NIP-44 encrypted).</p>
+          <p>Context-VM: ContextVM protocol (kind 25910 messages, NIP-44/NIP-59 encrypted).</p>
         </div>
       </div>
     </div>
@@ -624,7 +624,7 @@ nomen serve --http 127.0.0.1:3000</code>
         <div class="cmd">
           <code>nomen serve --stdio --context-vm \
   --allowed-npubs &lt;hex-pubkey&gt;</code>
-          <p>Context-VM: pure Nostr request/response (kind 21900→21901, NIP-44 encrypted).</p>
+          <p>Context-VM: ContextVM protocol (kind 25910 messages, NIP-44/NIP-59 encrypted).</p>
         </div>
       </div>
     </div>
