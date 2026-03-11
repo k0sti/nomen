@@ -69,8 +69,8 @@ internal:d29fe7c1af179eac10767f57ac021f520b44a8ded1fd37b1d1f79c9e545f96d7:agent-
 
 - **Hex pubkeys, not npub** — consistent with event.pubkey, `p` tags, and all Nostr internals; no bech32 decoding needed for matching
 - **No namespace prefix** — kind 31234 is the namespace; no `snow:memory:` prefix needed
-- **Visibility in d-tag** — eliminates the need for a separate tier tag; relay can filter by d-tag prefix
-- **Context in d-tag** — enables relay-side prefix queries like `group:techteam:*` without scanning tags
+- **Visibility in d-tag** — human-readable, self-documenting addressing (e.g. `group:techteam:deploy`)
+- **Indexed tags for querying** — `visibility` and `scope` tags enable relay-side filtering without prefix matching (NIP-01 tag filters are exact-match only; prefix queries like `group:techteam:*` are not supported by relays)
 - **Topic last** — human-readable slug, unique within its visibility+context pair
 
 ### Circle Hash
@@ -103,6 +103,8 @@ Participants are discoverable via `p` tags on the event.
   "content": "{\"summary\":\"Use anyhow for application errors\",\"detail\":\"In application code, prefer anyhow::Result for ergonomic error propagation.\",\"context\":null}",
   "tags": [
     ["d", "public::rust-error-handling"],
+    ["visibility", "public"],
+    ["scope", ""],
     ["model", "anthropic/claude-opus-4-6"],
     ["confidence", "0.92"],
     ["version", "1"],
@@ -131,6 +133,8 @@ No metadata in content — that's what tags are for.
 | Tag | Required | Description |
 |-----|----------|-------------|
 | `d` | Yes | `{visibility}:{scope}:{topic}` — addressable/replaceable key |
+| `visibility` | Yes | Visibility tier: `public`, `group`, `circle`, `personal`, `internal` — indexed for relay-side filtering |
+| `scope` | Yes | Scope identifier (group name, circle hash, pubkey hex, or empty for public) — indexed for relay-side filtering |
 | `model` | Yes | Model that generated this memory (e.g. `anthropic/claude-opus-4-6`) |
 | `confidence` | Yes | Self-assessed confidence score, float in [0.0, 1.0] |
 | `version` | Yes | Version number (monotonically increasing per d-tag) |
@@ -139,8 +143,15 @@ No metadata in content — that's what tags are for.
 | `h` | No | NIP-29 group id (for `group` visibility, relay-enforced) |
 | `p` | No | Participant pubkeys (for `circle` visibility) |
 
+**Querying by visibility/scope:**
+```json
+{"kinds": [31234], "#visibility": ["group"]}
+{"kinds": [31234], "#visibility": ["group"], "#scope": ["techteam"]}
+{"kinds": [31234], "#visibility": ["personal", "internal"], "authors": ["<pubkey>"]}
+```
+
 **Removed from previous spec:**
-- `tier` tag — encoded in d-tag visibility
+- `tier` tag — replaced by `visibility` tag
 - `source` tag — redundant with `event.pubkey`
 
 ---
@@ -150,7 +161,9 @@ No metadata in content — that's what tags are for.
 ### Public
 
 ```json
-["d", "public::api-rate-limiting"]
+["d", "public::api-rate-limiting"],
+["visibility", "public"],
+["scope", ""]
 ```
 
 No access restrictions. No `h` or `p` tags needed.
@@ -159,6 +172,8 @@ No access restrictions. No `h` or `p` tags needed.
 
 ```json
 ["d", "group:techteam:deployment-process"],
+["visibility", "group"],
+["scope", "techteam"],
 ["h", "techteam"]
 ```
 
@@ -168,6 +183,8 @@ The `h` tag enables relay-side group scoping (NIP-29). Membership managed by the
 
 ```json
 ["d", "circle:a3f8b2c1e9d04712:shared-notes"],
+["visibility", "circle"],
+["scope", "a3f8b2c1e9d04712"],
 ["p", "<pubkey-hex-1>"],
 ["p", "<pubkey-hex-2>"],
 ["p", "<pubkey-hex-3>"]
@@ -180,7 +197,9 @@ Content SHOULD be NIP-44 encrypted when the relay doesn't enforce access control
 ### Personal
 
 ```json
-["d", "personal:d29fe7c1af179eac10767f57ac021f520b44a8ded1fd37b1d1f79c9e545f96d7:ssh-config"]
+["d", "personal:d29fe7c1af179eac10767f57ac021f520b44a8ded1fd37b1d1f79c9e545f96d7:ssh-config"],
+["visibility", "personal"],
+["scope", "d29fe7c1af179eac10767f57ac021f520b44a8ded1fd37b1d1f79c9e545f96d7"]
 ```
 
 User-auditable knowledge. Content SHOULD be NIP-44 encrypted (self-encrypt: author encrypts to their own pubkey). Only the author and agents holding the author's nsec can decrypt.
@@ -188,7 +207,9 @@ User-auditable knowledge. Content SHOULD be NIP-44 encrypted (self-encrypt: auth
 ### Internal
 
 ```json
-["d", "internal:d29fe7c1af179eac10767f57ac021f520b44a8ded1fd37b1d1f79c9e545f96d7:agent-reasoning"]
+["d", "internal:d29fe7c1af179eac10767f57ac021f520b44a8ded1fd37b1d1f79c9e545f96d7:agent-reasoning"],
+["visibility", "internal"],
+["scope", "d29fe7c1af179eac10767f57ac021f520b44a8ded1fd37b1d1f79c9e545f96d7"]
 ```
 
 Agent-only reasoning and internal state. Same encryption as personal. Users may audit but this tier is for agent-internal use.
@@ -356,10 +377,12 @@ This keeps the durable memory model transport-neutral while still allowing multi
 {"kinds": [31234], "authors": ["<agent-pubkey>", "<owner-pubkey>"]}
 ```
 
-### By Visibility (D-Tag Prefix)
+### By Visibility / Scope
 
 ```json
-{"kinds": [31234], "#d": ["public:", "group:techteam:"]}
+{"kinds": [31234], "#visibility": ["public"]}
+{"kinds": [31234], "#visibility": ["group"], "#scope": ["techteam"]}
+{"kinds": [31234], "#visibility": ["personal", "internal"], "authors": ["<pubkey>"]}
 ```
 
 ### Agent Lessons

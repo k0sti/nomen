@@ -268,6 +268,14 @@ impl Nomen {
             let mut tags = vec![
                 nostr_sdk::Tag::custom(nostr_sdk::TagKind::Custom("d".into()), vec![d_tag.clone()]),
                 nostr_sdk::Tag::custom(
+                    nostr_sdk::TagKind::Custom("visibility".into()),
+                    vec![base_tier.to_string()],
+                ),
+                nostr_sdk::Tag::custom(
+                    nostr_sdk::TagKind::Custom("scope".into()),
+                    vec![context.clone()],
+                ),
+                nostr_sdk::Tag::custom(
                     nostr_sdk::TagKind::Custom("model".into()),
                     vec![model.to_string()],
                 ),

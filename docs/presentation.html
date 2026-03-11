@@ -423,6 +423,8 @@
   \"context\":null}"</span>,
   <span class="key">"tags"</span>: [
     [<span class="val">"d"</span>, <span class="val">"public::rust-error-handling"</span>],
+    [<span class="val">"visibility"</span>, <span class="val">"public"</span>],
+    [<span class="val">"scope"</span>, <span class="val">""</span>],
     [<span class="val">"model"</span>, <span class="val">"anthropic/claude-opus-4-6"</span>],
     [<span class="val">"confidence"</span>, <span class="val">"0.92"</span>],
     [<span class="val">"version"</span>, <span class="val">"1"</span>],
@@ -440,11 +442,11 @@
             <li><code style="color:var(--accent);font-family:monospace;">personal:d29f…:ssh-config</code></li>
             <li><code style="color:var(--accent);font-family:monospace;">internal:d29f…:agent-reasoning</code></li>
           </ul>
-          <h3 style="margin-top:16px;">Why visibility in d-tag?</h3>
+          <h3 style="margin-top:16px;">Why this design?</h3>
           <ul class="clean" style="gap:10px;">
-            <li>Relay can filter by d-tag prefix: <code style="color:var(--accent);font-family:monospace;">group:techteam:*</code></li>
-            <li>Same d-tag = replaceable (new version overwrites old)</li>
-            <li>No separate tier/scope tags needed</li>
+            <li>D-tag = human-readable address + replaceable key</li>
+            <li><code style="color:var(--accent);font-family:monospace;">visibility</code> + <code style="color:var(--accent);font-family:monospace;">scope</code> tags = relay-side filtering (NIP-01 exact match)</li>
+            <li>No prefix matching needed — works on all relays today</li>
             <li>Content: JSON with <code style="font-family:monospace;">summary</code>, <code style="font-family:monospace;">detail</code>, <code style="font-family:monospace;">context</code></li>
           </ul>
         </div>

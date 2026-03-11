@@ -1001,10 +1001,20 @@ pub async fn consolidate(
                     content_str
                 };
 
-                // Build tags (v0.2: no tier/source tags)
+                // Build tags (v0.2: visibility + scope indexed tags)
                 let version_str = if is_merge { "2" } else { "1" };
+                // Extract visibility and scope from the d_tag for indexed tags
+                let (vis_tag, scope_tag) = crate::memory::extract_visibility_scope(&d_tag);
                 let mut event_tags = vec![
                     Tag::custom(TagKind::Custom("d".into()), vec![d_tag.clone()]),
+                    Tag::custom(
+                        TagKind::Custom("visibility".into()),
+                        vec![vis_tag],
+                    ),
+                    Tag::custom(
+                        TagKind::Custom("scope".into()),
+                        vec![scope_tag],
+                    ),
                     Tag::custom(
                         TagKind::Custom("model".into()),
                         vec!["nomen/consolidation".to_string()],

@@ -77,6 +77,19 @@ pub fn v2_dtag_topic(d_tag: &str) -> Option<&str> {
     Some(&rest[second_colon + 1..])
 }
 
+/// Extract visibility and scope from a v0.2 d-tag.
+/// Returns `(visibility, scope)` — e.g. `("group", "techteam")` from `"group:techteam:deploy"`.
+/// For non-v0.2 d-tags, returns `("public", "")`.
+pub fn extract_visibility_scope(d_tag: &str) -> (String, String) {
+    if !is_v2_dtag(d_tag) {
+        return ("public".to_string(), String::new());
+    }
+    let mut parts = d_tag.splitn(3, ':');
+    let visibility = parts.next().unwrap_or("public").to_string();
+    let scope = parts.next().unwrap_or("").to_string();
+    (visibility, scope)
+}
+
 /// Build a v0.2 d-tag from visibility, context, and topic.
 pub fn build_v2_dtag(visibility: &str, context: &str, topic: &str) -> String {
     format!("{visibility}:{context}:{topic}")

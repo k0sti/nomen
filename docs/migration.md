@@ -22,7 +22,7 @@ The nostr-memory-spec v0.2 introduces a new d-tag format that encodes visibility
 
 | v0.1 | v0.2 |
 |------|------|
-| `tier` tag | Removed — visibility is in d-tag prefix |
+| `tier` tag | Replaced by indexed `visibility` + `scope` tags |
 | `snow:tier` tag | Removed — legacy compat |
 | `source` tag | Removed — use `event.pubkey` |
 | `snow:confidence` | `confidence` (no prefix) |
