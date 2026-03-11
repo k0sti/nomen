@@ -12,7 +12,7 @@ use nomen::config::{
     Config, EmbeddingConfig, MemoryConsolidationConfig, MemorySection, ServerConfig,
 };
 use nomen::consolidate;
-use nomen::contextvm;
+use nomen::cvm;
 use nomen::db;
 use nomen::display::{display_memories, format_timestamp};
 use nomen::entities;
@@ -1561,27 +1561,53 @@ async fn cmd_serve(
     // Default: stdio MCP mode (for backwards compat when neither --stdio nor --http given)
     let _ = stdio; // accept --stdio flag but it's the default
 
-    if context_vm {
-        // Need relay + keys for Context-VM
-        if relay_manager.is_none() {
+    // Determine if CVM should run: CLI flag or config section
+    let cvm_config = config.contextvm.as_ref();
+    let cvm_enabled = context_vm || cvm_config.map(|c| c.enabled).unwrap_or(false);
+
+    if cvm_enabled {
+        // Need relay + keys for CVM
+        if resolved.nsecs.is_empty() {
             bail!(
-                "Context-VM requires nsec keys. Set in {} or pass --nsec",
+                "CVM requires nsec keys. Set in {} or pass --nsec",
                 Config::path().display()
             );
         }
 
-        // Build a second relay manager for Context-VM (it needs its own)
         let (all_keys, _) = parse_keys(&resolved.nsecs)?;
-        let vm_relay = build_relay_manager(&resolved.relay, &all_keys[0]);
-        vm_relay.connect().await?;
+        let cvm_keys = all_keys[0].clone();
 
-        let vm_nomen = nomen::Nomen::open_with_relay(config, vm_relay).await?;
+        // Merge CLI flags with config: CLI flags override config values
+        let cvm_relay = cvm_config
+            .and_then(|c| c.relay.clone())
+            .unwrap_or_else(|| resolved.relay.clone());
+        let cvm_encryption = cvm_config
+            .map(|c| c.encryption_mode())
+            .unwrap_or(contextvm_sdk::EncryptionMode::Optional);
+        let cvm_allowed = if allowed_npubs.is_empty() {
+            cvm_config
+                .map(|c| c.allowed_npubs.clone())
+                .unwrap_or_default()
+        } else {
+            allowed_npubs
+        };
+        let cvm_rate_limit = cvm_config.map(|c| c.rate_limit).unwrap_or(30);
+        let cvm_announce = cvm_config.map(|c| c.announce).unwrap_or(true);
 
-        let vm_server = contextvm::ContextVmServer::new(
-            vm_nomen,
-            allowed_npubs,
+        // Build a Nomen instance for the CVM server
+        let cvm_nomen = nomen::Nomen::open(config).await?;
+
+        let cvm_server = cvm::CvmServer::new(
+            cvm_nomen,
+            cvm_keys,
+            &cvm_relay,
+            cvm_encryption,
+            cvm_allowed,
+            cvm_rate_limit,
             default_channel.clone(),
-        );
+            cvm_announce,
+        )
+        .await?;
 
         // Build MCP Nomen instance
         let mcp_nomen = if let Some(relay) = relay_manager {
@@ -1591,11 +1617,11 @@ async fn cmd_serve(
         };
 
         let mcp_future = mcp::serve_stdio(mcp_nomen, default_channel);
-        let vm_future = vm_server.run();
+        let cvm_future = cvm_server.run();
 
         tokio::select! {
             result = mcp_future => result,
-            result = vm_future => result,
+            result = cvm_future => result,
         }
     } else {
         let nomen_instance = if let Some(relay) = relay_manager {
@@ -1809,6 +1835,7 @@ async fn cmd_init(force: bool, non_interactive: bool) -> Result<()> {
         messaging: None,
         server: server_config,
         entities: None,
+        contextvm: None,
     };
 
     // Write config
@@ -1889,6 +1916,7 @@ async fn cmd_init_non_interactive() -> Result<()> {
             listen: "127.0.0.1:3000".to_string(),
         }),
         entities: None,
+        contextvm: None,
     };
 
     let config_path = Config::path();

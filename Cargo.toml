@@ -19,7 +19,8 @@ migrate = ["rusqlite"]
 
 [dependencies]
 # Nostr
-nostr-sdk = { version = "0.39", features = ["nip44", "nip59"] }
+nostr-sdk = { version = "0.43", features = ["nip44", "nip59"] }
+contextvm-sdk = { git = "https://github.com/k0sti/rust-contextvm-sdk", branch = "main" }
 
 # CLI
 clap = { version = "4", features = ["derive"] }

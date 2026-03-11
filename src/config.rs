@@ -54,6 +54,9 @@ pub struct Config {
     /// Entity extraction LLM configuration
     #[serde(default)]
     pub entities: Option<EntityExtractionConfig>,
+    /// ContextVM (CVM) server configuration
+    #[serde(default)]
+    pub contextvm: Option<ContextVmConfig>,
 }
 
 /// The [memory] config section, per spec.
@@ -266,6 +269,48 @@ fn default_entity_model() -> String {
 
 fn default_entity_api_key_env() -> String {
     "OPENROUTER_API_KEY".to_string()
+}
+
+/// ContextVM (CVM) server configuration [contextvm] section.
+#[derive(Deserialize, Serialize, Clone)]
+pub struct ContextVmConfig {
+    /// Whether the CVM server is enabled
+    #[serde(default)]
+    pub enabled: bool,
+    /// Relay URL for CVM (overrides top-level relay)
+    #[serde(default)]
+    pub relay: Option<String>,
+    /// Encryption mode: "optional", "required", or "disabled"
+    #[serde(default = "default_cvm_encryption")]
+    pub encryption: String,
+    /// Allowed npubs (empty = allow all)
+    #[serde(default)]
+    pub allowed_npubs: Vec<String>,
+    /// Max requests per minute per npub
+    #[serde(default = "default_cvm_rate_limit")]
+    pub rate_limit: u32,
+    /// Whether to publish a server announcement on startup
+    #[serde(default = "default_true")]
+    pub announce: bool,
+}
+
+fn default_cvm_encryption() -> String {
+    "optional".to_string()
+}
+
+fn default_cvm_rate_limit() -> u32 {
+    30
+}
+
+impl ContextVmConfig {
+    /// Parse the encryption mode string into the SDK enum.
+    pub fn encryption_mode(&self) -> contextvm_sdk::EncryptionMode {
+        match self.encryption.to_lowercase().as_str() {
+            "required" => contextvm_sdk::EncryptionMode::Required,
+            "disabled" => contextvm_sdk::EncryptionMode::Disabled,
+            _ => contextvm_sdk::EncryptionMode::Optional,
+        }
+    }
 }
 
 impl Default for EmbeddingConfig {

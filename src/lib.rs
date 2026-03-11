@@ -26,7 +26,7 @@ pub mod migrate;
 
 // Binary-only modules — not part of the public library API.
 #[doc(hidden)]
-pub mod contextvm;
+pub mod cvm;
 #[doc(hidden)]
 pub mod display;
 #[doc(hidden)]
