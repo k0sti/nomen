@@ -7,21 +7,13 @@ use std::io::{self, BufRead, Write};
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use surrealdb::engine::local::Db;
-use surrealdb::Surreal;
 use tracing::{debug, error, info};
 
-use crate::consolidate;
-use crate::db;
-use crate::embed::Embedder;
 use crate::entities;
-use crate::groups;
-use crate::groups::GroupStore;
 use crate::ingest;
-use crate::relay::RelayManager;
 use crate::search;
 use crate::send;
-use crate::session;
+use crate::Nomen;
 
 // ── JSON-RPC types ──────────────────────────────────────────────────
 
@@ -112,7 +104,10 @@ fn tools_list() -> Value {
                         "tier": { "type": "string", "description": "Filter by tier (public/group/private)" },
                         "scope": { "type": "string", "description": "Filter by scope" },
                         "limit": { "type": "integer", "description": "Max results (default 10)" },
-                        "session_id": { "type": "string", "description": "Session ID to auto-derive tier/scope" }
+                        "session_id": { "type": "string", "description": "Session ID to auto-derive tier/scope" },
+                        "vector_weight": { "type": "number", "description": "Vector similarity weight 0.0-1.0 (default 0.7)" },
+                        "text_weight": { "type": "number", "description": "Full-text BM25 weight 0.0-1.0 (default 0.3)" },
+                        "aggregate": { "type": "boolean", "description": "Aggregate similar results (>0.85 similarity)" }
                     },
                     "required": ["query"]
                 }
@@ -227,6 +222,47 @@ fn tools_list() -> Value {
                     },
                     "required": ["recipient", "content"]
                 }
+            },
+            {
+                "name": "nomen_list",
+                "description": "List memories from local database",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "tier": { "type": "string", "description": "Filter by tier" },
+                        "limit": { "type": "integer", "description": "Max results (default 100)" },
+                        "stats": { "type": "boolean", "description": "Include memory statistics" }
+                    }
+                }
+            },
+            {
+                "name": "nomen_sync",
+                "description": "Sync memories from relay to local database",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {}
+                }
+            },
+            {
+                "name": "nomen_embed",
+                "description": "Generate embeddings for memories that lack them",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "limit": { "type": "integer", "description": "Max memories to embed (default 100)" }
+                    }
+                }
+            },
+            {
+                "name": "nomen_prune",
+                "description": "Prune old/unused memories and consolidated raw messages",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "days": { "type": "integer", "description": "Delete items older than N days (default 90)" },
+                        "dry_run": { "type": "boolean", "description": "Preview without deleting" }
+                    }
+                }
             }
         ]
     })
@@ -235,10 +271,7 @@ fn tools_list() -> Value {
 // ── MCP Server ──────────────────────────────────────────────────────
 
 struct McpServer {
-    db: Surreal<Db>,
-    embedder: Box<dyn Embedder>,
-    relay: Option<RelayManager>,
-    groups: GroupStore,
+    nomen: Nomen,
     default_channel: String,
 }
 
@@ -248,11 +281,7 @@ impl McpServer {
 
         match req.method.as_str() {
             "initialize" => JsonRpcResponse::success(id, server_info()),
-            "notifications/initialized" => {
-                // No response needed for notifications, but we return success
-                // since this has an id
-                JsonRpcResponse::success(id, json!({}))
-            }
+            "notifications/initialized" => JsonRpcResponse::success(id, json!({})),
             "tools/list" => JsonRpcResponse::success(id, tools_list()),
             "tools/call" => self.handle_tool_call(id, &req.params).await,
             "ping" => JsonRpcResponse::success(id, json!({})),
@@ -276,6 +305,10 @@ impl McpServer {
             "nomen_delete" => self.tool_delete(&arguments).await,
             "nomen_groups" => self.tool_groups(&arguments).await,
             "nomen_send" => self.tool_send(&arguments).await,
+            "nomen_list" => self.tool_list(&arguments).await,
+            "nomen_sync" => self.tool_sync(&arguments).await,
+            "nomen_embed" => self.tool_embed(&arguments).await,
+            "nomen_prune" => self.tool_prune(&arguments).await,
             _ => Err(anyhow::anyhow!("Unknown tool: {tool_name}")),
         };
 
@@ -312,6 +345,9 @@ impl McpServer {
             .to_string();
         let mut tier = args.get("tier").and_then(|v| v.as_str()).map(String::from);
         let limit = args.get("limit").and_then(|v| v.as_u64()).unwrap_or(10) as usize;
+        let vector_weight = args.get("vector_weight").and_then(|v| v.as_f64()).unwrap_or(0.7) as f32;
+        let text_weight = args.get("text_weight").and_then(|v| v.as_f64()).unwrap_or(0.3) as f32;
+        let aggregate = args.get("aggregate").and_then(|v| v.as_bool()).unwrap_or(false);
 
         if query.is_empty() {
             anyhow::bail!("query parameter is required");
@@ -329,10 +365,13 @@ impl McpServer {
             tier,
             allowed_scopes,
             limit,
+            vector_weight,
+            text_weight,
+            aggregate,
             ..Default::default()
         };
 
-        let results = search::search(&self.db, self.embedder.as_ref(), &opts).await?;
+        let results = self.nomen.search(opts).await?;
 
         if results.is_empty() {
             return Ok("No results found.".to_string());
@@ -401,7 +440,7 @@ impl McpServer {
             model: Some("mcp/agent".to_string()),
         };
 
-        crate::Nomen::store_direct(&self.db, self.embedder.as_ref(), mem).await?;
+        self.nomen.store(mem).await?;
 
         Ok(format!(
             "Stored memory: {topic} [{tier}] (confidence: {confidence:.2})"
@@ -444,7 +483,7 @@ impl McpServer {
             created_at: None,
         };
 
-        let id = ingest::ingest_message(&self.db, &msg).await?;
+        let id = self.nomen.ingest_message(msg).await?;
 
         Ok(format!(
             "Ingested message from {sender} [{source}]{} (id: {id})",
@@ -474,7 +513,7 @@ impl McpServer {
             consolidated_only: false,
         };
 
-        let messages = ingest::get_messages(&self.db, &opts).await?;
+        let messages = self.nomen.get_messages(opts).await?;
 
         if messages.is_empty() {
             return Ok("No messages found.".to_string());
@@ -510,7 +549,7 @@ impl McpServer {
             );
         }
 
-        let entity_list = db::list_entities(&self.db, kind.as_ref()).await?;
+        let entity_list = self.nomen.entities(kind_filter).await?;
 
         if entity_list.is_empty() {
             return Ok("No entities found.".to_string());
@@ -548,14 +587,8 @@ impl McpServer {
     }
 
     async fn tool_consolidate(&self, _args: &Value) -> Result<String> {
-        let config = consolidate::ConsolidationConfig::default();
-        let report = consolidate::consolidate(
-            &self.db,
-            self.embedder.as_ref(),
-            &config,
-            self.relay.as_ref(),
-        )
-        .await?;
+        let opts = crate::ConsolidateOptions::default();
+        let report = self.nomen.consolidate(opts).await?;
 
         if report.memories_created == 0 {
             Ok("Nothing to consolidate.".to_string())
@@ -578,7 +611,7 @@ impl McpServer {
 
         match action {
             "list" => {
-                let group_list = groups::list_groups(&self.db).await?;
+                let group_list = self.nomen.group_list().await?;
                 if group_list.is_empty() {
                     return Ok("No groups found.".to_string());
                 }
@@ -602,7 +635,7 @@ impl McpServer {
                 if id.is_empty() {
                     anyhow::bail!("id is required for members action");
                 }
-                let members = groups::get_members(&self.db, id).await?;
+                let members = self.nomen.group_members(id).await?;
                 if members.is_empty() {
                     Ok(format!("Group {id} has no members."))
                 } else {
@@ -631,7 +664,7 @@ impl McpServer {
                 let nostr_group = args.get("nostr_group").and_then(|v| v.as_str());
                 let relay = args.get("relay").and_then(|v| v.as_str());
 
-                groups::create_group(&self.db, id, name, &members, nostr_group, relay).await?;
+                self.nomen.group_create(id, name, &members, nostr_group, relay).await?;
                 Ok(format!("Created group: {id} ({name})"))
             }
             "add_member" => {
@@ -640,7 +673,7 @@ impl McpServer {
                 if id.is_empty() || npub.is_empty() {
                     anyhow::bail!("id and npub are required for add_member action");
                 }
-                groups::add_member(&self.db, id, npub).await?;
+                self.nomen.group_add_member(id, npub).await?;
                 Ok(format!("Added {npub} to group {id}"))
             }
             "remove_member" => {
@@ -649,7 +682,7 @@ impl McpServer {
                 if id.is_empty() || npub.is_empty() {
                     anyhow::bail!("id and npub are required for remove_member action");
                 }
-                groups::remove_member(&self.db, id, npub).await?;
+                self.nomen.group_remove_member(id, npub).await?;
                 Ok(format!("Removed {npub} from group {id}"))
             }
             _ => anyhow::bail!(
@@ -662,7 +695,7 @@ impl McpServer {
     fn resolve_session_from_args(&self, args: &Value) -> Result<(Option<String>, Option<String>)> {
         let session_id = args.get("session_id").and_then(|v| v.as_str());
         if let Some(sid) = session_id {
-            let resolved = session::resolve_session(sid, &self.groups, &self.default_channel)?;
+            let resolved = self.nomen.resolve_session(sid, &self.default_channel)?;
             Ok((Some(resolved.tier), Some(resolved.scope)))
         } else {
             Ok((None, None))
@@ -682,11 +715,6 @@ impl McpServer {
             anyhow::bail!("recipient and content are required");
         }
 
-        let relay = self
-            .relay
-            .as_ref()
-            .ok_or_else(|| anyhow::anyhow!("No relay configured — cannot send messages"))?;
-
         let target = send::parse_recipient(recipient)?;
         let opts = send::SendOptions {
             target,
@@ -695,7 +723,7 @@ impl McpServer {
             metadata,
         };
 
-        let result = send::send_message(relay, &self.db, &self.groups, opts).await?;
+        let result = self.nomen.send(opts).await?;
 
         let accepted_count = result.accepted.len();
         let rejected_count = result.rejected.len();
@@ -713,31 +741,100 @@ impl McpServer {
             anyhow::bail!("Provide either topic or id");
         }
 
+        self.nomen.delete(topic, id).await?;
+
         if let Some(topic) = topic {
-            db::delete_memory_by_dtag(&self.db, topic).await?;
             Ok(format!("Deleted memory with topic: {topic}"))
         } else {
-            let id = id.unwrap();
-            db::delete_memory_by_nostr_id(&self.db, id).await?;
-            Ok(format!("Deleted memory with id: {id}"))
+            Ok(format!("Deleted memory with id: {}", id.unwrap()))
         }
+    }
+
+    async fn tool_list(&self, args: &Value) -> Result<String> {
+        let tier = args.get("tier").and_then(|v| v.as_str()).map(String::from);
+        let limit = args.get("limit").and_then(|v| v.as_u64()).unwrap_or(100) as usize;
+        let include_stats = args.get("stats").and_then(|v| v.as_bool()).unwrap_or(false);
+
+        let report = self.nomen.list(crate::ListOptions { tier, limit, include_stats }).await?;
+
+        if report.memories.is_empty() && report.stats.is_none() {
+            return Ok("No memories found.".to_string());
+        }
+
+        let mut output = Vec::new();
+
+        if let Some(ref stats) = report.stats {
+            output.push(format!(
+                "Stats: {} total, {} named, {} pending ephemeral",
+                stats.total, stats.named, stats.pending
+            ));
+        }
+
+        for m in &report.memories {
+            let summary = m.summary.as_deref().unwrap_or(&m.content);
+            let summary_display = if summary.len() > 100 {
+                format!("{}...", &summary[..100])
+            } else {
+                summary.to_string()
+            };
+            output.push(format!(
+                "[{}] {} (v{}, confidence: {})\n   {}",
+                m.tier,
+                m.topic,
+                m.version,
+                m.confidence.map(|c| format!("{c:.2}")).unwrap_or("?".to_string()),
+                summary_display
+            ));
+        }
+
+        Ok(format!(
+            "{} memories:\n\n{}",
+            report.memories.len(),
+            output.join("\n\n")
+        ))
+    }
+
+    async fn tool_sync(&self, _args: &Value) -> Result<String> {
+        let report = self.nomen.sync().await?;
+        Ok(format!(
+            "Sync complete: {} stored, {} skipped, {} errors",
+            report.stored, report.skipped, report.errors
+        ))
+    }
+
+    async fn tool_embed(&self, args: &Value) -> Result<String> {
+        let limit = args.get("limit").and_then(|v| v.as_u64()).unwrap_or(100) as usize;
+        let report = self.nomen.embed(limit).await?;
+
+        if report.total == 0 {
+            Ok("All memories already have embeddings.".to_string())
+        } else {
+            Ok(format!(
+                "Embedded {} of {} memories",
+                report.embedded, report.total
+            ))
+        }
+    }
+
+    async fn tool_prune(&self, args: &Value) -> Result<String> {
+        let days = args.get("days").and_then(|v| v.as_u64()).unwrap_or(90);
+        let dry_run = args.get("dry_run").and_then(|v| v.as_bool()).unwrap_or(false);
+
+        let report = self.nomen.prune(days, dry_run).await?;
+
+        let prefix = if dry_run { "[DRY RUN] " } else { "" };
+        Ok(format!(
+            "{prefix}{} memories pruned, {} raw messages pruned",
+            report.memories_pruned, report.raw_messages_pruned
+        ))
     }
 }
 
 // ── Stdio event loop ────────────────────────────────────────────────
 
-pub async fn serve_stdio(
-    db: Surreal<Db>,
-    embedder: Box<dyn Embedder>,
-    relay: Option<RelayManager>,
-    groups: GroupStore,
-    default_channel: String,
-) -> Result<()> {
+pub async fn serve_stdio(nomen: Nomen, default_channel: String) -> Result<()> {
     let server = McpServer {
-        db,
-        embedder,
-        relay,
-        groups,
+        nomen,
         default_channel,
     };
 

@@ -1656,28 +1656,22 @@ async fn cmd_serve(
         let vm_relay = build_relay_manager(&resolved.relay, &all_keys[0]);
         vm_relay.connect().await?;
 
-        let vm_embedder = config.build_embedder();
-        let vm_db = db::init_db_with_dimensions(config.embedding_dimensions()).await?;
-        let vm_groups = groups::GroupStore::load(&config.groups, &vm_db).await?;
+        let vm_nomen = nomen::Nomen::open_with_relay(&config, vm_relay).await?;
 
         let vm_server = contextvm::ContextVmServer::new(
-            vm_db,
-            vm_embedder,
-            vm_relay,
+            vm_nomen,
             allowed_npubs,
-            vm_groups,
             default_channel.clone(),
         );
 
-        // Run MCP on stdio and Context-VM on Nostr concurrently
-        let mcp_embedder = config.build_embedder();
-        let mcp_future = mcp::serve_stdio(
-            db,
-            mcp_embedder,
-            relay_manager,
-            group_store,
-            default_channel,
-        );
+        // Build MCP Nomen instance
+        let mcp_nomen = if let Some(relay) = relay_manager {
+            nomen::Nomen::open_with_relay(&config, relay).await?
+        } else {
+            nomen::Nomen::open(&config).await?
+        };
+
+        let mcp_future = mcp::serve_stdio(mcp_nomen, default_channel);
         let vm_future = vm_server.run();
 
         tokio::select! {
@@ -1685,8 +1679,12 @@ async fn cmd_serve(
             result = vm_future => result,
         }
     } else {
-        let embedder = config.build_embedder();
-        mcp::serve_stdio(db, embedder, relay_manager, group_store, default_channel).await
+        let nomen_instance = if let Some(relay) = relay_manager {
+            nomen::Nomen::open_with_relay(&config, relay).await?
+        } else {
+            nomen::Nomen::open(&config).await?
+        };
+        mcp::serve_stdio(nomen_instance, default_channel).await
     }
 }
 
