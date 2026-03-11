@@ -1,9 +1,9 @@
 # Nomen API Reference
 
-**Version:** 0.3  
+**Version:** 0.4  
 **Date:** 2026-03-11
 
-Complete reference for all Nomen operations across CLI, MCP (Model Context Protocol), and Context-VM (Nostr-native) interfaces.
+Complete reference for all Nomen operations across CLI, MCP (Model Context Protocol), and Context-VM (Nostr-native) interfaces. All interfaces share the same underlying `Nomen` struct — identical behavior guaranteed.
 
 ---
 
@@ -43,10 +43,10 @@ Hybrid semantic (HNSW vector) + full-text (BM25) search across stored memories.
 | `tier` | string | | `--tier` | ✅ | ✅ | Filter: `public`, `group`, `private` |
 | `scope` | string | | | ✅ | ✅ | Filter by scope |
 | `limit` | integer | | `--limit` (default 10) | ✅ (default 10) | ✅ (default 10) | Max results |
-| `session_id` | string | | | ✅ | ❌ | Auto-derive tier/scope from session |
-| `vector_weight` | float | | `--vector-weight` (default 0.7) | ❌ | ❌ | Vector similarity weight (0.0–1.0) |
-| `text_weight` | float | | `--text-weight` (default 0.3) | ❌ | ❌ | BM25 full-text weight (0.0–1.0) |
-| `aggregate` | bool | | `--aggregate` | ❌ | ❌ | Merge similar results (>0.85 similarity) |
+| `session_id` | string | | | ✅ | ✅ | Auto-derive tier/scope from session |
+| `vector_weight` | float | | `--vector-weight` (default 0.7) | ✅ (default 0.7) | ✅ (default 0.7) | Vector similarity weight (0.0–1.0) |
+| `text_weight` | float | | `--text-weight` (default 0.3) | ✅ (default 0.3) | ✅ (default 0.3) | BM25 full-text weight (0.0–1.0) |
+| `aggregate` | bool | | `--aggregate` | ✅ | ✅ | Merge similar results (>0.85 similarity) |
 
 **CLI:**
 ```bash
@@ -61,7 +61,7 @@ nomen search "project decisions" --aggregate --vector-weight 0.8
 
 ### store — Store a memory
 
-Create or update a named memory (kind 31234, replaceable by d-tag/topic).
+Create or update a named memory (kind 31234, replaceable by d-tag/topic). Publishes to relay and stores in local DB. Automatically finds existing memories by topic and adds supersedes tags.
 
 | | CLI | MCP | Context-VM |
 |---|---|---|---|
@@ -75,9 +75,15 @@ Create or update a named memory (kind 31234, replaceable by d-tag/topic).
 | `summary` | string | ✅ | `--summary` | ✅ | ✅ | Short summary |
 | `detail` | string | | `--detail` | ✅ | ✅ | Full detail text |
 | `tier` | string | | `--tier` (default `public`) | ✅ (default `public`) | ✅ (default `public`) | Visibility tier |
-| `scope` | string | | | ✅ | ❌ | Scope for group tier |
+| `scope` | string | | | ✅ | ✅ | Scope for group tier |
 | `confidence` | float | | `--confidence` (default 0.8) | ✅ (default 0.8) | ✅ (default 0.8) | Confidence score 0.0–1.0 |
-| `session_id` | string | | | ✅ | ❌ | Auto-derive tier/scope from session |
+| `session_id` | string | | | ✅ | ✅ | Auto-derive tier/scope from session |
+
+**Behavior:**
+- Stores in local SurrealDB with embedding generation
+- Publishes to Nostr relay (kind 31234)
+- Encrypts content (NIP-44) for personal/internal tiers
+- Finds existing memory by topic → adds `supersedes` tag + version increment
 
 **CLI:**
 ```bash
@@ -91,20 +97,24 @@ nomen store "relay/config" --summary "Zooid relay on port 7777" --tier public
 
 ### delete — Delete a memory
 
-Delete by topic (d-tag) or Nostr event ID. Also supports ephemeral message cleanup.
+Delete by topic (d-tag) or Nostr event ID. Removes from local DB and publishes NIP-09 deletion event to relay.
 
 | | CLI | MCP | Context-VM |
 |---|---|---|---|
-| **Available** | ✅ | ✅ | ❌ |
+| **Available** | ✅ | ✅ | ✅ |
 
 **Parameters:**
 
 | Parameter | Type | Required | CLI | MCP | CVM | Description |
 |-----------|------|----------|-----|-----|-----|-------------|
-| `topic` | string | one of | positional | ✅ | — | Topic to delete |
-| `id` | string | one of | `--id` | ✅ | — | Event ID to delete |
-| `ephemeral` | bool | | `--ephemeral` | ❌ | — | Delete raw messages instead |
-| `older_than` | string | | `--older-than` | ❌ | — | Age filter (e.g. `7d`, `24h`). Requires `--ephemeral` |
+| `topic` | string | one of | positional | ✅ | ✅ | Topic to delete |
+| `id` | string | one of | `--id` | ✅ | ✅ | Event ID to delete |
+| `ephemeral` | bool | | `--ephemeral` | ❌ | ❌ | Delete raw messages instead |
+| `older_than` | string | | `--older-than` | ❌ | ❌ | Age filter (e.g. `7d`, `24h`). Requires `--ephemeral` |
+
+**Behavior:**
+- Removes from local SurrealDB
+- Publishes NIP-09 deletion event (kind 5) to relay
 
 **CLI:**
 ```bash
@@ -114,7 +124,7 @@ nomen delete --ephemeral --older-than 7d
 ```
 
 **MCP tool:** `nomen_delete`  
-**Context-VM:** Not implemented.
+**Context-VM action:** `"delete"`
 
 ---
 
@@ -242,6 +252,8 @@ Create, list, and manage named groups and their members.
 |---|---|---|---|
 | **Available** | ✅ | ✅ | ✅ |
 
+**Sub-actions (MCP/CVM):** `list`, `members`, `create`, `add_member`, `remove_member`
+
 **CLI subcommands:**
 
 | Subcommand | Description |
@@ -262,8 +274,8 @@ Create, list, and manage named groups and their members.
 | `--nostr-group` | string | | NIP-29 group id mapping |
 | `--relay` | string | | Relay URL for this group |
 
-**MCP tool:** `nomen_groups` — uses `action` parameter: `list`, `members`, `create`, `add_member`, `remove_member`  
-**Context-VM action:** `"groups"` — returns group list (read-only, no sub-actions)
+**MCP tool:** `nomen_groups` — `action` param selects sub-action  
+**Context-VM action:** `"groups"` — `action` param selects sub-action (default: `list`)
 
 ---
 
@@ -296,45 +308,110 @@ nomen send "announcement" --to public
 
 ---
 
-## CLI-Only Operations
+### list — List memories
 
-These commands are for local administration and don't have MCP/Context-VM equivalents.
+List stored memories from local DB with optional filters and statistics.
 
-### list — List memory events
+| | CLI | MCP | Context-VM |
+|---|---|---|---|
+| **Available** | ✅ | ✅ | ✅ |
 
-Fetch memories directly from relay.
+**Parameters:**
 
+| Parameter | Type | Required | CLI | MCP | CVM | Description |
+|-----------|------|----------|-----|-----|-----|-------------|
+| `named` | bool | | `--named` | ❌ | ❌ | Only named (consolidated) memories |
+| `ephemeral` | bool | | `--ephemeral` | ❌ | ❌ | Only ephemeral (pending consolidation) |
+| `stats` | bool | | `--stats` | ✅ | ✅ | Include/show statistics |
+| `tier` | string | | | ✅ | ✅ | Filter by tier |
+| `limit` | integer | | | ✅ (default 100) | ✅ (default 100) | Max results |
+
+**CLI:**
 ```bash
 nomen list                    # All memories
-nomen list --named            # Only named (consolidated) memories
-nomen list --ephemeral        # Only ephemeral (pending consolidation)
-nomen list --stats            # Consolidation statistics
+nomen list --named            # Only consolidated memories
+nomen list --ephemeral        # Only pending consolidation
+nomen list --stats            # Statistics
 ```
+
+**MCP tool:** `nomen_list`  
+**Context-VM action:** `"list"`
+
+---
 
 ### sync — Sync relay → local DB
 
+Fetch memory events from Nostr relay and upsert into local SurrealDB.
+
+| | CLI | MCP | Context-VM |
+|---|---|---|---|
+| **Available** | ✅ | ✅ | ✅ |
+
+**Parameters:** None (uses configured relay and keys).
+
+**CLI:**
 ```bash
 nomen sync
 ```
 
+**MCP tool:** `nomen_sync`  
+**Context-VM action:** `"sync"`
+
+---
+
 ### embed — Generate missing embeddings
 
+Generate vector embeddings for memories that don't have them yet.
+
+| | CLI | MCP | Context-VM |
+|---|---|---|---|
+| **Available** | ✅ | ✅ | ✅ |
+
+**Parameters:**
+
+| Parameter | Type | Required | CLI | MCP | CVM | Description |
+|-----------|------|----------|-----|-----|-----|-------------|
+| `limit` | integer | | `--limit` (default 100) | ✅ (default 100) | ✅ (default 100) | Max memories to embed |
+
+**CLI:**
 ```bash
 nomen embed --limit 100
 ```
 
+**MCP tool:** `nomen_embed`  
+**Context-VM action:** `"embed"`
+
+---
+
 ### prune — Remove old/unused memories
 
+Prune low-confidence and unaccessed memories, plus consolidated raw messages.
+
+| | CLI | MCP | Context-VM |
+|---|---|---|---|
+| **Available** | ✅ | ✅ | ✅ |
+
+**Parameters:**
+
+| Parameter | Type | Required | CLI | MCP | CVM | Description |
+|-----------|------|----------|-----|-----|-----|-------------|
+| `days` | integer | | `--days` (default 90) | ✅ (default 90) | ✅ (default 90) | Delete items older than N days |
+| `dry_run` | bool | | `--dry-run` | ✅ | ✅ | Preview without deleting |
+
+**CLI:**
 ```bash
 nomen prune --days 90 --dry-run
 nomen prune --days 30
 ```
 
-### config — Show config status
+**MCP tool:** `nomen_prune`  
+**Context-VM action:** `"prune"`
 
-```bash
-nomen config
-```
+---
+
+## CLI-Only Commands
+
+These are interactive setup/diagnostic tools that don't need API equivalents:
 
 ### init — Interactive setup wizard
 
@@ -347,6 +424,12 @@ nomen init --force --non-interactive   # requires NOMEN_NSEC env var
 
 ```bash
 nomen doctor
+```
+
+### config — Show config status
+
+```bash
+nomen config
 ```
 
 ---
@@ -407,7 +490,7 @@ Or on error:
 
 ### Available Actions
 
-`search`, `store`, `ingest`, `messages`, `entities`, `consolidate`, `groups`, `send`
+`search`, `store`, `delete`, `ingest`, `messages`, `entities`, `consolidate`, `groups`, `send`, `list`, `sync`, `embed`, `prune`
 
 ### Security
 
@@ -422,32 +505,42 @@ Or on error:
 
 | Operation | CLI | MCP | Context-VM | Notes |
 |-----------|-----|-----|------------|-------|
-| search | ✅ | ✅ | ✅ | CLI has weight/aggregate controls |
-| store | ✅ | ✅ | ✅ | MCP has session_id |
-| delete | ✅ | ✅ | ❌ | **Gap:** missing from Context-VM |
+| search | ✅ | ✅ | ✅ | All have weight/aggregate/session_id |
+| store | ✅ | ✅ | ✅ | All publish to relay + local DB |
+| delete | ✅ | ✅ | ✅ | All publish NIP-09 to relay |
 | ingest | ✅ | ✅ | ✅ | |
 | messages | ✅ | ✅ | ✅ | CLI has around/context |
 | entities | ✅ | ✅ | ✅ | MCP has query filter |
 | consolidate | ✅ | ✅ | ✅ | CLI has batch/dry-run controls |
-| groups | ✅ | ✅ | ✅ | CVM is read-only (list only) |
+| groups | ✅ | ✅ | ✅ | Full CRUD on all interfaces |
 | send | ✅ | ✅ | ✅ | |
-| list | ✅ | ❌ | ❌ | Admin/operational |
-| sync | ✅ | ❌ | ❌ | Admin/operational |
-| embed | ✅ | ❌ | ❌ | Admin/operational |
-| prune | ✅ | ❌ | ❌ | Admin/operational |
-| config | ✅ | ❌ | ❌ | Admin/operational |
-| init | ✅ | ❌ | ❌ | Setup |
-| doctor | ✅ | ❌ | ❌ | Setup |
-
-### Known Gaps
-
-1. **Context-VM missing `delete`** — agents can store but not remove memories via Nostr
-2. **Context-VM `groups` is read-only** — cannot create/modify groups, only list
-3. **Context-VM lacks `session_id`** — no automatic tier/scope derivation
-4. **MCP/CVM lack search tuning** — `vector_weight`, `text_weight`, `aggregate` are CLI-only
-5. **MCP/CVM lack consolidation controls** — `min_messages`, `batch_size`, `dry_run`, `older_than`, `tier` are CLI-only
+| list | ✅ | ✅ | ✅ | |
+| sync | ✅ | ✅ | ✅ | |
+| embed | ✅ | ✅ | ✅ | |
+| prune | ✅ | ✅ | ✅ | |
+| init | ✅ | — | — | CLI-only (interactive setup) |
+| doctor | ✅ | — | — | CLI-only (diagnostics) |
+| config | ✅ | — | — | CLI-only (info display) |
 
 ---
+
+## Architecture
+
+All interfaces use the `Nomen` struct from `lib.rs` as the single API layer:
+
+```
+┌─────────────────────────────────────────────────────┐
+│  Interfaces (thin adapters — parse input, format output) │
+│  CLI (main.rs) │ MCP (mcp.rs) │ CVM (contextvm.rs)      │
+├─────────────────────────────────────────────────────┤
+│  Nomen struct (lib.rs) — single API                      │
+│  store, search, delete, ingest, consolidate, sync,       │
+│  embed, prune, list, entities, send, groups              │
+├─────────────────────────────────────────────────────┤
+│  Modules (db, search, relay, embed, consolidate,         │
+│  entities, groups, ingest, send, session, signer)        │
+└─────────────────────────────────────────────────────┘
+```
 
 ## Global CLI Options
 
