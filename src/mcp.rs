@@ -96,7 +96,7 @@ fn tools_list() -> Value {
         "tools": [
             {
                 "name": "nomen_search",
-                "description": "Search memories using hybrid semantic + full-text search",
+                "description": "Search memories using hybrid semantic + full-text search with optional graph expansion",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
@@ -107,7 +107,9 @@ fn tools_list() -> Value {
                         "session_id": { "type": "string", "description": "Session ID to auto-derive tier/scope" },
                         "vector_weight": { "type": "number", "description": "Vector similarity weight 0.0-1.0 (default 0.7)" },
                         "text_weight": { "type": "number", "description": "Full-text BM25 weight 0.0-1.0 (default 0.3)" },
-                        "aggregate": { "type": "boolean", "description": "Aggregate similar results (>0.85 similarity)" }
+                        "aggregate": { "type": "boolean", "description": "Aggregate similar results (>0.85 similarity)" },
+                        "graph_expand": { "type": "boolean", "description": "Traverse graph edges to surface related memories (default false)" },
+                        "max_hops": { "type": "integer", "description": "Max hops for graph traversal (default 1, requires graph_expand)" }
                     },
                     "required": ["query"]
                 }
@@ -348,6 +350,8 @@ impl McpServer {
         let vector_weight = args.get("vector_weight").and_then(|v| v.as_f64()).unwrap_or(0.7) as f32;
         let text_weight = args.get("text_weight").and_then(|v| v.as_f64()).unwrap_or(0.3) as f32;
         let aggregate = args.get("aggregate").and_then(|v| v.as_bool()).unwrap_or(false);
+        let graph_expand = args.get("graph_expand").and_then(|v| v.as_bool()).unwrap_or(false);
+        let max_hops = args.get("max_hops").and_then(|v| v.as_u64()).unwrap_or(1) as usize;
 
         if query.is_empty() {
             anyhow::bail!("query parameter is required");
@@ -368,6 +372,8 @@ impl McpServer {
             vector_weight,
             text_weight,
             aggregate,
+            graph_expand,
+            max_hops,
             ..Default::default()
         };
 
@@ -379,13 +385,24 @@ impl McpServer {
 
         let mut output = Vec::new();
         for (i, r) in results.iter().enumerate() {
+            let contradicts_prefix = if r.contradicts {
+                "[CONTRADICTS] "
+            } else {
+                ""
+            };
+            let graph_suffix = match r.graph_edge {
+                Some(ref edge) => format!(", via: {edge}"),
+                None => String::new(),
+            };
             output.push(format!(
-                "{}. [{}] {} (confidence: {}, match: {:?})\n   {}",
+                "{}. [{}] {}{} (confidence: {}, match: {:?}{})\n   {}",
                 i + 1,
                 r.tier,
+                contradicts_prefix,
                 r.topic,
                 r.confidence,
                 r.match_type,
+                graph_suffix,
                 r.summary
             ));
         }

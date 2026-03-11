@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use anyhow::Result;
 use nostr_sdk::Timestamp;
 use surrealdb::engine::local::Db;
@@ -21,6 +23,8 @@ pub enum MatchType {
     Text,
     /// Combined vector + text score
     Hybrid,
+    /// Discovered via graph edge traversal
+    Graph,
 }
 
 /// Options for hybrid search.
@@ -36,6 +40,10 @@ pub struct SearchOptions {
     pub min_confidence: Option<f64>,
     /// If true, group results with >0.85 embedding similarity and merge them.
     pub aggregate: bool,
+    /// Enable graph expansion: traverse edges from results to surface related memories.
+    pub graph_expand: bool,
+    /// Max hops for graph traversal (default: 1).
+    pub max_hops: usize,
 }
 
 impl Default for SearchOptions {
@@ -49,6 +57,8 @@ impl Default for SearchOptions {
             text_weight: 0.3,
             min_confidence: None,
             aggregate: false,
+            graph_expand: false,
+            max_hops: 1,
         }
     }
 }
@@ -67,6 +77,10 @@ pub struct SearchResult {
     pub d_tag: Option<String>,
     /// Embedding vector (for aggregation similarity checks).
     pub embedding: Option<Vec<f32>>,
+    /// The graph edge type that connected this result (only for Graph match type).
+    pub graph_edge: Option<String>,
+    /// True if this result contradicts one of the direct search hits.
+    pub contradicts: bool,
 }
 
 /// Calculate confidence decay factor based on days since last access.
@@ -172,6 +186,8 @@ pub async fn search(
                 match_type,
                 d_tag: r.d_tag,
                 embedding: r.embedding,
+                graph_edge: None,
+                contradicts: false,
             }
         })
         .collect();
@@ -183,6 +199,11 @@ pub async fn search(
             .unwrap_or(std::cmp::Ordering::Equal)
     });
 
+    // Graph expansion: traverse edges from results to discover related memories
+    if opts.graph_expand {
+        results = graph_expand(db, results, opts.max_hops).await?;
+    }
+
     // Aggregate similar results if requested
     if opts.aggregate {
         results = aggregate_results(results);
@@ -193,6 +214,138 @@ pub async fn search(
     if !d_tags.is_empty() {
         db::update_access_tracking_batch(db, &d_tags).await.ok();
     }
+
+    Ok(results)
+}
+
+/// Edge type weights for graph-expanded results.
+/// Higher weight = more relevant connection type.
+fn edge_type_weight(edge_type: &str, relation: Option<&str>) -> f64 {
+    // If the references edge has a specific relation, use that for scoring
+    if edge_type == "references" {
+        if let Some(rel) = relation {
+            return match rel {
+                "contradicts" => 0.8,
+                "supersedes" => 0.5,
+                _ => 0.6,
+            };
+        }
+        return 0.6;
+    }
+    match edge_type {
+        "contradicts" => 0.8,
+        "mentions" => 0.7,
+        "references" => 0.6,
+        "consolidated_from" => 0.3,
+        _ => 0.3,
+    }
+}
+
+/// Post-processing step: traverse graph edges from direct search hits to
+/// discover related memories and merge them into the result set.
+///
+/// For each direct hit with a d_tag, queries SurrealDB for 1-hop neighbors
+/// connected via mentions, references, contradicts, or consolidated_from edges.
+/// Expanded results are scored based on the originating hit's score multiplied
+/// by an edge-type weight. Results are deduped by d_tag.
+async fn graph_expand(
+    db: &Surreal<Db>,
+    mut results: Vec<SearchResult>,
+    max_hops: usize,
+) -> Result<Vec<SearchResult>> {
+    if max_hops == 0 {
+        return Ok(results);
+    }
+
+    // Collect d_tags already in results for dedup
+    let mut seen_d_tags: HashSet<String> = results
+        .iter()
+        .filter_map(|r| r.d_tag.clone())
+        .collect();
+
+    let mut expanded: Vec<SearchResult> = Vec::new();
+
+    // For each direct hit, traverse its edges
+    for result in &results {
+        let d_tag = match result.d_tag.as_ref() {
+            Some(dt) => dt.clone(),
+            None => continue,
+        };
+
+        let neighbors = match db::get_graph_neighbors_simple(db, &d_tag).await {
+            Ok(n) => n,
+            Err(e) => {
+                debug!("Graph expansion failed for {d_tag}: {e}");
+                continue;
+            }
+        };
+
+        for neighbor in neighbors {
+            // Skip if already in results
+            if let Some(ref nd_tag) = neighbor.d_tag {
+                if seen_d_tags.contains(nd_tag) {
+                    continue;
+                }
+                seen_d_tags.insert(nd_tag.clone());
+            }
+
+            let effective_edge_type = if neighbor.edge_type == "references" {
+                if let Some(ref rel) = neighbor.relation {
+                    if rel == "contradicts" {
+                        "contradicts"
+                    } else {
+                        "references"
+                    }
+                } else {
+                    "references"
+                }
+            } else {
+                &neighbor.edge_type
+            };
+
+            let weight = edge_type_weight(&neighbor.edge_type, neighbor.relation.as_deref());
+            let graph_score = result.score * weight;
+
+            let is_contradiction = effective_edge_type == "contradicts";
+
+            // Parse timestamp
+            let ts = neighbor
+                .created_at
+                .parse::<u64>()
+                .map(Timestamp::from)
+                .unwrap_or(Timestamp::now());
+
+            // Apply confidence decay
+            let raw_confidence = neighbor.confidence.unwrap_or(0.5);
+            let decay = confidence_decay_factor(neighbor.last_accessed.as_deref(), &neighbor.created_at);
+            let effective_confidence = raw_confidence * decay;
+
+            expanded.push(SearchResult {
+                tier: neighbor.tier,
+                topic: neighbor.topic,
+                confidence: format!("{effective_confidence:.2}"),
+                summary: neighbor.summary.unwrap_or_else(|| neighbor.content.clone()),
+                detail: neighbor.content,
+                created_at: ts,
+                score: graph_score,
+                match_type: MatchType::Graph,
+                d_tag: neighbor.d_tag,
+                embedding: None,
+                graph_edge: Some(effective_edge_type.to_string()),
+                contradicts: is_contradiction,
+            });
+        }
+    }
+
+    // Merge expanded results into the result list
+    results.extend(expanded);
+
+    // Re-sort by score
+    results.sort_by(|a, b| {
+        b.score
+            .partial_cmp(&a.score)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
 
     Ok(results)
 }
@@ -268,6 +421,8 @@ async fn text_only_search(db: &Surreal<Db>, opts: &SearchOptions) -> Result<Vec<
                 match_type: MatchType::Text,
                 d_tag: r.d_tag,
                 embedding: None,
+                graph_edge: None,
+                contradicts: false,
             }
         })
         .collect();
@@ -357,6 +512,8 @@ fn aggregate_results(results: Vec<SearchResult>) -> Vec<SearchResult> {
                 match_type: results[i].match_type,
                 d_tag: results[i].d_tag.clone(),
                 embedding: results[i].embedding.clone(),
+                graph_edge: results[i].graph_edge.clone(),
+                contradicts: results[i].contradicts,
             });
         } else {
             // Use highest-scoring result as base, combine details
@@ -409,6 +566,8 @@ fn aggregate_results(results: Vec<SearchResult>) -> Vec<SearchResult> {
                 match_type: results[best_idx].match_type,
                 d_tag: results[best_idx].d_tag.clone(),
                 embedding: results[best_idx].embedding.clone(),
+                graph_edge: results[best_idx].graph_edge.clone(),
+                contradicts: results[best_idx].contradicts,
             });
         }
     }

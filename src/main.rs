@@ -116,6 +116,12 @@ enum Command {
         /// Aggregate similar results (>0.85 embedding similarity) into single entries
         #[arg(long)]
         aggregate: bool,
+        /// Expand results by traversing graph edges (mentions, references, contradicts, consolidated_from)
+        #[arg(long)]
+        graph: bool,
+        /// Max hops for graph traversal (default 1, requires --graph)
+        #[arg(long, default_value = "1")]
+        hops: usize,
     },
     /// Generate embeddings for memories that lack them
     Embed {
@@ -459,9 +465,11 @@ async fn main() -> Result<()> {
             vector_weight,
             text_weight,
             aggregate,
+            graph,
+            hops,
         } => {
             let nomen = build_nomen(&config).await?;
-            cmd_search(&nomen, &query, tier.as_deref(), limit, vector_weight, text_weight, aggregate).await?;
+            cmd_search(&nomen, &query, tier.as_deref(), limit, vector_weight, text_weight, aggregate, graph, hops).await?;
         }
         Command::Embed { limit } => {
             let nomen = build_nomen(&config).await?;
@@ -791,6 +799,8 @@ async fn cmd_search(
     vector_weight: f32,
     text_weight: f32,
     aggregate: bool,
+    graph_expand: bool,
+    max_hops: usize,
 ) -> Result<()> {
     let opts = search::SearchOptions {
         query: query.to_string(),
@@ -801,6 +811,8 @@ async fn cmd_search(
         text_weight,
         min_confidence: None,
         aggregate,
+        graph_expand,
+        max_hops,
     };
 
     let results = nomen.search(opts).await?;
@@ -829,12 +841,33 @@ async fn cmd_search(
             search::MatchType::Hybrid => " [hybrid]",
             search::MatchType::Vector => " [vector]",
             search::MatchType::Text => " [text]",
+            search::MatchType::Graph => {
+                if let Some(ref edge) = result.graph_edge {
+                    // We'll format this below
+                    match edge.as_str() {
+                        "contradicts" => " [graph:contradicts]",
+                        "mentions" => " [graph:mentions]",
+                        "references" => " [graph:references]",
+                        "consolidated_from" => " [graph:consolidated]",
+                        _ => " [graph]",
+                    }
+                } else {
+                    " [graph]"
+                }
+            }
+        };
+
+        let contradicts_prefix = if result.contradicts {
+            format!("{} ", "[CONTRADICTS]".red().bold())
+        } else {
+            String::new()
         };
 
         println!(
-            "\n{}. {} {} (confidence: {}){}",
+            "\n{}. {} {}{} (confidence: {}){}",
             i + 1,
             tier_colored,
+            contradicts_prefix,
             result.topic.bold(),
             result.confidence,
             match_indicator.dimmed()

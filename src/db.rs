@@ -872,6 +872,302 @@ pub async fn create_references_edge(
     Ok(())
 }
 
+/// A memory discovered through graph edge traversal.
+#[derive(Debug, Deserialize)]
+pub struct GraphNeighbor {
+    /// Edge type: "mentions", "references", "consolidated_from", or "contradicts"
+    pub edge_type: String,
+    /// The relation field on references edges (e.g. "contradicts", "supersedes")
+    pub relation: Option<String>,
+    pub tier: String,
+    pub topic: String,
+    pub confidence: Option<f64>,
+    pub content: String,
+    pub summary: Option<String>,
+    pub created_at: String,
+    pub d_tag: Option<String>,
+    pub importance: Option<i64>,
+    pub last_accessed: Option<String>,
+}
+
+/// Traverse graph edges from a memory (identified by d_tag) and return neighboring memories.
+///
+/// Traverses outgoing edges: `->mentions->`, `->references->`, `->consolidated_from->`,
+/// and incoming edges: `<-references<-`, `<-mentions<-`, `<-consolidated_from<-`.
+/// Returns all connected memory nodes along with the edge type that linked them.
+pub async fn get_graph_neighbors(
+    db: &Surreal<Db>,
+    d_tag: &str,
+) -> Result<Vec<GraphNeighbor>> {
+    // Outgoing references edges (memory->references->memory) carry relation field
+    let sql = r#"
+        LET $mem = (SELECT id FROM memory WHERE d_tag = $d_tag LIMIT 1);
+        IF array::len($mem) > 0 {
+            LET $mid = $mem[0].id;
+            -- Outgoing references edges
+            SELECT
+                "references" AS edge_type,
+                ->references.relation AS relation,
+                out.tier AS tier,
+                out.topic AS topic,
+                out.confidence AS confidence,
+                out.content AS content,
+                out.summary AS summary,
+                out.created_at AS created_at,
+                out.d_tag AS d_tag,
+                out.importance AS importance,
+                out.last_accessed AS last_accessed
+            FROM $mid->references
+            WHERE out.id IS NOT NONE
+            UNION ALL
+            -- Incoming references edges
+            SELECT
+                "references" AS edge_type,
+                <-references.relation AS relation,
+                in.tier AS tier,
+                in.topic AS topic,
+                in.confidence AS confidence,
+                in.content AS content,
+                in.summary AS summary,
+                in.created_at AS created_at,
+                in.d_tag AS d_tag,
+                in.importance AS importance,
+                in.last_accessed AS last_accessed
+            FROM $mid<-references
+            WHERE in.id IS NOT NONE
+            UNION ALL
+            -- Outgoing mentions edges (memory->mentions->entity, then back entity<-mentions<-memory for shared entities)
+            SELECT
+                "mentions" AS edge_type,
+                NONE AS relation,
+                other_mem.tier AS tier,
+                other_mem.topic AS topic,
+                other_mem.confidence AS confidence,
+                other_mem.content AS content,
+                other_mem.summary AS summary,
+                other_mem.created_at AS created_at,
+                other_mem.d_tag AS d_tag,
+                other_mem.importance AS importance,
+                other_mem.last_accessed AS last_accessed
+            FROM (
+                SELECT <-mentions<-memory AS other_mems FROM $mid->mentions->entity
+            ) UNWIND other_mems AS other_mem
+            WHERE other_mem.id != $mid
+            UNION ALL
+            -- Outgoing consolidated_from edges (memory->consolidated_from->raw_message)
+            -- We find sibling memories that share the same raw_message sources
+            SELECT
+                "consolidated_from" AS edge_type,
+                NONE AS relation,
+                sibling.tier AS tier,
+                sibling.topic AS topic,
+                sibling.confidence AS confidence,
+                sibling.content AS content,
+                sibling.summary AS summary,
+                sibling.created_at AS created_at,
+                sibling.d_tag AS d_tag,
+                sibling.importance AS importance,
+                sibling.last_accessed AS last_accessed
+            FROM (
+                SELECT <-consolidated_from<-memory AS siblings FROM $mid->consolidated_from->raw_message
+            ) UNWIND siblings AS sibling
+            WHERE sibling.id != $mid
+        }
+    "#;
+
+    let mut response = db
+        .query(sql)
+        .bind(("d_tag", d_tag.to_string()))
+        .await?;
+
+    // The IF block returns on statement index 2 (after LET $mem=... and IF ...)
+    // Try taking from index 2 first, fall back to empty
+    let results: Vec<GraphNeighbor> = response.take(2).unwrap_or_default();
+
+    Ok(results)
+}
+
+/// Simplified graph neighbor query: traverse 1-hop outgoing and incoming `references` edges
+/// from a memory identified by d_tag. This is a simpler, more reliable query than the full
+/// graph traversal.
+pub async fn get_graph_neighbors_simple(
+    db: &Surreal<Db>,
+    d_tag: &str,
+) -> Result<Vec<GraphNeighbor>> {
+    let mut all: Vec<GraphNeighbor> = Vec::new();
+
+    // Find the memory record ID first
+    #[derive(Deserialize)]
+    struct IdRow {
+        #[serde(deserialize_with = "deserialize_thing_as_string")]
+        id: String,
+    }
+    let rows: Vec<IdRow> = db
+        .query("SELECT id FROM memory WHERE d_tag = $d_tag LIMIT 1")
+        .bind(("d_tag", d_tag.to_string()))
+        .await?
+        .check()?
+        .take(0)?;
+
+    let mem_id = match rows.first() {
+        Some(r) => r.id.clone(),
+        None => return Ok(all),
+    };
+
+    let (tb, rid) = mem_id.split_once(':').unwrap_or(("memory", &mem_id));
+    let thing = surrealdb::sql::Thing::from((tb, rid));
+
+    // 1. Outgoing references: memory->references->memory
+    #[derive(Debug, Deserialize)]
+    struct RefEdge {
+        relation: Option<String>,
+        #[serde(deserialize_with = "deserialize_thing_as_string")]
+        out: String,
+    }
+    let out_edges: Vec<RefEdge> = db
+        .query("SELECT relation, out FROM references WHERE in = $mid")
+        .bind(("mid", thing.clone()))
+        .await?
+        .check()?
+        .take(0)?;
+
+    for edge in &out_edges {
+        let (otb, orid) = edge.out.split_once(':').unwrap_or(("memory", &edge.out));
+        let target_thing = surrealdb::sql::Thing::from((otb, orid));
+        let mems: Vec<GraphNeighbor> = db
+            .query("SELECT $edge_type AS edge_type, $relation AS relation, tier, topic, confidence, content, summary, created_at, d_tag, importance, last_accessed FROM $target")
+            .bind(("target", target_thing))
+            .bind(("edge_type", "references".to_string()))
+            .bind(("relation", edge.relation.clone().unwrap_or_default()))
+            .await?
+            .check()?
+            .take(0)?;
+        all.extend(mems);
+    }
+
+    // 2. Incoming references: memory<-references<-memory
+    #[derive(Debug, Deserialize)]
+    struct RefEdgeIn {
+        relation: Option<String>,
+        #[serde(rename = "in")]
+        #[serde(deserialize_with = "deserialize_thing_as_string")]
+        in_node: String,
+    }
+    let in_edges: Vec<RefEdgeIn> = db
+        .query("SELECT relation, in FROM references WHERE out = $mid")
+        .bind(("mid", thing.clone()))
+        .await?
+        .check()?
+        .take(0)?;
+
+    for edge in &in_edges {
+        let (otb, orid) = edge.in_node.split_once(':').unwrap_or(("memory", &edge.in_node));
+        let target_thing = surrealdb::sql::Thing::from((otb, orid));
+        let mems: Vec<GraphNeighbor> = db
+            .query("SELECT $edge_type AS edge_type, $relation AS relation, tier, topic, confidence, content, summary, created_at, d_tag, importance, last_accessed FROM $target")
+            .bind(("target", target_thing))
+            .bind(("edge_type", "references".to_string()))
+            .bind(("relation", edge.relation.clone().unwrap_or_default()))
+            .await?
+            .check()?
+            .take(0)?;
+        all.extend(mems);
+    }
+
+    // 3. Shared entity mentions: find entities this memory mentions, then find other memories mentioning those entities
+    #[derive(Debug, Deserialize)]
+    struct MentionEdge {
+        #[serde(deserialize_with = "deserialize_thing_as_string")]
+        out: String,
+    }
+    let mention_edges: Vec<MentionEdge> = db
+        .query("SELECT out FROM mentions WHERE in = $mid")
+        .bind(("mid", thing.clone()))
+        .await?
+        .check()?
+        .take(0)?;
+
+    for mention in &mention_edges {
+        let (etb, erid) = mention.out.split_once(':').unwrap_or(("entity", &mention.out));
+        let entity_thing = surrealdb::sql::Thing::from((etb, erid));
+
+        // Find other memories that also mention this entity
+        #[derive(Debug, Deserialize)]
+        struct MentionBack {
+            #[serde(rename = "in")]
+            #[serde(deserialize_with = "deserialize_thing_as_string")]
+            in_node: String,
+        }
+        let back_edges: Vec<MentionBack> = db
+            .query("SELECT in FROM mentions WHERE out = $ent AND in != $mid")
+            .bind(("ent", entity_thing))
+            .bind(("mid", thing.clone()))
+            .await?
+            .check()?
+            .take(0)?;
+
+        for back in &back_edges {
+            let (mtb, mrid) = back.in_node.split_once(':').unwrap_or(("memory", &back.in_node));
+            let target_thing = surrealdb::sql::Thing::from((mtb, mrid));
+            let mems: Vec<GraphNeighbor> = db
+                .query("SELECT $edge_type AS edge_type, NONE AS relation, tier, topic, confidence, content, summary, created_at, d_tag, importance, last_accessed FROM $target")
+                .bind(("target", target_thing))
+                .bind(("edge_type", "mentions".to_string()))
+                .await?
+                .check()?
+                .take(0)?;
+            all.extend(mems);
+        }
+    }
+
+    // 4. Consolidated_from siblings: memories that share the same raw message sources
+    #[derive(Debug, Deserialize)]
+    struct ConsolidatedEdge {
+        #[serde(deserialize_with = "deserialize_thing_as_string")]
+        out: String,
+    }
+    let consolidated_edges: Vec<ConsolidatedEdge> = db
+        .query("SELECT out FROM consolidated_from WHERE in = $mid")
+        .bind(("mid", thing.clone()))
+        .await?
+        .check()?
+        .take(0)?;
+
+    for consol in &consolidated_edges {
+        let (rtb, rrid) = consol.out.split_once(':').unwrap_or(("raw_message", &consol.out));
+        let raw_thing = surrealdb::sql::Thing::from((rtb, rrid));
+
+        #[derive(Debug, Deserialize)]
+        struct ConsolBack {
+            #[serde(rename = "in")]
+            #[serde(deserialize_with = "deserialize_thing_as_string")]
+            in_node: String,
+        }
+        let back_edges: Vec<ConsolBack> = db
+            .query("SELECT in FROM consolidated_from WHERE out = $raw AND in != $mid")
+            .bind(("raw", raw_thing))
+            .bind(("mid", thing.clone()))
+            .await?
+            .check()?
+            .take(0)?;
+
+        for back in &back_edges {
+            let (mtb, mrid) = back.in_node.split_once(':').unwrap_or(("memory", &back.in_node));
+            let target_thing = surrealdb::sql::Thing::from((mtb, mrid));
+            let mems: Vec<GraphNeighbor> = db
+                .query("SELECT $edge_type AS edge_type, NONE AS relation, tier, topic, confidence, content, summary, created_at, d_tag, importance, last_accessed FROM $target")
+                .bind(("target", target_thing))
+                .bind(("edge_type", "consolidated_from".to_string()))
+                .await?
+                .check()?
+                .take(0)?;
+            all.extend(mems);
+        }
+    }
+
+    Ok(all)
+}
+
 /// Get unconsolidated messages older than a cutoff, optionally filtered to ephemeral only.
 pub async fn get_ephemeral_messages_before(
     db: &Surreal<Db>,
