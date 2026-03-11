@@ -254,11 +254,11 @@
 
   <!-- SLIDE 1 — Title + what Nomen provides -->
   <section class="slide active">
-    <div class="topline"><div class="brand"><span class="dot"></span> Nomen</div><div>01 / 10</div></div>
+    <div class="topline"><div class="brand"><span class="dot"></span> Nomen</div><div>01 / 11</div></div>
     <div class="content">
       <div>
         <h1>Scoped memory for agents on Nostr</h1>
-        <p class="lead" style="margin-top:20px;">Private, shared, and public memory with signed provenance and trust-aware retrieval.</p>
+        <p class="lead" style="margin-top:20px;">Private, shared, and public memory with signed provenance, graph retrieval, and trust-aware search.</p>
       </div>
       <div class="grid-2">
         <div class="card">
@@ -266,8 +266,8 @@
           <ul class="clean" style="gap:10px;">
             <li>Five visibility tiers: public, group, circle, personal, internal</li>
             <li>Kind 31234 replaceable events on Nostr relays</li>
-            <li>Hybrid search: HNSW vectors + BM25 full-text</li>
-            <li>Sleep-inspired consolidation pipeline</li>
+            <li>Hybrid search: HNSW vectors + BM25 + graph traversal</li>
+            <li>Sleep-inspired consolidation with LLM entity extraction</li>
           </ul>
         </div>
         <div class="card">
@@ -286,7 +286,7 @@
 
   <!-- SLIDE 2 — Core concepts -->
   <section class="slide">
-    <div class="topline"><div class="brand"><span class="dot"></span> Model</div><div>02 / 10</div></div>
+    <div class="topline"><div class="brand"><span class="dot"></span> Model</div><div>02 / 11</div></div>
     <div class="content">
       <h2>Five visibility tiers</h2>
       <div class="grid-2">
@@ -314,7 +314,7 @@
 
   <!-- SLIDE 3 — Visibility diagram: npubs + overlapping groups -->
   <section class="slide">
-    <div class="topline"><div class="brand"><span class="dot"></span> Visibility</div><div>03 / 10</div></div>
+    <div class="topline"><div class="brand"><span class="dot"></span> Visibility</div><div>03 / 11</div></div>
     <div class="content grid-2" style="align-items:center;">
       <div class="vis-canvas">
         <!-- Public scope (outermost) -->
@@ -355,7 +355,7 @@
 
   <!-- SLIDE 4 — Retrieval flow with arrows -->
   <section class="slide">
-    <div class="topline"><div class="brand"><span class="dot"></span> Retrieval</div><div>04 / 10</div></div>
+    <div class="topline"><div class="brand"><span class="dot"></span> Retrieval</div><div>04 / 11</div></div>
     <div class="content">
       <h2>Context-aware retrieval flow</h2>
       <div class="flow">
@@ -365,9 +365,9 @@
         <div class="arrow">→</div>
         <div class="step"><h3>3. Fetch</h3><p class="body">Retrieve candidate memories from allowed layers.</p></div>
         <div class="arrow">→</div>
-        <div class="step"><h3>4. Rank</h3><p class="body">Score by relevance, provenance, freshness, and trust signals.</p></div>
+        <div class="step"><h3>4. Rank</h3><p class="body">Score by relevance, provenance, freshness, importance, and trust signals.</p></div>
         <div class="arrow">→</div>
-        <div class="step"><h3>5. Return</h3><p class="body">Use best memory, cite source, or write new memory back.</p></div>
+        <div class="step"><h3>5. Expand</h3><p class="body">Optionally traverse graph edges to surface related memories, contradictions, and entities.</p></div>
       </div>
       <div class="card" style="margin-top:12px;">
         <p class="body">This is the shift from "search all embeddings" to <strong>policy + provenance + trust-weighted retrieval</strong>. Not all relevant memories are equally safe or equally trustworthy.</p>
@@ -376,9 +376,39 @@
     <div class="footer"><div>Retrieval is scoped by context, not just similarity.</div><div class="kbd">→</div></div>
   </section>
 
-  <!-- SLIDE 5 — Nostr memory event model -->
+  <!-- SLIDE 5 — Memory Intelligence: Graph, Entities, Clusters -->
   <section class="slide">
-    <div class="topline"><div class="brand"><span class="dot"></span> Event model</div><div>05 / 10</div></div>
+    <div class="topline"><div class="brand"><span class="dot"></span> Intelligence</div><div>05 / 11</div></div>
+    <div class="content">
+      <h2>Memory intelligence layer</h2>
+      <p class="body">Three capabilities that turn flat memory into a structured, evolving knowledge system. All modular — each feature is independently toggle-able via config.</p>
+      <div class="grid-3">
+        <div class="card">
+          <h3>🕸️ Graph-aware retrieval</h3>
+          <p class="body">Search doesn't stop at direct hits. Traverses SurrealDB graph edges — <code style="font-family:monospace;color:var(--accent);">mentions</code>, <code style="font-family:monospace;color:var(--accent);">references</code>, <code style="font-family:monospace;color:var(--accent);">contradicts</code> — to surface related memories the query didn't explicitly match.</p>
+          <p class="body" style="margin-top:10px;color:var(--green);">Enables: multi-hop reasoning, contradiction surfacing, entity-centric views</p>
+        </div>
+        <div class="card">
+          <h3>🧬 LLM entity extraction</h3>
+          <p class="body">During consolidation, LLM extracts entities (people, projects, concepts) and <strong>typed relationships</strong> between them: <em>works_on</em>, <em>collaborates_with</em>, <em>decided</em>, <em>depends_on</em>.</p>
+          <p class="body" style="margin-top:10px;color:var(--green);">Enables: knowledge graph, relationship reasoning, richer graph retrieval</p>
+        </div>
+        <div class="card">
+          <h3>🧊 Cluster fusion</h3>
+          <p class="body">Groups related memories by topic namespace (<code style="font-family:monospace;color:var(--accent);">user/k0/*</code>, <code style="font-family:monospace;color:var(--accent);">project/nomen/*</code>) and synthesizes coherent cluster summaries via LLM.</p>
+          <p class="body" style="margin-top:10px;color:var(--green);">Enables: coherent profiles, reduced noise, memory scalability</p>
+        </div>
+      </div>
+      <div class="card" style="margin-top:8px;">
+        <p class="body">Design informed by <strong>"Memory in the Age of AI Agents"</strong> (Hu et al., 2025) — local consolidation with LLM merging, graph-structured memory (2D), and sleep-inspired dynamics. Each feature degrades gracefully: no API key → heuristic fallback or feature off.</p>
+      </div>
+    </div>
+    <div class="footer"><div>Flat storage with graph metadata → structured, evolving knowledge.</div><div class="kbd">→</div></div>
+  </section>
+
+  <!-- SLIDE 6 — Nostr memory event model -->
+  <section class="slide">
+    <div class="topline"><div class="brand"><span class="dot"></span> Event model</div><div>06 / 11</div></div>
     <div class="content">
       <h2>Kind 31234 — addressable replaceable events</h2>
       <div class="grid-2">
@@ -425,7 +455,7 @@
 
   <!-- SLIDE 6 — Shared memory in practice -->
   <section class="slide">
-    <div class="topline"><div class="brand"><span class="dot"></span> Shared memory</div><div>06 / 10</div></div>
+    <div class="topline"><div class="brand"><span class="dot"></span> Shared memory</div><div>07 / 11</div></div>
     <div class="content">
       <h2>What shared memory enables</h2>
       <div class="grid-3">
@@ -442,7 +472,7 @@
 
   <!-- SLIDE 7 — Integration paths with implementation notes -->
   <section class="slide">
-    <div class="topline"><div class="brand"><span class="dot"></span> Integration</div><div>07 / 10</div></div>
+    <div class="topline"><div class="brand"><span class="dot"></span> Integration</div><div>08 / 11</div></div>
     <div class="content">
       <h2>Three integration paths</h2>
       <div class="grid-3">
@@ -515,7 +545,7 @@ nomen serve --http 127.0.0.1:3000</code>
 
   <!-- SLIDE 8 — Feature checklist / closing -->
   <section class="slide">
-    <div class="topline"><div class="brand"><span class="dot"></span> Summary</div><div>08 / 10</div></div>
+    <div class="topline"><div class="brand"><span class="dot"></span> Summary</div><div>09 / 11</div></div>
     <div class="content">
       <h2>Nomen at a glance</h2>
       <div class="summary-wrap">
@@ -528,20 +558,20 @@ nomen serve --http 127.0.0.1:3000</code>
                 <li>Kind 31234 addressable/replaceable events</li>
                 <li>D-tag: <code style="font-family:monospace;color:var(--accent);">{visibility}:{scope}:{topic}</code></li>
                 <li>NIP-29 groups + ad-hoc circle sets</li>
-                <li>NIP-44 encryption (personal/internal). Circles: Marmot (MLS) for E2E encrypted group memory</li>
-                <li>Hybrid search: HNSW vectors + BM25 full-text</li>
-                <li>Entity extraction + knowledge graph (SurrealDB)</li>
+                <li>NIP-44 encryption (personal/internal)</li>
+                <li>Hybrid search: vectors + BM25 + graph traversal</li>
+                <li>LLM entity extraction + typed knowledge graph</li>
               </ul>
             </div>
             <div>
-              <h3>Integration & tooling</h3>
+              <h3>Intelligence & tooling</h3>
               <ul class="clean" style="gap:10px;">
-                <li>MCP server (stdio / HTTP) with web dashboard</li>
-                <li>Context-VM: pure Nostr (kind 21900→21901, NIP-44)</li>
-                <li>Rust library crate for native embedding</li>
-                <li>Consolidation pipeline: raw messages → named memories</li>
-                <li>Confidence decay + importance scoring</li>
-                <li>GitHub repo and docs linked on the QR code</li>
+                <li>Graph-aware retrieval: multi-hop edge traversal</li>
+                <li>Cluster fusion: namespace-grouped LLM summaries</li>
+                <li>Sleep-inspired consolidation with LLM merge/dedup</li>
+                <li>MCP server (stdio / HTTP) + Context-VM (Nostr-native)</li>
+                <li>Modular: every LLM feature independently toggle-able</li>
+                <li>Confidence decay + importance scoring + pruning</li>
               </ul>
             </div>
           </div>
@@ -558,7 +588,7 @@ nomen serve --http 127.0.0.1:3000</code>
 
   <!-- SLIDE 9 — Workshop / playground -->
   <section class="slide">
-    <div class="topline"><div class="brand"><span class="dot"></span> Workshop</div><div>09 / 10</div></div>
+    <div class="topline"><div class="brand"><span class="dot"></span> Workshop</div><div>10 / 11</div></div>
     <div class="content">
       <h2>Join the playground relay</h2>
       <div class="summary-wrap" style="align-items:center;">
@@ -583,9 +613,9 @@ nomen serve --http 127.0.0.1:3000</code>
     <div class="footer"><div>Register now and we can start testing immediately.</div><div class="kbd">R · restart</div></div>
   </section>
 
-  <!-- SLIDE 10 — CLI quickstart -->
+  <!-- SLIDE 11 — CLI quickstart -->
   <section class="slide">
-    <div class="topline"><div class="brand"><span class="dot"></span> Quickstart</div><div>10 / 10</div></div>
+    <div class="topline"><div class="brand"><span class="dot"></span> Quickstart</div><div>11 / 11</div></div>
     <div class="content">
       <h2>Getting started</h2>
       <div class="grid-2">
@@ -601,20 +631,20 @@ nomen serve --http 127.0.0.1:3000</code>
           <p>Store a memory. Published to relay as kind 31234.</p>
         </div>
         <div class="cmd">
-          <code>nomen search "error handling"
-nomen search "error handling" --aggregate</code>
-          <p>Hybrid search (vector + BM25). <code>--aggregate</code> merges similar results.</p>
+          <code>nomen search "error handling" --graph
+nomen search "Alhovuori" --graph --hops 2</code>
+          <p>Hybrid search + graph traversal. <code>--graph</code> follows edges to surface related memories.</p>
         </div>
         <div class="cmd">
-          <code>nomen ingest "k0 mentioned switching to Tailscale" \
-  --source telegram --sender k0
-nomen consolidate</code>
-          <p>Ingest raw messages, then consolidate into named memories.</p>
+          <code>nomen consolidate
+nomen cluster --dry-run
+nomen entities --relations</code>
+          <p>Consolidate raw messages, preview cluster fusion, inspect entity relationships.</p>
         </div>
         <div class="cmd">
           <code>nomen serve --stdio
 nomen serve --http 127.0.0.1:3000</code>
-          <p>MCP server (stdio or HTTP). Tools: search, store, ingest, consolidate, entities, groups.</p>
+          <p>MCP server (stdio or HTTP). Tools: search, store, ingest, consolidate, entities, cluster, groups.</p>
         </div>
         <div class="cmd">
           <code>nomen serve --stdio --context-vm \
