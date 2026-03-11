@@ -26,10 +26,10 @@ SurrealDB (embedded, local cache)
 
 ```
 src/
-├── main.rs          (1224)  CLI entry, clap commands
-├── lib.rs            (284)  Nomen struct, public API
-├── db.rs             (918)  SurrealDB schema, queries, CRUD
-├── search.rs         (154)  Hybrid vector + BM25 search
+├── main.rs          (2084)  CLI entry, clap commands
+├── lib.rs            (560)  Nomen struct, public API (incl. ClusterOptions)
+├── db.rs            (1700)  SurrealDB schema, queries, CRUD, graph traversal
+├── search.rs         (340)  Hybrid vector + BM25 search + graph expansion
 ├── relay.rs          (223)  Nostr relay sync
 ├── memory.rs         (141)  Memory parsing from Nostr events
 ├── send.rs           (249)  Send messages (DM, group, public)
@@ -40,15 +40,16 @@ src/
 ├── ingest.rs          (63)  Raw message ingestion
 ├── consolidate.rs    (354)  Raw messages → named memories
 ├── embed.rs          (188)  Embedding generation (OpenAI API)
-├── entities.rs       (212)  Entity extraction + graph edges
+├── entities.rs       (380)  Entity extraction (heuristic + LLM) + typed relationships
+├── cluster.rs        (420)  Cluster fusion — namespace-grouped memory synthesis
 ├── groups.rs         (373)  Group management
-├── config.rs         (197)  TOML config (~/.config/nomen/config.toml)
+├── config.rs         (280)  TOML config (~/.config/nomen/config.toml)
 ├── access.rs         (132)  Access control
 ├── display.rs         (77)  Formatted output
 └── migrate.rs        (136)  SQLite → SurrealDB migration
 ```
 
-Total: ~6900 LOC Rust.
+Total: ~8200 LOC Rust.
 
 ## Storage: SurrealDB (Embedded)
 
@@ -74,9 +75,53 @@ Single embedded database. Multi-model: documents, vectors (HNSW), full-text (BM2
 ### Graph Edges
 
 - `mentions` — memory → entity
-- `references` — memory → memory (supports, contradicts, supersedes)
+- `references` — memory → memory (supports, contradicts, supersedes, summarizes)
 - `consolidated_from` — consolidated memory → source messages
-- `related_to` — entity → entity
+- `related_to` — entity → entity (typed: works_on, collaborates_with, decided, depends_on, member_of, etc.)
+
+Graph edges are used for both provenance tracking and **retrieval expansion**. See Graph-Aware Retrieval below.
+
+### Graph-Aware Retrieval
+
+Search supports a `graph_expand` post-processing step that traverses edges from direct search hits to discover related memories:
+
+```
+hybrid_search(query)
+  → top-K results
+  → for each result with a d_tag, traverse 1-hop graph edges
+  → score expanded results: parent_score × edge_type_weight
+  → merge into final ranked list (dedup by d_tag)
+```
+
+Edge type weights control how strongly different connections influence retrieval:
+
+| Edge Type | Weight | Rationale |
+|-----------|--------|-----------|
+| `contradicts` | 0.8 | Conflicts are critical context |
+| `mentions` (shared entity) | 0.7 | Entity co-occurrence is strong signal |
+| `references` | 0.6 | Supporting/related evidence |
+| `references` (supersedes) | 0.5 | Older version, lower priority |
+| `consolidated_from` | 0.3 | Provenance, lower relevance |
+
+Graph-expanded results carry `MatchType::Graph` and include the edge type that connected them. Contradictions are flagged with `contradicts: true` for downstream handling.
+
+Enabled via `--graph` CLI flag, `graph_expand` in MCP/API, with configurable `max_hops` (default 1).
+
+### Cluster Fusion
+
+Periodic pipeline that groups memories by topic namespace prefix and synthesizes coherent summaries:
+
+```
+Named memories (user/k0/preferences, user/k0/timezone, user/k0/projects)
+  → Group by prefix at depth N (e.g. "user/k0" at depth 2)
+  → Filter: clusters with ≥ min_members
+  → LLM synthesis → coherent cluster summary
+  → Store as "cluster/user/k0" with references edges (relation: "summarizes")
+```
+
+Cluster memories are replaceable by d-tag (refreshed on next run). Tier is derived from the most restrictive member tier (internal > personal > group > public).
+
+Configured via `[memory.cluster]` in config.toml. CLI: `nomen cluster [--dry-run] [--prefix]`.
 
 ## Memory Tiers
 

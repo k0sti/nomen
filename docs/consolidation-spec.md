@@ -189,6 +189,8 @@ RELATE $memory_id->consolidated_from->$raw_message_id
 
 Preserves provenance — trace any named memory back to the raw conversation that produced it.
 
+**Entity edges:** During consolidation, the entity extractor (heuristic or LLM-powered `CompositeExtractor`) produces both entities and typed relationships. Entities get `mentions` edges to the memory. Relationships between entities create `related_to` edges with typed relations (e.g. `works_on`, `collaborates_with`, `manages`, `contradicts`). These typed edges are used by graph-aware retrieval to surface related context.
+
 ### Stage 6: Cleanup
 
 1. **Mark consolidated:** Set `consolidated = true` on all source `raw_message` records
@@ -357,8 +359,8 @@ Output: { "messages_processed": 47, "memories_created": 5 }
 
 ### TODO 📋
 
-- [x] **Tier derivation from source context** — Currently defaults to `public`. Should be `private` for DM sources, `group` for group sources.
-- [x] **Merge into existing memories** — When topic d-tag already exists, merge instead of creating duplicate. Requires fetching existing + re-prompting LLM.
+- [x] **Tier derivation from source context** — `private` for DM sources, `group` for group sources.
+- [x] **Merge into existing memories** — When topic d-tag already exists, merge instead of creating duplicate.
 - [x] **Conflict detection** — Flag contradictions between new and existing memories. Create `contradicts` graph edges.
 - [x] **Access tracking** — `last_accessed` and `access_count` fields on memory records. Updated on search hits.
 - [x] **Confidence decay** — Time-based decay factor in retrieval scoring.
@@ -369,12 +371,15 @@ Output: { "messages_processed": 47, "memories_created": 5 }
 - [x] **Auto-trigger** — `check_consolidation_due()` checks interval_hours and max_ephemeral_count. HTTP GET `/consolidate/status`. Meta table tracks last run.
 - [x] **Cross-group consolidation guard** — Prevent private ephemeral memories from leaking into group-tier named memories.
 - [x] **Aggregated search results** — Post-retrieval merging of semantically similar hits (>0.85 cosine) into coherent summaries. CLI `--aggregate` flag.
+- [x] **Graph-aware retrieval** — Post-search graph traversal surfaces related memories via `mentions`, `references`, `contradicts`, and `consolidated_from` edges. CLI `--graph` / `--hops`, MCP `graph_expand` param.
+- [x] **LLM entity extraction** — `EntityExtractor` trait with `HeuristicExtractor`, `LlmEntityExtractor`, `CompositeExtractor`. Typed relationships stored as `related_to` edges. Config: `[entities]` section.
+- [x] **Cluster fusion** — Namespace-grouped memory synthesis. Groups memories by topic prefix, LLM produces coherent summaries stored as `cluster/<prefix>` with `summarizes` edges. CLI `nomen cluster`, config `[memory.cluster]`.
 
 ## 12. Future: Dream Cycle
 
 Beyond structured consolidation (NREM-equivalent), a creative associative pass (REM-equivalent) can discover latent connections between memories. See `obsidian/03-06 Dreaming & Sleep-Inspired Memory.md` for the full design.
 
-This is Phase 2 — consolidation must be solid first.
+**Prerequisites completed:** Graph-aware retrieval (Feature 1), LLM entity extraction (Feature 2), and cluster fusion (Feature 3) are all implemented. These provide the rich graph structure and cluster summaries that the dream cycle needs for effective latent connection discovery. See [graph-and-consolidation-roadmap.md](graph-and-consolidation-roadmap.md) for the full roadmap — Feature 4 (Dream Cycle) is the remaining work.
 
 ---
 

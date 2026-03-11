@@ -35,8 +35,10 @@ Both support hierarchical querying — a search scoped to `atlantislabs` include
 ### Semantic Search & Knowledge Graph
 
 - **Hybrid search** — HNSW vector similarity (1536-dim embeddings) + BM25 full-text, weighted and composable
-- **Entity extraction** — People, projects, concepts automatically extracted and linked
-- **Graph edges** — SurrealDB native graph: `mentions`, `references`, `contradicts`, `consolidated_from`
+- **Graph-aware retrieval** — Traverses graph edges from search hits to surface related memories (`--graph`). Discovers contradictions, entity connections, and provenance chains. Configurable hop depth (`--hops`)
+- **Entity extraction** — Heuristic + LLM-powered extraction via `EntityExtractor` trait. `CompositeExtractor` runs heuristic first, then LLM for relationships. Supports typed relationships (`works_on`, `collaborates_with`, `contradicts`, etc.)
+- **Graph edges** — SurrealDB native graph: `mentions`, `references`, `contradicts`, `consolidated_from`, `related_to` (typed entity relationships), `summarizes` (cluster → source)
+- **Cluster fusion** — Groups related memories by namespace prefix and synthesizes coherent summaries via LLM. Reduces retrieval noise and improves context window efficiency
 - **Confidence decay** — Unaccessed memories lose ranking weight over time
 - **Aggregated results** — Similar hits merged into coherent summaries (`--aggregate`)
 - **Importance scoring** — LLM assigns 1-10 importance at creation, used in retrieval ranking
@@ -136,6 +138,8 @@ nomen store "rust/error-handling" \
 # Search
 nomen search "error handling"
 nomen search "error handling" --aggregate  # merge similar results
+nomen search "error handling" --graph      # traverse graph edges for related memories
+nomen search "error handling" --graph --hops 2  # 2-hop graph traversal
 
 # Ingest raw messages for consolidation
 nomen ingest "k0 mentioned switching to Tailscale for VPN" --source telegram --sender k0
@@ -143,6 +147,15 @@ nomen ingest "k0 mentioned switching to Tailscale for VPN" --source telegram --s
 # Run consolidation
 nomen consolidate --dry-run  # preview
 nomen consolidate            # extract → merge → store → cleanup
+
+# View entities and relationships
+nomen entities --kind person
+nomen entities --relations   # show typed relationships between entities
+
+# Run cluster fusion — synthesize related memories by namespace
+nomen cluster --dry-run      # preview what clusters would form
+nomen cluster                # synthesize cluster summaries
+nomen cluster --prefix user/ # only fuse user/* memories
 
 # Prune old memories
 nomen prune --days 90 --dry-run
@@ -239,6 +252,17 @@ name = "My Team"
 members = ["npub1...", "npub1..."]
 nostr_group = "myteam"
 
+[entities]
+provider = "openrouter"            # "openrouter", "openai", "heuristic", or "none"
+model = "anthropic/claude-sonnet-4-6"
+api_key_env = "OPENROUTER_API_KEY"
+
+[memory.cluster]
+enabled = true
+min_members = 3           # minimum memories per cluster
+namespace_depth = 2       # grouping depth (e.g. 2 → "user/k0")
+interval_hours = 24       # run daily
+
 [server]
 enabled = true
 listen = "127.0.0.1:3000"
@@ -254,12 +278,13 @@ listen = "127.0.0.1:3000"
 | `nomen sync` | Sync relay → local SurrealDB |
 | `nomen store <topic>` | Store a memory (relay + local) |
 | `nomen delete <topic>` | Delete a memory (NIP-09 + local) |
-| `nomen search <query> [--aggregate]` | Hybrid semantic + full-text search |
+| `nomen search <query> [--aggregate] [--graph] [--hops N]` | Hybrid semantic + full-text search with optional graph expansion |
 | `nomen embed [--limit N]` | Generate missing embeddings |
 | `nomen ingest <content>` | Ingest raw message |
 | `nomen messages [--source\|--channel\|--sender]` | Query raw messages |
 | `nomen consolidate [--dry-run]` | LLM-powered consolidation |
-| `nomen entities [--kind]` | List extracted entities |
+| `nomen entities [--kind] [--relations]` | List extracted entities and relationships |
+| `nomen cluster [--dry-run] [--prefix] [--min-members N]` | Cluster fusion — synthesize related memories by namespace |
 | `nomen prune [--days N] [--dry-run]` | Prune old memories |
 | `nomen group create\|list\|members\|add-member\|remove-member` | Manage groups |
 | `nomen send <content> --to <recipient>` | Send message via Nostr |
@@ -304,9 +329,10 @@ src/
 ├── db.rs            # SurrealDB schema, queries, migrations
 ├── relay.rs         # Nostr relay sync (NIP-42, NIP-44)
 ├── memory.rs        # Memory types and event parsing
-├── search.rs        # Hybrid search + aggregation + confidence decay
+├── search.rs        # Hybrid search + aggregation + confidence decay + graph expansion
 ├── embed.rs         # Embedding trait + OpenAI provider
-├── entities.rs      # Entity extraction + graph
+├── entities.rs      # Entity extraction (heuristic + LLM) + typed relationships
+├── cluster.rs       # Cluster fusion — namespace-grouped memory synthesis
 ├── groups.rs        # Group hierarchy + scope resolution
 ├── access.rs        # Tier enforcement
 ├── ingest.rs        # Raw message ingestion

@@ -47,11 +47,15 @@ Hybrid semantic (HNSW vector) + full-text (BM25) search across stored memories.
 | `vector_weight` | float | | `--vector-weight` (default 0.7) | ✅ (default 0.7) | ✅ (default 0.7) | Vector similarity weight (0.0–1.0) |
 | `text_weight` | float | | `--text-weight` (default 0.3) | ✅ (default 0.3) | ✅ (default 0.3) | BM25 full-text weight (0.0–1.0) |
 | `aggregate` | bool | | `--aggregate` | ✅ | ✅ | Merge similar results (>0.85 similarity) |
+| `graph_expand` | bool | | `--graph` | ✅ | ✅ | Traverse graph edges to surface related memories |
+| `max_hops` | integer | | `--hops` (default 1) | ✅ (default 1) | ✅ (default 1) | Max hops for graph traversal (requires graph_expand) |
 
 **CLI:**
 ```bash
 nomen search "nostr relay setup" --tier public --limit 5
 nomen search "project decisions" --aggregate --vector-weight 0.8
+nomen search "Alhovuori" --graph            # traverse graph edges
+nomen search "Alhovuori" --graph --hops 2   # 2-hop traversal
 ```
 
 **MCP tool:** `nomen_search`  
@@ -200,12 +204,14 @@ Query the knowledge graph for extracted entities (people, projects, concepts, pl
 
 | Parameter | Type | Required | CLI | MCP | CVM | Description |
 |-----------|------|----------|-----|-----|-----|-------------|
-| `kind` | string | | `--kind` | ✅ | ✅ | Filter: `person`, `project`, `concept`, `place`, `organization` |
+| `kind` | string | | `--kind` | ✅ | ✅ | Filter: `person`, `project`, `concept`, `place`, `organization`, `technology` |
 | `query` | string | | | ✅ | ❌ | Name substring search |
+| `relations` | bool | | `--relations` | ❌ | ❌ | Show typed relationships between entities |
 
 **CLI:**
 ```bash
 nomen entities --kind person
+nomen entities --relations    # show typed relationships (works_on, collaborates_with, etc.)
 ```
 
 **MCP tool:** `nomen_entities`  
@@ -241,6 +247,32 @@ nomen consolidate --min-messages 5 --batch-size 100
 
 **MCP tool:** `nomen_consolidate`  
 **Context-VM action:** `"consolidate"`
+
+---
+
+### cluster — Cluster fusion
+
+Synthesize related memories by namespace prefix into coherent cluster summaries.
+
+| | CLI | MCP | Context-VM |
+|---|---|---|---|
+| **Available** | ✅ | ❌ | ❌ |
+
+**Parameters:**
+
+| Parameter | Type | Required | CLI | Description |
+|-----------|------|----------|-----|-------------|
+| `dry_run` | bool | | `--dry-run` | Preview clusters without storing |
+| `prefix` | string | | `--prefix` | Only fuse memories under this prefix (e.g. `user/`) |
+| `min_members` | integer | | `--min-members` (default 3) | Minimum memories per cluster |
+| `namespace_depth` | integer | | `--namespace-depth` (default 2) | Grouping depth (e.g. 2 → `user/k0`) |
+
+**CLI:**
+```bash
+nomen cluster --dry-run                    # preview
+nomen cluster                              # run synthesis
+nomen cluster --prefix user/ --min-members 5
+```
 
 ---
 
@@ -505,12 +537,13 @@ Or on error:
 
 | Operation | CLI | MCP | Context-VM | Notes |
 |-----------|-----|-----|------------|-------|
-| search | ✅ | ✅ | ✅ | All have weight/aggregate/session_id |
+| search | ✅ | ✅ | ✅ | All have weight/aggregate/graph_expand/session_id |
 | store | ✅ | ✅ | ✅ | All publish to relay + local DB |
 | delete | ✅ | ✅ | ✅ | All publish NIP-09 to relay |
 | ingest | ✅ | ✅ | ✅ | |
 | messages | ✅ | ✅ | ✅ | CLI has around/context |
-| entities | ✅ | ✅ | ✅ | MCP has query filter |
+| entities | ✅ | ✅ | ✅ | MCP has query filter; CLI has --relations |
+| cluster | ✅ | — | — | CLI-only (batch operation) |
 | consolidate | ✅ | ✅ | ✅ | CLI has batch/dry-run controls |
 | groups | ✅ | ✅ | ✅ | Full CRUD on all interfaces |
 | send | ✅ | ✅ | ✅ | |

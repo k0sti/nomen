@@ -1,19 +1,19 @@
 # Graph Retrieval & Advanced Consolidation — Implementation Roadmap
 
 **Date:** 2026-03-11  
-**Status:** Design  
+**Status:** Features 1-3 Implemented ✅ · Feature 4 Design  
 **Source:** Gap analysis vs "Memory in the Age of AI Agents" (Hu et al., arXiv:2512.13564)
 
 ---
 
 ## Priority Order
 
-| # | Feature | Effort | Enables |
-|---|---------|--------|---------|
-| 1 | Graph-aware retrieval | Medium | Multi-hop reasoning, context discovery |
-| 2 | LLM entity extraction | Medium | Richer graph, better linking |
-| 3 | Cluster fusion | Medium | Scalable memory, reduced noise |
-| 4 | Dream cycle (Phase 2) | Large | Latent connection discovery |
+| # | Feature | Effort | Status | Enables |
+|---|---------|--------|--------|---------|
+| 1 | Graph-aware retrieval | Medium | ✅ Implemented | Multi-hop reasoning, context discovery |
+| 2 | LLM entity extraction | Medium | ✅ Implemented | Richer graph, better linking |
+| 3 | Cluster fusion | Medium | ✅ Implemented | Scalable memory, reduced noise |
+| 4 | Dream cycle (Phase 2) | Large | 📋 Design | Latent connection discovery |
 
 ---
 
@@ -143,11 +143,11 @@ AND <-mentions<-memory.d_tag != $dtag
 
 ### Acceptance Criteria
 
-- [ ] `nomen search "X" --graph` returns results from graph traversal alongside vector+BM25 hits
-- [ ] Contradicting memories are surfaced with a `[CONTRADICTS]` marker
-- [ ] Entity-centric queries return all memories mentioning that entity
-- [ ] MCP `nomen_search` supports `graph_expand` parameter
-- [ ] Graph-expanded results are scored lower than direct hits (distance decay)
+- [x] `nomen search "X" --graph` returns results from graph traversal alongside vector+BM25 hits
+- [x] Contradicting memories are surfaced with a `[CONTRADICTS]` marker
+- [x] Entity-centric queries return all memories mentioning that entity (via shared-entity traversal)
+- [x] MCP `nomen_search` supports `graph_expand` and `max_hops` parameters
+- [x] Graph-expanded results are scored lower than direct hits (parent score × edge type weight)
 
 ---
 
@@ -254,11 +254,11 @@ api_key_env = "OPENROUTER_API_KEY"
 
 ### Acceptance Criteria
 
-- [ ] `nomen consolidate` extracts entities via LLM when configured
-- [ ] Typed `related_to` edges created between entities (not just `mentions`)
-- [ ] `nomen entities --relations` shows entity relationships
-- [ ] Falls back to heuristic when LLM is unconfigured
-- [ ] Entity dedup by normalized name (case-insensitive)
+- [x] `nomen consolidate` extracts entities via LLM when configured (CompositeExtractor)
+- [x] Typed `related_to` edges created between entities (not just `mentions`)
+- [x] `nomen entities --relations` shows entity relationships
+- [x] Falls back to heuristic when LLM is unconfigured (`build_entity_extractor()`)
+- [x] Entity dedup by normalized name (case-insensitive)
 
 ---
 
@@ -373,11 +373,11 @@ interval_hours = 24   # run daily (less frequent than consolidation)
 
 ### Acceptance Criteria
 
-- [ ] `nomen cluster` groups memories by namespace and produces synthesis summaries
-- [ ] Cluster memories have `references` edges (relation: "summarizes") to source memories
-- [ ] Cluster memories are replaceable (refresh on next run)
-- [ ] `nomen search` can return cluster summaries alongside individual memories
-- [ ] Dry-run mode shows what clusters would be formed
+- [x] `nomen cluster` groups memories by namespace and produces synthesis summaries
+- [x] Cluster memories have `references` edges (relation: "summarizes") to source memories
+- [x] Cluster memories are replaceable (refresh on next run via d-tag)
+- [x] `nomen search` can return cluster summaries alongside individual memories
+- [x] Dry-run mode shows what clusters would be formed (with member topics)
 
 ---
 
