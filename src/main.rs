@@ -199,6 +199,21 @@ enum Command {
         #[arg(long)]
         relations: bool,
     },
+    /// Run cluster fusion — synthesize related memories by namespace
+    Cluster {
+        /// Preview what clusters would be formed without storing
+        #[arg(long)]
+        dry_run: bool,
+        /// Only fuse memories under this prefix (e.g. "user/")
+        #[arg(long)]
+        prefix: Option<String>,
+        /// Minimum memories per cluster
+        #[arg(long, default_value = "3")]
+        min_members: usize,
+        /// Namespace depth for grouping (e.g. 2 for "user/k0")
+        #[arg(long, default_value = "2")]
+        namespace_depth: usize,
+    },
     /// Prune unused/low-confidence memories and old raw messages
     Prune {
         /// Delete items older than N days
@@ -532,6 +547,14 @@ async fn main() -> Result<()> {
         Command::Entities { kind, relations } => {
             let nomen = build_nomen(&config).await?;
             cmd_entities(&nomen, kind.as_deref(), relations).await?;
+        }
+        Command::Cluster {
+            dry_run,
+            prefix,
+            min_members,
+            namespace_depth,
+        } => {
+            cmd_cluster(&config, &resolved, dry_run, prefix, min_members, namespace_depth).await?;
         }
         Command::Prune { days, dry_run } => {
             let nomen = build_nomen(&config).await?;
@@ -1251,6 +1274,108 @@ async fn cmd_entities(nomen: &Nomen, kind_filter: Option<&str>, show_relations: 
     Ok(())
 }
 
+// ── Command: cluster ────────────────────────────────────────────────
+
+async fn cmd_cluster(
+    config: &Config,
+    _resolved: &ResolvedConfig,
+    dry_run: bool,
+    prefix: Option<String>,
+    min_members: usize,
+    namespace_depth: usize,
+) -> Result<()> {
+    let embedder = config.build_embedder();
+    let db_handle = db::init_db_with_dimensions(config.embedding_dimensions()).await?;
+
+    // Build LLM provider — reuse consolidation LLM config
+    let llm_provider: Box<dyn nomen::cluster::ClusterLlmProvider> = config
+        .consolidation_llm_config()
+        .and_then(|c| nomen::cluster::OpenAiClusterLlmProvider::from_config(&c))
+        .map(|p| Box::new(p) as Box<dyn nomen::cluster::ClusterLlmProvider>)
+        .unwrap_or_else(|| Box::new(nomen::cluster::NoopClusterLlmProvider));
+
+    // Author pubkey for d-tag construction
+    let author_pubkey = config
+        .all_nsecs()
+        .first()
+        .and_then(|nsec| nostr_sdk::SecretKey::from_bech32(nsec).ok())
+        .map(|sk| nostr_sdk::Keys::new(sk).public_key().to_hex());
+
+    let cluster_config = nomen::cluster::ClusterConfig {
+        min_members,
+        namespace_depth,
+        llm_provider,
+        dry_run,
+        prefix_filter: prefix.clone(),
+        author_pubkey,
+    };
+
+    if dry_run {
+        println!(
+            "{} Running cluster fusion...",
+            "[DRY RUN]".yellow().bold()
+        );
+    } else {
+        println!("Running cluster fusion...");
+    }
+
+    let report =
+        nomen::cluster::run_cluster_fusion(&db_handle, embedder.as_ref(), &cluster_config, None)
+            .await?;
+
+    if report.clusters_found == 0 {
+        println!(
+            "No clusters found (need at least {min_members} memories per namespace prefix)."
+        );
+        if report.memories_scanned == 0 {
+            println!("  No named memories in the database. Run `nomen consolidate` first.");
+        } else {
+            println!(
+                "  Scanned {} memories at namespace depth {}.",
+                report.memories_scanned, namespace_depth
+            );
+        }
+    } else {
+        let prefix_display = if dry_run {
+            format!("{}", "[DRY RUN] Would synthesize".yellow())
+        } else {
+            format!("{}", "Synthesized".green().bold())
+        };
+
+        println!(
+            "{}: {} clusters from {} memories",
+            prefix_display,
+            if dry_run {
+                report.clusters_found
+            } else {
+                report.clusters_synthesized
+            },
+            report.memories_scanned
+        );
+
+        if !dry_run && report.edges_created > 0 {
+            println!(
+                "  Created {} 'summarizes' edges",
+                report.edges_created
+            );
+        }
+
+        for detail in &report.cluster_details {
+            println!(
+                "\n  {} ({} members)",
+                detail.prefix.bold(),
+                detail.member_count
+            );
+            for topic in &detail.member_topics {
+                println!("    - {}", topic.dimmed());
+            }
+        }
+    }
+
+    println!();
+    Ok(())
+}
+
 // ── Command: prune ──────────────────────────────────────────────────
 
 async fn cmd_prune(nomen: &Nomen, days: u64, dry_run: bool) -> Result<()> {
@@ -1626,6 +1751,7 @@ async fn cmd_init(force: bool, non_interactive: bool) -> Result<()> {
             .interact_text()?;
 
         Some(MemorySection {
+            cluster: None,
             consolidation: Some(MemoryConsolidationConfig {
                 enabled: true,
                 interval_hours: cons_interval,
@@ -1744,6 +1870,7 @@ async fn cmd_init_non_interactive() -> Result<()> {
         groups: Vec::new(),
         consolidation: None,
         memory: Some(MemorySection {
+            cluster: None,
             consolidation: Some(MemoryConsolidationConfig {
                 enabled: true,
                 interval_hours: 4,

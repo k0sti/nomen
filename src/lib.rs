@@ -4,6 +4,7 @@
 //! message ingestion, consolidation, and Nostr relay sync backed by SurrealDB.
 
 pub mod access;
+pub mod cluster;
 pub mod config;
 pub mod consolidate;
 pub mod db;
@@ -38,6 +39,7 @@ use surrealdb::Surreal;
 
 use std::sync::Arc;
 
+use crate::cluster::{ClusterConfig, ClusterReport, NoopClusterLlmProvider};
 use crate::config::Config;
 use crate::consolidate::{ConsolidationConfig, ConsolidationReport, NoopLlmProvider};
 use crate::embed::Embedder;
@@ -85,6 +87,27 @@ impl Default for ConsolidateOptions {
             min_messages: 3,
             llm_provider: None,
             entity_extractor: None,
+        }
+    }
+}
+
+/// Options for cluster fusion.
+pub struct ClusterOptions {
+    pub min_members: usize,
+    pub namespace_depth: usize,
+    pub llm_provider: Option<Box<dyn cluster::ClusterLlmProvider>>,
+    pub dry_run: bool,
+    pub prefix_filter: Option<String>,
+}
+
+impl Default for ClusterOptions {
+    fn default() -> Self {
+        Self {
+            min_members: 3,
+            namespace_depth: 2,
+            llm_provider: None,
+            dry_run: false,
+            prefix_filter: None,
         }
     }
 }
@@ -383,6 +406,28 @@ impl Nomen {
             ..Default::default()
         };
         consolidate::consolidate(
+            &self.db,
+            self.embedder.as_ref(),
+            &config,
+            self.relay.as_ref(),
+        )
+        .await
+    }
+
+    /// Run the cluster fusion pipeline on named memories.
+    pub async fn cluster_fusion(&self, opts: ClusterOptions) -> Result<ClusterReport> {
+        let author_pubkey = self.signer.as_ref().map(|s| s.public_key().to_hex());
+        let config = ClusterConfig {
+            min_members: opts.min_members,
+            namespace_depth: opts.namespace_depth,
+            llm_provider: opts
+                .llm_provider
+                .unwrap_or_else(|| Box::new(NoopClusterLlmProvider)),
+            dry_run: opts.dry_run,
+            prefix_filter: opts.prefix_filter,
+            author_pubkey,
+        };
+        cluster::run_cluster_fusion(
             &self.db,
             self.embedder.as_ref(),
             &config,
