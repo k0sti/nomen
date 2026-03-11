@@ -465,6 +465,8 @@ pub struct ConsolidationConfig {
     pub batch_size: usize,
     pub min_messages: usize,
     pub llm_provider: Box<dyn LlmProvider>,
+    /// Entity extractor (heuristic, LLM, or composite).
+    pub entity_extractor: Box<dyn crate::entities::EntityExtractor>,
     /// If true, preview what would be consolidated without publishing.
     pub dry_run: bool,
     /// Only consolidate messages older than this duration string (e.g. "30m", "1h", "7d").
@@ -481,6 +483,7 @@ impl Default for ConsolidationConfig {
             batch_size: 50,
             min_messages: 3,
             llm_provider: Box::new(NoopLlmProvider),
+            entity_extractor: Box::new(crate::entities::HeuristicExtractor),
             dry_run: false,
             older_than: None,
             tier: None,
@@ -874,44 +877,103 @@ pub async fn consolidate(
                 }
             }
 
-            // Entity extraction from consolidated memory
+            // Entity extraction from consolidated memory (trait-based)
             {
                 let entity_text = format!("{} {}", summary_for_entities, detail_for_entities);
-                let extracted_entities =
-                    crate::entities::extract_entities_heuristic(&entity_text, &[]);
-                if let Ok(record_id) = get_memory_record_id(db, &d_tag).await {
-                    for entity in &extracted_entities {
-                        match crate::db::store_entity(db, &entity.name, &entity.kind).await {
-                            Ok(entity_id) => {
-                                // Parse entity_id to get just the ID part
-                                let eid = entity_id
-                                    .split_once(':')
-                                    .map(|(_, id)| id)
-                                    .unwrap_or(&entity_id);
-                                let mid = record_id
-                                    .split_once(':')
-                                    .map(|(_, id)| id)
-                                    .unwrap_or(&record_id);
-                                if let Err(e) =
-                                    crate::db::create_mention_edge(db, mid, eid, entity.relevance)
-                                        .await
+                match config.entity_extractor.extract(&entity_text, &[]).await {
+                    Ok((extracted_entities, extracted_relationships)) => {
+                        if let Ok(record_id) = get_memory_record_id(db, &d_tag).await {
+                            // Store entities and create mention edges
+                            for entity in &extracted_entities {
+                                match crate::db::store_entity(db, &entity.name, &entity.kind).await
                                 {
-                                    warn!(
-                                        "Failed to create mention edge for entity '{}': {e}",
-                                        entity.name
-                                    );
+                                    Ok(entity_id) => {
+                                        let eid = entity_id
+                                            .split_once(':')
+                                            .map(|(_, id)| id)
+                                            .unwrap_or(&entity_id);
+                                        let mid = record_id
+                                            .split_once(':')
+                                            .map(|(_, id)| id)
+                                            .unwrap_or(&record_id);
+                                        if let Err(e) =
+                                            crate::db::create_mention_edge(
+                                                db,
+                                                mid,
+                                                eid,
+                                                entity.relevance,
+                                            )
+                                            .await
+                                        {
+                                            warn!(
+                                                "Failed to create mention edge for entity '{}': {e}",
+                                                entity.name
+                                            );
+                                        }
+                                    }
+                                    Err(e) => {
+                                        warn!("Failed to store entity '{}': {e}", entity.name);
+                                    }
                                 }
                             }
-                            Err(e) => {
-                                warn!("Failed to store entity '{}': {e}", entity.name);
+
+                            // Store typed relationships between entities
+                            for rel in &extracted_relationships {
+                                // Ensure both entities exist first
+                                let from_id = crate::db::store_entity(
+                                    db,
+                                    &rel.from,
+                                    &crate::entities::EntityKind::Concept,
+                                )
+                                .await;
+                                let to_id = crate::db::store_entity(
+                                    db,
+                                    &rel.to,
+                                    &crate::entities::EntityKind::Concept,
+                                )
+                                .await;
+
+                                if let (Ok(from_id), Ok(to_id)) = (from_id, to_id) {
+                                    let fid = from_id
+                                        .split_once(':')
+                                        .map(|(_, id)| id)
+                                        .unwrap_or(&from_id);
+                                    let tid = to_id
+                                        .split_once(':')
+                                        .map(|(_, id)| id)
+                                        .unwrap_or(&to_id);
+                                    if let Err(e) = crate::db::create_typed_edge(
+                                        db,
+                                        fid,
+                                        tid,
+                                        &rel.relation,
+                                        rel.detail.as_deref(),
+                                    )
+                                    .await
+                                    {
+                                        warn!(
+                                            "Failed to create typed edge {} -> {}: {e}",
+                                            rel.from, rel.to
+                                        );
+                                    }
+                                }
+                            }
+
+                            if !extracted_entities.is_empty() || !extracted_relationships.is_empty()
+                            {
+                                debug!(
+                                    topic = %memory.topic,
+                                    entities = extracted_entities.len(),
+                                    relationships = extracted_relationships.len(),
+                                    "Extracted entities and relationships from consolidated memory"
+                                );
                             }
                         }
                     }
-                    if !extracted_entities.is_empty() {
-                        debug!(
+                    Err(e) => {
+                        warn!(
                             topic = %memory.topic,
-                            count = extracted_entities.len(),
-                            "Extracted entities from consolidated memory"
+                            "Entity extraction failed, skipping: {e}"
                         );
                     }
                 }

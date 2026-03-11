@@ -1217,6 +1217,58 @@ pub async fn create_mention_edge(
     Ok(())
 }
 
+/// Create a typed relationship edge between two entities.
+///
+/// Creates a `related_to` edge from entity→entity with relation type and optional detail.
+pub async fn create_typed_edge(
+    db: &Surreal<Db>,
+    from_entity_id: &str,
+    to_entity_id: &str,
+    relation: &str,
+    detail: Option<&str>,
+) -> Result<()> {
+    let now = chrono::Utc::now().to_rfc3339();
+    db.query(
+        "RELATE $from->related_to->$to SET relation = $relation, detail = $detail, created_at = $now",
+    )
+    .bind(("from", surrealdb::sql::Thing::from(("entity", from_entity_id))))
+    .bind(("to", surrealdb::sql::Thing::from(("entity", to_entity_id))))
+    .bind(("relation", relation.to_string()))
+    .bind(("detail", detail.unwrap_or("").to_string()))
+    .bind(("now", now))
+    .await?
+    .check()?;
+    Ok(())
+}
+
+/// List all entity relationships, optionally filtered by entity name.
+pub async fn list_entity_relationships(
+    db: &Surreal<Db>,
+    entity_name: Option<&str>,
+) -> Result<Vec<crate::entities::RelationshipRecord>> {
+    let results: Vec<crate::entities::RelationshipRecord> = if let Some(name) = entity_name {
+        db.query(
+            "SELECT in.name AS from_name, out.name AS to_name, relation, detail, created_at \
+             FROM related_to \
+             WHERE in.name = $name OR out.name = $name \
+             ORDER BY created_at DESC",
+        )
+        .bind(("name", name.to_string()))
+        .await?
+        .check()?
+        .take(0)?
+    } else {
+        db.query(
+            "SELECT in.name AS from_name, out.name AS to_name, relation, detail, created_at \
+             FROM related_to ORDER BY created_at DESC",
+        )
+        .await?
+        .check()?
+        .take(0)?
+    };
+    Ok(results)
+}
+
 /// Create a "consolidated_from" edge from a consolidated memory to a raw message.
 pub async fn create_consolidated_edge(
     db: &Surreal<Db>,

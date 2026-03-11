@@ -186,9 +186,12 @@ enum Command {
     },
     /// List extracted entities
     Entities {
-        /// Filter by kind (person, project, concept, place, organization)
+        /// Filter by kind (person, project, concept, place, organization, technology)
         #[arg(long)]
         kind: Option<String>,
+        /// Show relationships between entities
+        #[arg(long)]
+        relations: bool,
     },
     /// Prune unused/low-confidence memories and old raw messages
     Prune {
@@ -518,9 +521,9 @@ async fn main() -> Result<()> {
             )
             .await?;
         }
-        Command::Entities { kind } => {
+        Command::Entities { kind, relations } => {
             let nomen = build_nomen(&config).await?;
-            cmd_entities(&nomen, kind.as_deref()).await?;
+            cmd_entities(&nomen, kind.as_deref(), relations).await?;
         }
         Command::Prune { days, dry_run } => {
             let nomen = build_nomen(&config).await?;
@@ -1086,10 +1089,13 @@ async fn cmd_consolidate(
                 .and_then(|nsec| nostr_sdk::SecretKey::from_bech32(nsec).ok())
                 .map(|sk| nostr_sdk::Keys::new(sk).public_key().to_hex())
         });
+    let entity_extractor = entities::build_entity_extractor(config);
+
     let consolidation_config = consolidate::ConsolidationConfig {
         batch_size,
         min_messages,
         llm_provider,
+        entity_extractor,
         dry_run,
         older_than,
         tier,
@@ -1159,10 +1165,10 @@ async fn cmd_consolidate(
 
 // ── Command: entities ───────────────────────────────────────────────
 
-async fn cmd_entities(nomen: &Nomen, kind_filter: Option<&str>) -> Result<()> {
+async fn cmd_entities(nomen: &Nomen, kind_filter: Option<&str>, show_relations: bool) -> Result<()> {
     if kind_filter.is_some() && entities::EntityKind::from_str(kind_filter.unwrap()).is_none() {
         bail!(
-            "Unknown entity kind: {}. Valid kinds: person, project, concept, place, organization",
+            "Unknown entity kind: {}. Valid kinds: person, project, concept, place, organization, technology",
             kind_filter.unwrap()
         );
     }
@@ -1181,7 +1187,34 @@ async fn cmd_entities(nomen: &Nomen, kind_filter: Option<&str>) -> Result<()> {
         println!("    Created: {}", entity.created_at.dimmed());
     }
 
-    println!("\n{}: {} entities\n", "Total".bold(), entity_list.len());
+    println!("\n{}: {} entities", "Total".bold(), entity_list.len());
+
+    if show_relations {
+        let relationships = nomen.entity_relationships(None).await?;
+        if relationships.is_empty() {
+            println!("\nNo relationships found.");
+        } else {
+            println!("\n{}\n{}", "Relationships".bold(), "═".repeat(60));
+            for rel in &relationships {
+                let detail_str = if rel.detail.is_empty() {
+                    String::new()
+                } else {
+                    format!(" ({})", rel.detail.dimmed())
+                };
+                println!(
+                    "  {} {} {} {}{}",
+                    rel.from_name.bold(),
+                    "→".dimmed(),
+                    rel.relation.cyan(),
+                    rel.to_name.bold(),
+                    detail_str,
+                );
+            }
+            println!("\n{}: {} relationships", "Total".bold(), relationships.len());
+        }
+    }
+
+    println!();
     Ok(())
 }
 
@@ -1616,6 +1649,7 @@ async fn cmd_init(force: bool, non_interactive: bool) -> Result<()> {
         memory: memory_section,
         messaging: None,
         server: server_config,
+        entities: None,
     };
 
     // Write config
@@ -1694,6 +1728,7 @@ async fn cmd_init_non_interactive() -> Result<()> {
             enabled: true,
             listen: "127.0.0.1:3000".to_string(),
         }),
+        entities: None,
     };
 
     let config_path = Config::path();
