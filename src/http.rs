@@ -50,6 +50,8 @@ pub struct SearchRequest {
     pub tier: Option<String>,
     pub scope: Option<String>,
     pub limit: Option<usize>,
+    pub graph_expand: Option<bool>,
+    pub max_hops: Option<usize>,
 }
 
 #[derive(Serialize)]
@@ -61,6 +63,9 @@ struct SearchResultJson {
     created_at: u64,
     score: f64,
     match_type: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    graph_edge: Option<String>,
+    contradicts: bool,
 }
 
 #[derive(Deserialize)]
@@ -245,6 +250,8 @@ async fn api_search(
         tier: req.tier,
         allowed_scopes: req.scope.map(|s| vec![s]),
         limit: req.limit.unwrap_or(10),
+        graph_expand: req.graph_expand.unwrap_or(false),
+        max_hops: req.max_hops.unwrap_or(1),
         ..Default::default()
     };
 
@@ -260,6 +267,8 @@ async fn api_search(
             created_at: r.created_at.as_u64(),
             score: r.score,
             match_type: format!("{:?}", r.match_type),
+            graph_edge: r.graph_edge,
+            contradicts: r.contradicts,
         })
         .collect();
 
