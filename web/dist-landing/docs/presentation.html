@@ -1,0 +1,685 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Nomen — Scoped Memory for Agents on Nostr</title>
+  <style>
+    :root {
+      --bg: #071018;
+      --bg2: #0e1a25;
+      --panel: rgba(15, 24, 35, 0.72);
+      --text: #ecf4ff;
+      --muted: #9fb1c7;
+      --accent: #7dd3fc;
+      --accent2: #a78bfa;
+      --green: #86efac;
+      --yellow: #fde68a;
+      --red: #fca5a5;
+      --line: rgba(148, 163, 184, 0.22);
+      --shadow: 0 10px 40px rgba(0,0,0,.35);
+      --radius: 24px;
+    }
+    * { box-sizing: border-box; margin: 0; }
+    html, body { height: 100%; padding: 0; }
+    body {
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, sans-serif;
+      color: var(--text);
+      background:
+        radial-gradient(1200px 700px at 10% -10%, rgba(125,211,252,.14), transparent 55%),
+        radial-gradient(1000px 600px at 100% 0%, rgba(167,139,250,.14), transparent 45%),
+        linear-gradient(180deg, var(--bg), var(--bg2));
+      overflow: hidden;
+    }
+    .deck { height: 100vh; width: 100vw; position: relative; }
+    .slide {
+      position: absolute; inset: 0;
+      padding: 48px 56px 72px;
+      display: grid; grid-template-rows: auto 1fr auto; gap: 24px;
+      opacity: 0; transform: translateX(30px) scale(.98);
+      pointer-events: none;
+      transition: opacity .28s ease, transform .28s ease;
+    }
+    .slide.active { opacity: 1; transform: none; pointer-events: auto; }
+    .topline {
+      display: flex; align-items: center; justify-content: space-between;
+      font-size: 14px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted);
+    }
+    .brand { display: inline-flex; align-items: center; gap: 10px; font-weight: 700; }
+    .dot {
+      width: 12px; height: 12px; border-radius: 999px;
+      background: linear-gradient(135deg, var(--accent), var(--accent2));
+      box-shadow: 0 0 20px rgba(125,211,252,.5);
+    }
+    .content { display: grid; gap: 28px; align-content: center; min-height: 0; }
+    h1 { font-size: clamp(44px,7vw,86px); line-height:.98; letter-spacing:-.04em; max-width:13ch; }
+    h2 { font-size: clamp(30px,4.6vw,58px); line-height:1.02; letter-spacing:-.03em; max-width:17ch; }
+    h3 { font-size: 18px; color: var(--accent); letter-spacing: .02em; margin-bottom: 10px; }
+    p.lead { font-size: clamp(20px,2.3vw,34px); line-height:1.22; color:#dce8f7; max-width:28ch; }
+    p.body { font-size: clamp(17px,1.6vw,23px); line-height:1.45; color:var(--muted); max-width:64ch; }
+    .grid-2 { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 20px; }
+    .grid-3 { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 20px; }
+    .card {
+      background: var(--panel); border: 1px solid var(--line);
+      border-radius: var(--radius); box-shadow: var(--shadow);
+      padding: 24px; backdrop-filter: blur(10px);
+    }
+    ul.clean { list-style: none; padding: 0; display: grid; gap: 12px; }
+    ul.clean li {
+      font-size: clamp(17px,1.6vw,26px); line-height:1.3;
+      padding-left: 22px; position: relative;
+    }
+    ul.clean li::before {
+      content: ""; position: absolute; left: 0; top: .58em;
+      width: 9px; height: 9px; border-radius: 50%;
+      background: linear-gradient(135deg, var(--accent), var(--accent2));
+      box-shadow: 0 0 14px rgba(125,211,252,.4);
+    }
+    .footer {
+      display: flex; justify-content: space-between; align-items: center;
+      color: var(--muted); font-size: 14px;
+    }
+    .kbd {
+      display: inline-flex; align-items: center; gap: 8px;
+      background: rgba(255,255,255,.05); border: 1px solid var(--line);
+      border-radius: 999px; padding: 8px 12px;
+    }
+    .progress { position: absolute; left:0; right:0; bottom:0; height:4px; background:rgba(255,255,255,.06); }
+    .progress > div {
+      height: 100%; width: 0;
+      background: linear-gradient(90deg, var(--accent), var(--accent2));
+      box-shadow: 0 0 18px rgba(125,211,252,.45);
+      transition: width .25s ease;
+    }
+
+    /* Flow with arrows */
+    .flow { display: flex; align-items: stretch; gap: 0; }
+    .flow .step {
+      flex: 1;
+      background: var(--panel); border: 1px solid var(--line); border-radius: 20px;
+      padding: 18px; display: grid; gap: 8px; align-content: start;
+    }
+    .flow .arrow {
+      display: flex; align-items: center; justify-content: center;
+      font-size: 28px; color: var(--accent); opacity: .8;
+      min-width: 36px; flex: 0 0 36px;
+    }
+
+    /* Visibility diagram */
+    .vis-canvas {
+      position: relative;
+      width: min(68vh, 68vw, 680px);
+      height: min(68vh, 68vw, 680px);
+      margin: 0 auto;
+    }
+    .scope {
+      position: absolute;
+      border-radius: 40% 50% 45% 55% / 50% 45% 55% 40%;
+      border: 1.5px solid rgba(255,255,255,.18);
+      display: flex; align-items: flex-start; justify-content: center;
+      padding-top: 14px;
+      font-size: 13px; font-weight: 700; letter-spacing: .06em;
+      text-transform: uppercase; color: rgba(255,255,255,.55);
+    }
+    .scope-public {
+      inset: 0;
+      background: radial-gradient(circle at 50% 50%, rgba(167,139,250,.08), transparent 65%);
+    }
+    .scope-group-a {
+      top: 8%; left: 4%; width: 62%; height: 70%;
+      background: radial-gradient(circle at 40% 50%, rgba(125,211,252,.10), transparent 60%);
+      border-radius: 45% 55% 50% 42% / 48% 52% 45% 55%;
+    }
+    .scope-group-b {
+      top: 22%; right: 4%; width: 55%; height: 65%;
+      background: radial-gradient(circle at 60% 50%, rgba(134,239,172,.08), transparent 55%);
+      border-radius: 50% 42% 48% 55% / 45% 55% 42% 52%;
+    }
+    .npub {
+      position: absolute;
+      width: 18px; height: 18px; border-radius: 50%;
+      border: 2px solid rgba(255,255,255,.5);
+      box-shadow: 0 0 12px rgba(125,211,252,.4);
+    }
+    .npub::after {
+      content: attr(data-label);
+      position: absolute; top: 22px; left: 50%; transform: translateX(-50%);
+      font-size: 11px; color: var(--muted); white-space: nowrap;
+      font-family: ui-monospace, monospace;
+    }
+    .npub-a { background: var(--accent); top: 38%; left: 18%; }
+    .npub-b { background: var(--green); top: 55%; left: 35%; }
+    .npub-c { background: var(--yellow); top: 30%; right: 22%; }
+    .npub-d { background: var(--accent2); top: 62%; right: 18%; }
+    .npub-e { background: var(--red); top: 75%; left: 52%; }
+
+    .mem-dot {
+      position: absolute;
+      width: 8px; height: 8px; border-radius: 50%;
+      opacity: .7;
+    }
+    .mem-dot::after {
+      content: attr(data-label);
+      position: absolute; top: -18px; left: 50%; transform: translateX(-50%);
+      font-size: 10px; color: var(--muted); white-space: nowrap;
+      font-family: ui-monospace, monospace;
+    }
+
+    .legend { display: grid; gap: 10px; max-width: 380px; }
+    .legend-item { display: flex; align-items: flex-start; gap: 10px; color: #dce8f7; font-size: 15px; }
+    .legend-swatch { width: 12px; height: 12px; border-radius: 999px; margin-top: 5px; flex: 0 0 auto; }
+
+    /* Event model */
+    .event-block {
+      background: rgba(7,12,18,.95);
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      padding: 22px;
+      box-shadow: var(--shadow);
+    }
+    .event-block code {
+      display: block;
+      color: var(--accent);
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 14px; line-height: 1.55;
+      white-space: pre-wrap; word-break: break-word;
+    }
+    .event-block .comment { color: var(--muted); }
+    .event-block .key { color: var(--accent2); }
+    .event-block .val { color: var(--green); }
+
+    .cmd {
+      background: rgba(7,12,18,.95); border: 1px solid var(--line);
+      border-radius: 18px; padding: 18px; box-shadow: var(--shadow);
+    }
+    .cmd code {
+      display: block; color: var(--accent);
+      font-family: ui-monospace, monospace; font-size: 14px;
+      line-height: 1.45; white-space: pre-wrap;
+    }
+    .cmd p { margin-top: 10px; color: var(--muted); font-size: 14px; }
+
+    .big-quote {
+      font-size: clamp(28px,4vw,52px); line-height:1.08;
+      letter-spacing: -.03em; max-width: 16ch;
+    }
+    .summary-wrap {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 220px;
+      gap: 24px;
+      align-items: end;
+    }
+    .qr-card {
+      justify-self: end;
+      text-align: center;
+      background: rgba(255,255,255,.96);
+      color: #071018;
+      border-radius: 20px;
+      padding: 14px;
+      box-shadow: var(--shadow);
+      width: 220px;
+    }
+    .qr-card img {
+      display: block;
+      width: 100%;
+      height: auto;
+      border-radius: 12px;
+      background: white;
+    }
+    .qr-card p {
+      margin-top: 10px;
+      font-size: 13px;
+      line-height: 1.35;
+      color: #334155;
+    }
+
+    @media (max-width: 980px) {
+      .summary-wrap { grid-template-columns: 1fr; }
+      .qr-card { justify-self: start; }
+      .slide { padding: 28px 22px 64px; }
+      .grid-2, .grid-3 { grid-template-columns: 1fr; }
+      .flow { flex-direction: column; }
+      .flow .arrow { transform: rotate(90deg); min-width: unset; min-height: 36px; }
+      .vis-canvas { width: min(85vw, 480px); height: min(85vw, 480px); }
+    }
+    @media print {
+      body { overflow: visible; }
+      .slide { position: relative; opacity:1!important; transform:none!important; page-break-after:always; min-height:100vh; }
+      .progress { display: none; }
+    }
+  </style>
+</head>
+<body>
+<div class="deck" id="deck">
+
+  <!-- SLIDE 1 — Title + what Nomen provides -->
+  <section class="slide active">
+    <div class="topline"><div class="brand"><span class="dot"></span> Nomen</div><div>01 / 11</div></div>
+    <div class="content">
+      <div>
+        <h1>Scoped memory for agents on Nostr</h1>
+        <p class="lead" style="margin-top:20px;">Private, shared, and public memory with signed provenance, graph retrieval, and trust-aware search.</p>
+      </div>
+      <div class="grid-2">
+        <div class="card">
+          <h3>What Nomen provides</h3>
+          <ul class="clean" style="gap:10px;">
+            <li>Five visibility tiers: public, group, circle, personal, internal</li>
+            <li>Kind 31234 replaceable events on Nostr relays</li>
+            <li>Hybrid search: HNSW vectors + BM25 + graph traversal</li>
+            <li>Sleep-inspired consolidation with LLM entity extraction</li>
+          </ul>
+        </div>
+        <div class="card">
+          <h3>Integration surfaces</h3>
+          <ul class="clean" style="gap:10px;">
+            <li>MCP server (stdio / HTTP)</li>
+            <li>Context-VM (pure Nostr request/response)</li>
+            <li>Rust library crate</li>
+            <li>CLI: <code style="color:var(--accent);font-family:monospace;">nomen</code></li>
+          </ul>
+        </div>
+      </div>
+    </div>
+    <div class="footer"><div>Arrow keys / space / click to navigate</div><div class="kbd">→</div></div>
+  </section>
+
+  <!-- SLIDE 2 — Core concepts -->
+  <section class="slide">
+    <div class="topline"><div class="brand"><span class="dot"></span> Model</div><div>02 / 11</div></div>
+    <div class="content">
+      <h2>Five visibility tiers</h2>
+      <div class="grid-2">
+        <div>
+          <ul class="clean">
+            <li><strong>public</strong> — readable by anyone on the relay. No encryption.</li>
+            <li><strong>group</strong> — NIP-29 relay-enforced groups. Scoped by <code style="color:var(--accent);font-family:monospace;">h</code> tag.</li>
+            <li><strong>circle</strong> — ad-hoc participant sets. Deterministic hash of sorted pubkeys.</li>
+          </ul>
+        </div>
+        <div>
+          <ul class="clean">
+            <li><strong>personal</strong> — user-auditable. NIP-44 self-encrypted. User + their agents can read.</li>
+            <li><strong>internal</strong> — agent-only reasoning. NIP-44 self-encrypted. Invisible to users.</li>
+            <li><strong>Topics</strong> — forward-slash namespaces: <code style="color:var(--accent);font-family:monospace;">rust/error-handling</code>, <code style="color:var(--accent);font-family:monospace;">user/k0/preferences</code></li>
+          </ul>
+        </div>
+      </div>
+      <div class="card">
+        <p class="body">Nostr relay is the <strong>canonical store</strong>. Local cache: <strong>SurrealDB</strong> (embedded, pure Rust) — HNSW vector search, BM25 full-text, and native graph edges in one engine. If local state is lost, <code style="font-family:monospace;color:var(--accent);">nomen sync</code> recovers everything from the relay.</p>
+      </div>
+    </div>
+    <div class="footer"><div>Visibility is not binary. Scope is social and contextual.</div><div class="kbd">→</div></div>
+  </section>
+
+  <!-- SLIDE 3 — Visibility diagram: npubs + overlapping groups -->
+  <section class="slide">
+    <div class="topline"><div class="brand"><span class="dot"></span> Visibility</div><div>03 / 11</div></div>
+    <div class="content grid-2" style="align-items:center;">
+      <div class="vis-canvas">
+        <!-- Public scope (outermost) -->
+        <div class="scope scope-public"><span>public</span></div>
+
+        <!-- Group A: overlapping blob -->
+        <div class="scope scope-group-a"><span>group: dev-team</span></div>
+
+        <!-- Group B: overlapping blob -->
+        <div class="scope scope-group-b"><span>group: design</span></div>
+
+        <!-- npubs as dots -->
+        <div class="npub npub-a" data-label="npub1a…"></div>
+        <div class="npub npub-b" data-label="npub1b…"></div>
+        <div class="npub npub-c" data-label="npub1c…"></div>
+        <div class="npub npub-d" data-label="npub1d…"></div>
+        <div class="npub npub-e" data-label="npub1e…"></div>
+
+        <!-- Memory dots scattered -->
+        <div class="mem-dot" style="background:var(--yellow);top:42%;left:22%;" data-label="private"></div>
+        <div class="mem-dot" style="background:var(--accent);top:48%;left:40%;" data-label="shared"></div>
+        <div class="mem-dot" style="background:var(--accent);top:36%;left:50%;" data-label="shared"></div>
+        <div class="mem-dot" style="background:var(--accent2);top:18%;right:30%;" data-label="public"></div>
+        <div class="mem-dot" style="background:var(--green);top:58%;right:25%;" data-label="shared"></div>
+        <div class="mem-dot" style="background:var(--accent2);top:82%;left:45%;" data-label="public"></div>
+      </div>
+      <div class="legend">
+        <h2 style="max-width:14ch;">Memory lives where its scope allows</h2>
+        <div class="legend-item"><span class="legend-swatch" style="background:var(--yellow)"></span><div><strong>personal / internal</strong> — NIP-44 self-encrypted, only author's agents</div></div>
+        <div class="legend-item"><span class="legend-swatch" style="background:var(--accent)"></span><div><strong>group</strong> — NIP-29 relay-enforced, scoped by h-tag</div></div>
+        <div class="legend-item"><span class="legend-swatch" style="background:var(--green)"></span><div><strong>circle</strong> — ad-hoc participant set, hash of sorted pubkeys</div></div>
+        <div class="legend-item"><span class="legend-swatch" style="background:var(--accent2)"></span><div><strong>public</strong> — plaintext, discoverable, trust-ranked</div></div>
+        <p class="body" style="margin-top:8px;">Groups form overlapping social boundaries. An npub in multiple groups accesses shared memory from each. Circles are ad-hoc — no relay group needed, participants listed in p-tags.</p>
+      </div>
+    </div>
+    <div class="footer"><div>npubs are nodes. Groups are overlapping scopes. Public is the outer layer.</div><div class="kbd">→</div></div>
+  </section>
+
+  <!-- SLIDE 4 — Retrieval flow with arrows -->
+  <section class="slide">
+    <div class="topline"><div class="brand"><span class="dot"></span> Retrieval</div><div>04 / 11</div></div>
+    <div class="content">
+      <h2>Context-aware retrieval flow</h2>
+      <div class="flow">
+        <div class="step"><h3>1. Actor</h3><p class="body">Which npub is asking? In which room/project/context?</p></div>
+        <div class="arrow">→</div>
+        <div class="step"><h3>2. Policy</h3><p class="body">Determine allowed scopes: private, group(s), public.</p></div>
+        <div class="arrow">→</div>
+        <div class="step"><h3>3. Fetch</h3><p class="body">Retrieve candidate memories from allowed layers.</p></div>
+        <div class="arrow">→</div>
+        <div class="step"><h3>4. Rank</h3><p class="body">Score by relevance, provenance, freshness, importance, and trust signals.</p></div>
+        <div class="arrow">→</div>
+        <div class="step"><h3>5. Expand</h3><p class="body">Optionally traverse graph edges to surface related memories, contradictions, and entities.</p></div>
+      </div>
+      <div class="card" style="margin-top:12px;">
+        <p class="body">This is the shift from "search all embeddings" to <strong>policy + provenance + trust-weighted retrieval</strong>. Not all relevant memories are equally safe or equally trustworthy.</p>
+      </div>
+    </div>
+    <div class="footer"><div>Retrieval is scoped by context, not just similarity.</div><div class="kbd">→</div></div>
+  </section>
+
+  <!-- SLIDE 5 — Memory Intelligence: Graph, Entities, Clusters -->
+  <section class="slide">
+    <div class="topline"><div class="brand"><span class="dot"></span> Intelligence</div><div>05 / 11</div></div>
+    <div class="content">
+      <h2>Memory intelligence layer</h2>
+      <p class="body">Three capabilities that turn flat memory into a structured, evolving knowledge system. All modular — each feature is independently toggle-able via config.</p>
+      <div class="grid-3">
+        <div class="card">
+          <h3>🕸️ Graph-aware retrieval</h3>
+          <p class="body">Search doesn't stop at direct hits. Traverses SurrealDB graph edges — <code style="font-family:monospace;color:var(--accent);">mentions</code>, <code style="font-family:monospace;color:var(--accent);">references</code>, <code style="font-family:monospace;color:var(--accent);">contradicts</code> — to surface related memories the query didn't explicitly match.</p>
+          <p class="body" style="margin-top:10px;color:var(--green);">Enables: multi-hop reasoning, contradiction surfacing, entity-centric views</p>
+        </div>
+        <div class="card">
+          <h3>🧬 LLM entity extraction</h3>
+          <p class="body">During consolidation, LLM extracts entities (people, projects, concepts) and <strong>typed relationships</strong> between them: <em>works_on</em>, <em>collaborates_with</em>, <em>decided</em>, <em>depends_on</em>.</p>
+          <p class="body" style="margin-top:10px;color:var(--green);">Enables: knowledge graph, relationship reasoning, richer graph retrieval</p>
+        </div>
+        <div class="card">
+          <h3>🧊 Cluster fusion</h3>
+          <p class="body">Groups related memories by topic namespace (<code style="font-family:monospace;color:var(--accent);">user/k0/*</code>, <code style="font-family:monospace;color:var(--accent);">project/nomen/*</code>) and synthesizes coherent cluster summaries via LLM.</p>
+          <p class="body" style="margin-top:10px;color:var(--green);">Enables: coherent profiles, reduced noise, memory scalability</p>
+        </div>
+      </div>
+      <div class="card" style="margin-top:8px;">
+        <p class="body">Design informed by <strong>"Memory in the Age of AI Agents"</strong> (Hu et al., 2025) — local consolidation with LLM merging, graph-structured memory (2D), and sleep-inspired dynamics. Each feature degrades gracefully: no API key → heuristic fallback or feature off.</p>
+      </div>
+    </div>
+    <div class="footer"><div>Flat storage with graph metadata → structured, evolving knowledge.</div><div class="kbd">→</div></div>
+  </section>
+
+  <!-- SLIDE 6 — Nostr memory event model -->
+  <section class="slide">
+    <div class="topline"><div class="brand"><span class="dot"></span> Event model</div><div>06 / 11</div></div>
+    <div class="content">
+      <h2>Kind 31234 — addressable replaceable events</h2>
+      <div class="grid-2">
+        <div class="event-block">
+          <code><span class="comment">// Nomen memory event (kind 31234)</span>
+{
+  <span class="key">"kind"</span>: <span class="val">31234</span>,
+  <span class="key">"pubkey"</span>: <span class="val">"&lt;author-hex&gt;"</span>,
+  <span class="key">"created_at"</span>: <span class="val">1739901000</span>,
+  <span class="key">"content"</span>: <span class="val">"{\"summary\":\"Use anyhow for app errors\",
+  \"detail\":\"Prefer anyhow::Result…\",
+  \"context\":null}"</span>,
+  <span class="key">"tags"</span>: [
+    [<span class="val">"d"</span>, <span class="val">"public::rust-error-handling"</span>],
+    [<span class="val">"model"</span>, <span class="val">"anthropic/claude-opus-4-6"</span>],
+    [<span class="val">"confidence"</span>, <span class="val">"0.92"</span>],
+    [<span class="val">"version"</span>, <span class="val">"1"</span>],
+    [<span class="val">"t"</span>, <span class="val">"rust"</span>],
+    [<span class="val">"t"</span>, <span class="val">"error-handling"</span>]
+  ]
+}</code>
+        </div>
+        <div>
+          <h3>D-tag format: <code style="color:var(--green);font-size:16px;">{visibility}:{scope}:{topic}</code></h3>
+          <ul class="clean" style="gap:10px;">
+            <li><code style="color:var(--accent);font-family:monospace;">public::rust-error-handling</code></li>
+            <li><code style="color:var(--accent);font-family:monospace;">group:techteam:deployment</code></li>
+            <li><code style="color:var(--accent);font-family:monospace;">circle:a3f8b2c1:shared-notes</code></li>
+            <li><code style="color:var(--accent);font-family:monospace;">personal:d29f…:ssh-config</code></li>
+            <li><code style="color:var(--accent);font-family:monospace;">internal:d29f…:agent-reasoning</code></li>
+          </ul>
+          <h3 style="margin-top:16px;">Why visibility in d-tag?</h3>
+          <ul class="clean" style="gap:10px;">
+            <li>Relay can filter by d-tag prefix: <code style="color:var(--accent);font-family:monospace;">group:techteam:*</code></li>
+            <li>Same d-tag = replaceable (new version overwrites old)</li>
+            <li>No separate tier/scope tags needed</li>
+            <li>Content: JSON with <code style="font-family:monospace;">summary</code>, <code style="font-family:monospace;">detail</code>, <code style="font-family:monospace;">context</code></li>
+          </ul>
+        </div>
+      </div>
+    </div>
+    <div class="footer"><div>Memory events are regular Nostr events with scope and topic semantics.</div><div class="kbd">→</div></div>
+  </section>
+
+  <!-- SLIDE 6 — Shared memory in practice -->
+  <section class="slide">
+    <div class="topline"><div class="brand"><span class="dot"></span> Shared memory</div><div>07 / 11</div></div>
+    <div class="content">
+      <h2>What shared memory enables</h2>
+      <div class="grid-3">
+        <div class="card"><h3>Topic continuity</h3><p class="body">Shared topic memory persists across sessions, agents, and tools within a group.</p></div>
+        <div class="card"><h3>Agent coordination</h3><p class="body">Multiple agents in a project share context without central orchestration.</p></div>
+        <div class="card"><h3>Reduced duplication</h3><p class="body">Research, decisions, and context don't need to be restated every session.</p></div>
+        <div class="card"><h3>Scoped collaboration</h3><p class="body">Project memory is shared without exposing personal/private context.</p></div>
+        <div class="card"><h3>Publishable memory</h3><p class="body">Promote useful shared memories to public when they become broadly relevant.</p></div>
+        <div class="card"><h3>No central silo</h3><p class="body">Memory lives on relays and local stores, not locked into one vendor.</p></div>
+      </div>
+    </div>
+    <div class="footer"><div>Shared memory is coordination infrastructure.</div><div class="kbd">→</div></div>
+  </section>
+
+  <!-- SLIDE 7 — Integration paths with implementation notes -->
+  <section class="slide">
+    <div class="topline"><div class="brand"><span class="dot"></span> Integration</div><div>08 / 11</div></div>
+    <div class="content">
+      <h2>Three integration paths</h2>
+      <div class="grid-3">
+        <div class="card">
+          <h3>MCP server</h3>
+          <p class="body"><strong>Protocol path.</strong> Expose search / add / publish / query as MCP tools. Works with any MCP-capable agent framework.</p>
+          <p class="body" style="margin-top:10px;color:var(--accent);">Best for: existing agent setups that already use MCP. Lowest integration friction.</p>
+        </div>
+        <div class="card">
+          <h3>Context-VM</h3>
+          <p class="body"><strong>Nostr-native path.</strong> Agent publishes kind 21900 requests, Nomen responds with kind 21901. All payloads NIP-44 encrypted. Also enables payments — memory access can be metered over Lightning.</p>
+          <p class="body" style="margin-top:10px;color:var(--accent);">Best for: Nostr-native agents. No transport dependency beyond relays. Supports paid memory services.</p>
+        </div>
+        <div class="card">
+          <h3>Library</h3>
+          <p class="body"><strong>Native embed path.</strong> Direct API for search, write, scope management, and trust-weighted retrieval. Deepest control.</p>
+          <p class="body" style="margin-top:10px;color:var(--accent);">Best for: custom agent implementations or apps needing tight memory integration.</p>
+        </div>
+      </div>
+      <div class="card" style="margin-top:8px;">
+        <p class="body"><strong>Same memory core, same event model, same scoping rules.</strong> The integration surface changes, not the memory semantics.</p>
+      </div>
+    </div>
+    <div class="footer"><div>Protocol, runtime, or native embed — choose what fits your stack.</div><div class="kbd">→</div></div>
+  </section>
+
+  <!-- SLIDE 8 — Integration quickstart
+  <section class="slide">
+    <div class="topline"><div class="brand"><span class="dot"></span> Quickstart</div><div>08 / 08</div></div>
+    <div class="content">
+      <h2>Getting started</h2>
+      <div class="grid-2">
+        <div class="cmd">
+          <code>nomen init</code>
+          <p>Interactive setup: relay, keys, embedding provider, consolidation, server.</p>
+        </div>
+        <div class="cmd">
+          <code>nomen store "rust/error-handling" \
+  --summary "Use anyhow for app errors" \
+  --detail "Prefer anyhow::Result…" \
+  --tier public --confidence 0.92</code>
+          <p>Store a memory. Published to relay as kind 31234.</p>
+        </div>
+        <div class="cmd">
+          <code>nomen search "error handling"
+nomen search "error handling" --aggregate</code>
+          <p>Hybrid search (vector + BM25). <code>--aggregate</code> merges similar results.</p>
+        </div>
+        <div class="cmd">
+          <code>nomen ingest "k0 mentioned switching to Tailscale" \
+  --source telegram --sender k0
+nomen consolidate</code>
+          <p>Ingest raw messages, then consolidate into named memories.</p>
+        </div>
+        <div class="cmd">
+          <code>nomen serve --stdio
+nomen serve --http 127.0.0.1:3000</code>
+          <p>MCP server (stdio or HTTP). Tools: search, store, ingest, consolidate, entities, groups.</p>
+        </div>
+        <div class="cmd">
+          <code>nomen serve --stdio --context-vm \
+  --allowed-npubs &lt;hex-pubkey&gt;</code>
+          <p>Context-VM: pure Nostr request/response (kind 21900→21901, NIP-44 encrypted).</p>
+        </div>
+      </div>
+    </div>
+    <div class="footer"><div>These are the building blocks for agent integration.</div><div class="kbd">→</div></div>
+  </section>
+  -->
+
+  <!-- SLIDE 8 — Feature checklist / closing -->
+  <section class="slide">
+    <div class="topline"><div class="brand"><span class="dot"></span> Summary</div><div>09 / 11</div></div>
+    <div class="content">
+      <h2>Nomen at a glance</h2>
+      <div class="summary-wrap">
+        <div>
+          <div class="grid-2">
+            <div>
+              <h3>Memory model</h3>
+              <ul class="clean" style="gap:10px;">
+                <li>Five tiers: public, group, circle, personal, internal</li>
+                <li>Kind 31234 addressable/replaceable events</li>
+                <li>D-tag: <code style="font-family:monospace;color:var(--accent);">{visibility}:{scope}:{topic}</code></li>
+                <li>NIP-29 groups + ad-hoc circle sets</li>
+                <li>NIP-44 encryption (personal/internal)</li>
+                <li>Hybrid search: vectors + BM25 + graph traversal</li>
+                <li>LLM entity extraction + typed knowledge graph</li>
+              </ul>
+            </div>
+            <div>
+              <h3>Intelligence & tooling</h3>
+              <ul class="clean" style="gap:10px;">
+                <li>Graph-aware retrieval: multi-hop edge traversal</li>
+                <li>Cluster fusion: namespace-grouped LLM summaries</li>
+                <li>Sleep-inspired consolidation with LLM merge/dedup</li>
+                <li>MCP server (stdio / HTTP) + Context-VM (Nostr-native)</li>
+                <li>Modular: every LLM feature independently toggle-able</li>
+                <li>Confidence decay + importance scoring + pruning</li>
+              </ul>
+            </div>
+          </div>
+          <p class="big-quote" style="margin-top:16px;">Memory for agents — <span style="color:var(--accent)">scoped</span>, <span style="color:var(--accent2)">signed</span>, <span style="color:var(--green)">shareable</span>.</p>
+        </div>
+        <div class="qr-card">
+          <img src="https://api.qrserver.com/v1/create-qr-code/?size=360x360&data=https%3A%2F%2Fgithub.com%2Fk0sti%2Fnomen" alt="QR code for github.com/k0sti/nomen" />
+          <p><strong>github.com/k0sti/nomen</strong><br/>Scan for repo</p>
+        </div>
+      </div>
+    </div>
+    <div class="footer"><div>github.com/k0sti/nomen · ~6900 LOC Rust · SurrealDB embedded · MIT</div><div class="kbd">R · restart</div></div>
+  </section>
+
+  <!-- SLIDE 9 — Workshop / playground -->
+  <section class="slide">
+    <div class="topline"><div class="brand"><span class="dot"></span> Workshop</div><div>10 / 11</div></div>
+    <div class="content">
+      <h2>Join the playground relay</h2>
+      <div class="summary-wrap" style="align-items:center;">
+        <div>
+          <p class="lead">We’ll use the NIP-29 Zooid relay for the hands-on Nomen workshop.</p>
+          <div class="card" style="margin-top:22px;">
+            <h3>What to do</h3>
+            <ul class="clean" style="gap:10px;">
+              <li>Register on <code style="font-family:monospace;color:var(--accent);">zooid.atlantislabs.space</code></li>
+              <li>Join the relay we use as the shared testing playground</li>
+              <li>Use it during the workshop to try scoped memory in practice</li>
+            </ul>
+          </div>
+          <p class="body" style="margin-top:18px;">Scan the QR code or open <code style="font-family:monospace;color:var(--accent);">https://zooid.atlantislabs.space/</code>.</p>
+        </div>
+        <div class="qr-card">
+          <img src="https://api.qrserver.com/v1/create-qr-code/?size=360x360&data=https%3A%2F%2Fzooid.atlantislabs.space%2F" alt="QR code for zooid.atlantislabs.space" />
+          <p><strong>zooid.atlantislabs.space</strong><br/>NIP-29 workshop playground</p>
+        </div>
+      </div>
+    </div>
+    <div class="footer"><div>Register now and we can start testing immediately.</div><div class="kbd">R · restart</div></div>
+  </section>
+
+  <!-- SLIDE 11 — CLI quickstart -->
+  <section class="slide">
+    <div class="topline"><div class="brand"><span class="dot"></span> Quickstart</div><div>11 / 11</div></div>
+    <div class="content">
+      <h2>Getting started</h2>
+      <div class="grid-2">
+        <div class="cmd">
+          <code>nomen init</code>
+          <p>Interactive setup: relay, keys, embedding provider, consolidation, server.</p>
+        </div>
+        <div class="cmd">
+          <code>nomen store "rust/error-handling" \
+  --summary "Use anyhow for app errors" \
+  --detail "Prefer anyhow::Result…" \
+  --tier public --confidence 0.92</code>
+          <p>Store a memory. Published to relay as kind 31234.</p>
+        </div>
+        <div class="cmd">
+          <code>nomen search "error handling" --graph
+nomen search "Alhovuori" --graph --hops 2</code>
+          <p>Hybrid search + graph traversal. <code>--graph</code> follows edges to surface related memories.</p>
+        </div>
+        <div class="cmd">
+          <code>nomen consolidate
+nomen cluster --dry-run
+nomen entities --relations</code>
+          <p>Consolidate raw messages, preview cluster fusion, inspect entity relationships.</p>
+        </div>
+        <div class="cmd">
+          <code>nomen serve --stdio
+nomen serve --http 127.0.0.1:3000</code>
+          <p>MCP server (stdio or HTTP). Tools: search, store, ingest, consolidate, entities, cluster, groups.</p>
+        </div>
+        <div class="cmd">
+          <code>nomen serve --stdio --context-vm \
+  --allowed-npubs &lt;hex-pubkey&gt;</code>
+          <p>Context-VM: pure Nostr request/response (kind 21900→21901, NIP-44 encrypted).</p>
+        </div>
+      </div>
+    </div>
+    <div class="footer"><div>CLI and server entry points for the workshop.</div><div class="kbd">R · restart</div></div>
+  </section>
+
+  <div class="progress"><div id="progressBar"></div></div>
+</div>
+
+<script>
+  const slides = Array.from(document.querySelectorAll('.slide'));
+  const bar = document.getElementById('progressBar');
+  let idx = 0;
+  function render() {
+    slides.forEach((s,i) => s.classList.toggle('active', i === idx));
+    bar.style.width = `${((idx+1)/slides.length)*100}%`;
+    document.title = `${idx+1}/${slides.length} · Nomen`;
+  }
+  function next() { if (idx < slides.length-1) { idx++; render(); } }
+  function prev() { if (idx > 0) { idx--; render(); } }
+  function first() { idx = 0; render(); }
+  window.addEventListener('keydown', e => {
+    if (['ArrowRight','PageDown',' ','Enter'].includes(e.key)) { e.preventDefault(); next(); }
+    if (['ArrowLeft','PageUp','Backspace'].includes(e.key)) { e.preventDefault(); prev(); }
+    if (e.key.toLowerCase() === 'r') first();
+    if (e.key === 'Home') first();
+    if (e.key === 'End') { idx = slides.length-1; render(); }
+  });
+  window.addEventListener('click', e => { e.clientX < innerWidth*.35 ? prev() : next(); });
+  render();
+</script>
+</body>
+</html>
