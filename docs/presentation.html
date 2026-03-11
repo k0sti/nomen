@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Nomen — Scoped Memory for Agents on Nostr</title>
+  <title>Nomen - Scoped Memory for Agents on Nostr</title>
   <style>
     :root {
       --bg: #071018;
@@ -252,9 +252,9 @@
 <body>
 <div class="deck" id="deck">
 
-  <!-- SLIDE 1 — Title + what Nomen provides -->
+  <!-- SLIDE 1 - Title + what Nomen provides -->
   <section class="slide active">
-    <div class="topline"><div class="brand"><span class="dot"></span> Nomen</div><div>01 / 11</div></div>
+    <div class="topline"><div class="brand"><span class="dot"></span> Nomen</div><div>01 / 10</div></div>
     <div class="content">
       <div>
         <h1>Scoped memory for agents on Nostr</h1>
@@ -284,37 +284,37 @@
     <div class="footer"><div>Arrow keys / space / click to navigate</div><div class="kbd">→</div></div>
   </section>
 
-  <!-- SLIDE 2 — Core concepts -->
+  <!-- SLIDE 2 - Core concepts -->
   <section class="slide">
-    <div class="topline"><div class="brand"><span class="dot"></span> Model</div><div>02 / 11</div></div>
+    <div class="topline"><div class="brand"><span class="dot"></span> Model</div><div>02 / 10</div></div>
     <div class="content">
       <h2>Five visibility tiers</h2>
       <div class="grid-2">
         <div>
           <ul class="clean">
-            <li><strong>public</strong> — readable by anyone on the relay. No encryption.</li>
-            <li><strong>group</strong> — NIP-29 relay-enforced groups. Scoped by <code style="color:var(--accent);font-family:monospace;">h</code> tag.</li>
-            <li><strong>circle</strong> — ad-hoc participant sets. Deterministic hash of sorted pubkeys.</li>
+            <li><strong>public</strong> - readable by anyone on the relay. No encryption.</li>
+            <li><strong>group</strong> - NIP-29 relay-enforced groups. Scoped by <code style="color:var(--accent);font-family:monospace;">h</code> tag.</li>
+            <li><strong>circle</strong> - ad-hoc participant sets. Deterministic hash of sorted pubkeys.</li>
           </ul>
         </div>
         <div>
           <ul class="clean">
-            <li><strong>personal</strong> — user-auditable. NIP-44 self-encrypted. User + their agents can read.</li>
-            <li><strong>internal</strong> — agent-only reasoning. NIP-44 self-encrypted. Invisible to users.</li>
-            <li><strong>Topics</strong> — forward-slash namespaces: <code style="color:var(--accent);font-family:monospace;">rust/error-handling</code>, <code style="color:var(--accent);font-family:monospace;">user/k0/preferences</code></li>
+            <li><strong>personal</strong> - user-auditable. NIP-44 self-encrypted. User + their agents can read.</li>
+            <li><strong>internal</strong> - agent-only reasoning. NIP-44 self-encrypted. Invisible to users.</li>
+            <li><strong>Topics</strong> - forward-slash namespaces: <code style="color:var(--accent);font-family:monospace;">rust/error-handling</code>, <code style="color:var(--accent);font-family:monospace;">user/k0/preferences</code></li>
           </ul>
         </div>
       </div>
       <div class="card">
-        <p class="body">Nostr relay is the <strong>canonical store</strong>. Local cache: <strong>SurrealDB</strong> (embedded, pure Rust) — HNSW vector search, BM25 full-text, and native graph edges in one engine. If local state is lost, <code style="font-family:monospace;color:var(--accent);">nomen sync</code> recovers everything from the relay.</p>
+        <p class="body">Nostr relay is the <strong>canonical store</strong>. Local cache: <strong>SurrealDB</strong> (embedded, pure Rust) - HNSW vector search, BM25 full-text, and native graph edges in one engine. If local state is lost, <code style="font-family:monospace;color:var(--accent);">nomen sync</code> recovers everything from the relay.</p>
       </div>
     </div>
     <div class="footer"><div>Visibility is not binary. Scope is social and contextual.</div><div class="kbd">→</div></div>
   </section>
 
-  <!-- SLIDE 3 — Visibility diagram: npubs + overlapping groups -->
+  <!-- SLIDE 3 - Visibility diagram: npubs + overlapping groups -->
   <section class="slide">
-    <div class="topline"><div class="brand"><span class="dot"></span> Visibility</div><div>03 / 11</div></div>
+    <div class="topline"><div class="brand"><span class="dot"></span> Visibility</div><div>03 / 10</div></div>
     <div class="content grid-2" style="align-items:center;">
       <div class="vis-canvas">
         <!-- Public scope (outermost) -->
@@ -343,19 +343,19 @@
       </div>
       <div class="legend">
         <h2 style="max-width:14ch;">Memory lives where its scope allows</h2>
-        <div class="legend-item"><span class="legend-swatch" style="background:var(--yellow)"></span><div><strong>personal / internal</strong> — NIP-44 self-encrypted, only author's agents</div></div>
-        <div class="legend-item"><span class="legend-swatch" style="background:var(--accent)"></span><div><strong>group</strong> — NIP-29 relay-enforced, scoped by h-tag</div></div>
-        <div class="legend-item"><span class="legend-swatch" style="background:var(--green)"></span><div><strong>circle</strong> — ad-hoc participant set, hash of sorted pubkeys</div></div>
-        <div class="legend-item"><span class="legend-swatch" style="background:var(--accent2)"></span><div><strong>public</strong> — plaintext, discoverable, trust-ranked</div></div>
-        <p class="body" style="margin-top:8px;">Groups form overlapping social boundaries. An npub in multiple groups accesses shared memory from each. Circles are ad-hoc — no relay group needed, participants listed in p-tags.</p>
+        <div class="legend-item"><span class="legend-swatch" style="background:var(--yellow)"></span><div><strong>personal / internal</strong> - NIP-44 self-encrypted, only author's agents</div></div>
+        <div class="legend-item"><span class="legend-swatch" style="background:var(--accent)"></span><div><strong>group</strong> - NIP-29 relay-enforced, scoped by h-tag</div></div>
+        <div class="legend-item"><span class="legend-swatch" style="background:var(--green)"></span><div><strong>circle</strong> - ad-hoc participant set, hash of sorted pubkeys</div></div>
+        <div class="legend-item"><span class="legend-swatch" style="background:var(--accent2)"></span><div><strong>public</strong> - plaintext, discoverable, trust-ranked</div></div>
+        <p class="body" style="margin-top:8px;">Groups form overlapping social boundaries. An npub in multiple groups accesses shared memory from each. Circles are ad-hoc - no relay group needed, participants listed in p-tags.</p>
       </div>
     </div>
     <div class="footer"><div>npubs are nodes. Groups are overlapping scopes. Public is the outer layer.</div><div class="kbd">→</div></div>
   </section>
 
-  <!-- SLIDE 4 — Retrieval flow with arrows -->
+  <!-- SLIDE 4 - Retrieval flow with arrows -->
   <section class="slide">
-    <div class="topline"><div class="brand"><span class="dot"></span> Retrieval</div><div>04 / 11</div></div>
+    <div class="topline"><div class="brand"><span class="dot"></span> Retrieval</div><div>04 / 10</div></div>
     <div class="content">
       <h2>Context-aware retrieval flow</h2>
       <div class="flow">
@@ -376,16 +376,16 @@
     <div class="footer"><div>Retrieval is scoped by context, not just similarity.</div><div class="kbd">→</div></div>
   </section>
 
-  <!-- SLIDE 5 — Memory Intelligence: Graph, Entities, Clusters -->
+  <!-- SLIDE 5 - Memory Intelligence: Graph, Entities, Clusters -->
   <section class="slide">
-    <div class="topline"><div class="brand"><span class="dot"></span> Intelligence</div><div>05 / 11</div></div>
+    <div class="topline"><div class="brand"><span class="dot"></span> Intelligence</div><div>05 / 10</div></div>
     <div class="content">
       <h2>Memory intelligence layer</h2>
-      <p class="body">Three capabilities that turn flat memory into a structured, evolving knowledge system. All modular — each feature is independently toggle-able via config.</p>
+      <p class="body">Three capabilities that turn flat memory into a structured, evolving knowledge system. All modular - each feature is independently toggle-able via config.</p>
       <div class="grid-3">
         <div class="card">
           <h3>🕸️ Graph-aware retrieval</h3>
-          <p class="body">Search doesn't stop at direct hits. Traverses SurrealDB graph edges — <code style="font-family:monospace;color:var(--accent);">mentions</code>, <code style="font-family:monospace;color:var(--accent);">references</code>, <code style="font-family:monospace;color:var(--accent);">contradicts</code> — to surface related memories the query didn't explicitly match.</p>
+          <p class="body">Search doesn't stop at direct hits. Traverses SurrealDB graph edges - <code style="font-family:monospace;color:var(--accent);">mentions</code>, <code style="font-family:monospace;color:var(--accent);">references</code>, <code style="font-family:monospace;color:var(--accent);">contradicts</code> - to surface related memories the query didn't explicitly match.</p>
           <p class="body" style="margin-top:10px;color:var(--green);">Enables: multi-hop reasoning, contradiction surfacing, entity-centric views</p>
         </div>
         <div class="card">
@@ -400,17 +400,17 @@
         </div>
       </div>
       <div class="card" style="margin-top:8px;">
-        <p class="body">Design informed by <strong>"Memory in the Age of AI Agents"</strong> (Hu et al., 2025) — local consolidation with LLM merging, graph-structured memory (2D), and sleep-inspired dynamics. Each feature degrades gracefully: no API key → heuristic fallback or feature off.</p>
+        <p class="body">Design informed by <strong>"Memory in the Age of AI Agents"</strong> (Hu et al., 2025) - local consolidation with LLM merging, graph-structured memory (2D), and sleep-inspired dynamics. Each feature degrades gracefully: no API key → heuristic fallback or feature off.</p>
       </div>
     </div>
     <div class="footer"><div>Flat storage with graph metadata → structured, evolving knowledge.</div><div class="kbd">→</div></div>
   </section>
 
-  <!-- SLIDE 6 — Nostr memory event model -->
+  <!-- SLIDE 6 - Nostr memory event model -->
   <section class="slide">
-    <div class="topline"><div class="brand"><span class="dot"></span> Event model</div><div>06 / 11</div></div>
+    <div class="topline"><div class="brand"><span class="dot"></span> Event model</div><div>06 / 10</div></div>
     <div class="content">
-      <h2>Kind 31234 — addressable replaceable events</h2>
+      <h2>Kind 31234 - addressable replaceable events</h2>
       <div class="grid-2">
         <div class="event-block">
           <code><span class="comment">// Nomen memory event (kind 31234)</span>
@@ -453,9 +453,9 @@
     <div class="footer"><div>Memory events are regular Nostr events with scope and topic semantics.</div><div class="kbd">→</div></div>
   </section>
 
-  <!-- SLIDE 6 — Shared memory in practice -->
+  <!-- SLIDE 6 - Shared memory in practice -->
   <section class="slide">
-    <div class="topline"><div class="brand"><span class="dot"></span> Shared memory</div><div>07 / 11</div></div>
+    <div class="topline"><div class="brand"><span class="dot"></span> Shared memory</div><div>07 / 10</div></div>
     <div class="content">
       <h2>What shared memory enables</h2>
       <div class="grid-3">
@@ -470,9 +470,9 @@
     <div class="footer"><div>Shared memory is coordination infrastructure.</div><div class="kbd">→</div></div>
   </section>
 
-  <!-- SLIDE 7 — Integration paths with implementation notes -->
+  <!-- SLIDE 7 - Integration paths with implementation notes -->
   <section class="slide">
-    <div class="topline"><div class="brand"><span class="dot"></span> Integration</div><div>08 / 11</div></div>
+    <div class="topline"><div class="brand"><span class="dot"></span> Integration</div><div>08 / 10</div></div>
     <div class="content">
       <h2>Three integration paths</h2>
       <div class="grid-3">
@@ -483,7 +483,7 @@
         </div>
         <div class="card">
           <h3>Context-VM</h3>
-          <p class="body"><strong>Nostr-native path.</strong> Agent publishes kind 21900 requests, Nomen responds with kind 21901. All payloads NIP-44 encrypted. Also enables payments — memory access can be metered over Lightning.</p>
+          <p class="body"><strong>Nostr-native path.</strong> Agent publishes kind 21900 requests, Nomen responds with kind 21901. All payloads NIP-44 encrypted. Also enables payments - memory access can be metered over Lightning.</p>
           <p class="body" style="margin-top:10px;color:var(--accent);">Best for: Nostr-native agents. No transport dependency beyond relays. Supports paid memory services.</p>
         </div>
         <div class="card">
@@ -496,10 +496,10 @@
         <p class="body"><strong>Same memory core, same event model, same scoping rules.</strong> The integration surface changes, not the memory semantics.</p>
       </div>
     </div>
-    <div class="footer"><div>Protocol, runtime, or native embed — choose what fits your stack.</div><div class="kbd">→</div></div>
+    <div class="footer"><div>Protocol, runtime, or native embed - choose what fits your stack.</div><div class="kbd">→</div></div>
   </section>
 
-  <!-- SLIDE 8 — Integration quickstart
+  <!-- SLIDE 8 - Integration quickstart
   <section class="slide">
     <div class="topline"><div class="brand"><span class="dot"></span> Quickstart</div><div>08 / 08</div></div>
     <div class="content">
@@ -543,9 +543,9 @@ nomen serve --http 127.0.0.1:3000</code>
   </section>
   -->
 
-  <!-- SLIDE 8 — Feature checklist / closing -->
+  <!-- SLIDE 8 - Feature checklist / closing -->
   <section class="slide">
-    <div class="topline"><div class="brand"><span class="dot"></span> Summary</div><div>09 / 11</div></div>
+    <div class="topline"><div class="brand"><span class="dot"></span> Summary</div><div>09 / 10</div></div>
     <div class="content">
       <h2>Nomen at a glance</h2>
       <div class="summary-wrap">
@@ -575,7 +575,7 @@ nomen serve --http 127.0.0.1:3000</code>
               </ul>
             </div>
           </div>
-          <p class="big-quote" style="margin-top:16px;">Memory for agents — <span style="color:var(--accent)">scoped</span>, <span style="color:var(--accent2)">signed</span>, <span style="color:var(--green)">shareable</span>.</p>
+          <p class="big-quote" style="margin-top:16px;">Memory for agents - <span style="color:var(--accent)">scoped</span>, <span style="color:var(--accent2)">signed</span>, <span style="color:var(--green)">shareable</span>.</p>
         </div>
         <div class="qr-card">
           <img src="https://api.qrserver.com/v1/create-qr-code/?size=360x360&data=https%3A%2F%2Fgithub.com%2Fk0sti%2Fnomen" alt="QR code for github.com/k0sti/nomen" />
@@ -586,36 +586,9 @@ nomen serve --http 127.0.0.1:3000</code>
     <div class="footer"><div>github.com/k0sti/nomen · ~6900 LOC Rust · SurrealDB embedded · MIT</div><div class="kbd">R · restart</div></div>
   </section>
 
-  <!-- SLIDE 9 — Workshop / playground -->
+  <!-- SLIDE 10 — CLI quickstart -->
   <section class="slide">
-    <div class="topline"><div class="brand"><span class="dot"></span> Workshop</div><div>10 / 11</div></div>
-    <div class="content">
-      <h2>Join the playground relay</h2>
-      <div class="summary-wrap" style="align-items:center;">
-        <div>
-          <p class="lead">We’ll use the NIP-29 Zooid relay for the hands-on Nomen workshop.</p>
-          <div class="card" style="margin-top:22px;">
-            <h3>What to do</h3>
-            <ul class="clean" style="gap:10px;">
-              <li>Register on <code style="font-family:monospace;color:var(--accent);">zooid.atlantislabs.space</code></li>
-              <li>Join the relay we use as the shared testing playground</li>
-              <li>Use it during the workshop to try scoped memory in practice</li>
-            </ul>
-          </div>
-          <p class="body" style="margin-top:18px;">Scan the QR code or open <code style="font-family:monospace;color:var(--accent);">https://zooid.atlantislabs.space/</code>.</p>
-        </div>
-        <div class="qr-card">
-          <img src="https://api.qrserver.com/v1/create-qr-code/?size=360x360&data=https%3A%2F%2Fzooid.atlantislabs.space%2F" alt="QR code for zooid.atlantislabs.space" />
-          <p><strong>zooid.atlantislabs.space</strong><br/>NIP-29 workshop playground</p>
-        </div>
-      </div>
-    </div>
-    <div class="footer"><div>Register now and we can start testing immediately.</div><div class="kbd">R · restart</div></div>
-  </section>
-
-  <!-- SLIDE 11 — CLI quickstart -->
-  <section class="slide">
-    <div class="topline"><div class="brand"><span class="dot"></span> Quickstart</div><div>11 / 11</div></div>
+    <div class="topline"><div class="brand"><span class="dot"></span> Quickstart</div><div>10 / 10</div></div>
     <div class="content">
       <h2>Getting started</h2>
       <div class="grid-2">

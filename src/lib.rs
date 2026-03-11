@@ -19,6 +19,7 @@ pub mod search;
 pub mod send;
 pub mod session;
 pub mod signer;
+pub mod tools;
 
 #[cfg(feature = "migrate")]
 pub mod migrate;
