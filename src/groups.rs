@@ -32,6 +32,11 @@ pub struct GroupStore {
 }
 
 impl GroupStore {
+    /// Create an empty GroupStore (for testing).
+    pub fn empty() -> Self {
+        Self { groups: Vec::new() }
+    }
+
     /// Load groups from config file entries and SurrealDB.
     pub async fn load(config_groups: &[GroupConfig], db: &Surreal<Db>) -> Result<Self> {
         let mut groups = Vec::new();

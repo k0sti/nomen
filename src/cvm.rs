@@ -1,10 +1,7 @@
-//! CVM (Context-VM) server: exposes nomen tools over Nostr via the ContextVM SDK.
+//! CVM (Context-VM) server: exposes nomen operations over Nostr via the ContextVM SDK.
 //!
-//! Replaces the custom `contextvm.rs` implementation with the standardized
-//! `rust-contextvm-sdk` gateway (kind 25910, NIP-59 gift wrap, server announcements).
-//!
-//! ACL (allowed npubs) and rate limiting are kept as application-level middleware
-//! wrapping the SDK's incoming requests.
+//! Uses the canonical `api::dispatch` layer for all operations.
+//! ACL (allowed npubs) and rate limiting are kept as application-level middleware.
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Mutex;
@@ -85,7 +82,6 @@ impl CvmServer {
             allowed_public_keys: if allowed_npubs.is_empty() {
                 vec![]
             } else {
-                // Convert npub/hex strings to PublicKey
                 allowed_npubs
                     .iter()
                     .filter_map(|s| PublicKey::parse(s).ok())
@@ -163,7 +159,6 @@ impl CvmServer {
                 "Processing CVM request"
             );
 
-            // Dispatch the JSON-RPC message
             let response = self.handle_message(&incoming.message).await;
 
             if let Err(e) = self.gateway.send_response(&incoming.event_id, response).await {
@@ -200,66 +195,85 @@ impl CvmServer {
                         make_success_response(id, result)
                     }
                     "tools/list" => {
-                        make_success_response(id, crate::tools::tools_list())
+                        // Return v2 tool definitions for MCP-over-CVM clients
+                        let tools = crate::mcp::v2_tools_list_value();
+                        make_success_response(id, tools)
                     }
                     "tools/call" => {
-                        let tool_name = params
-                            .get("name")
-                            .and_then(|n| n.as_str())
-                            .unwrap_or("");
-                        let arguments = params
-                            .get("arguments")
-                            .cloned()
-                            .unwrap_or(json!({}));
-
-                        let result = crate::tools::dispatch_tool(
-                            &self.nomen,
-                            &self.default_channel,
-                            tool_name,
-                            &arguments,
-                        )
-                        .await;
-
-                        match result {
-                            Ok(content) => make_success_response(
-                                id,
-                                json!({
-                                    "content": [{
-                                        "type": "text",
-                                        "text": content
-                                    }]
-                                }),
-                            ),
-                            Err(e) => make_success_response(
-                                id,
-                                json!({
-                                    "content": [{
-                                        "type": "text",
-                                        "text": format!("Error: {e}")
-                                    }],
-                                    "isError": true
-                                }),
-                            ),
-                        }
+                        self.handle_tool_call(id, &params).await
                     }
                     "ping" => make_success_response(id, json!({})),
-                    _ => make_error_response(
-                        id,
-                        -32601,
-                        &format!("Method not found: {method}"),
-                    ),
+                    _ => {
+                        // Direct v2 action dispatch (e.g. "memory.search", "group.list")
+                        let api_resp = crate::api::dispatch(
+                            &self.nomen,
+                            &self.default_channel,
+                            method,
+                            &params,
+                        )
+                        .await;
+                        let result = serde_json::to_value(&api_resp)
+                            .unwrap_or_else(|_| json!({"ok": false}));
+                        make_success_response(id, result)
+                    }
                 }
             }
             JsonRpcMessage::Notification(_) => {
-                // Notifications don't get responses, but the gateway requires one
-                // Return an empty success for the gateway to handle
                 make_success_response(Value::Null, json!({}))
             }
             _ => {
-                // Unexpected message type
                 make_error_response(Value::Null, -32600, "Invalid request")
             }
         }
+    }
+
+    async fn handle_tool_call(&self, id: Value, params: &Value) -> JsonRpcMessage {
+        let tool_name = params
+            .get("name")
+            .and_then(|n| n.as_str())
+            .unwrap_or("");
+        let arguments = params
+            .get("arguments")
+            .cloned()
+            .unwrap_or(json!({}));
+
+        // Map underscore tool name to dot action name
+        let action = match crate::api::dispatch::mcp_tool_to_action(tool_name) {
+            Some(a) => a,
+            None => {
+                return make_success_response(
+                    id,
+                    json!({
+                        "content": [{
+                            "type": "text",
+                            "text": format!("Unknown tool: {tool_name}")
+                        }],
+                        "isError": true
+                    }),
+                );
+            }
+        };
+
+        let api_resp = crate::api::dispatch(
+            &self.nomen,
+            &self.default_channel,
+            &action,
+            &arguments,
+        )
+        .await;
+
+        let result_json = serde_json::to_value(&api_resp)
+            .unwrap_or_else(|_| json!({"ok": false}));
+
+        make_success_response(
+            id,
+            json!({
+                "content": [{
+                    "type": "text",
+                    "text": result_json.to_string()
+                }]
+            }),
+        )
     }
 }
 

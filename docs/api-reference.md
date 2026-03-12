@@ -1,7 +1,11 @@
-# Nomen API Reference
+# Nomen API Reference (v1 — Legacy)
 
 **Version:** 0.4  
 **Date:** 2026-03-11
+
+> **⚠️ This document describes the legacy API.** The `nomen_*` MCP tools and custom kind 21900/21901 ContextVM protocol have been replaced by the **API v2** canonical interface. See [`api-v2-spec.md`](api-v2-spec.md) for the current specification.
+>
+> **What changed:** All operations now route through a shared canonical dispatch layer (`src/api/`). ContextVM is the authoritative remote interface. MCP is a wrapper using underscore-format tool names (e.g. `memory_search`). Legacy `nomen_*` tool names no longer exist.
 
 Complete reference for all Nomen operations across CLI, MCP (Model Context Protocol), and Context-VM (Nostr-native) interfaces. All interfaces share the same underlying `Nomen` struct — identical behavior guaranteed.
 

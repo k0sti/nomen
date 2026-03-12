@@ -256,6 +256,48 @@ See `docs/zeroclaw-integration-spec.md` for the full adapter contract.
 
 ## Interfaces
 
+### Canonical API (v2)
+
+All external operations are defined in the **canonical API layer** (`src/api/`). Both ContextVM and MCP route through the same `api::dispatch()` function.
+
+**21 operations** across 5 domains:
+
+| Domain | Operations |
+|--------|-----------|
+| Memory | `memory.search`, `memory.put`, `memory.get`, `memory.list`, `memory.delete` |
+| Message | `message.ingest`, `message.list`, `message.context`, `message.send` |
+| Entity | `entity.list`, `entity.relationships` |
+| Maintenance | `memory.consolidate`, `memory.cluster`, `memory.sync`, `memory.embed`, `memory.prune` |
+| Group | `group.list`, `group.members`, `group.create`, `group.add_member`, `group.remove_member` |
+
+All operations use canonical fields: `visibility`, `scope`, `channel`, `topic`.
+
+Responses use structured envelopes: `{ "ok": true, "result": { ... } }` or `{ "ok": false, "error": { "code": "...", "message": "..." } }`.
+
+See `docs/api-v2-spec.md` for full specification.
+
+### ContextVM — Canonical External Interface
+
+ContextVM is the **authoritative remote interface** for external agents connecting over Nostr.
+
+- Encrypted transport (NIP-44 / NIP-59)
+- Identity via Nostr keypairs
+- Server announcements and discovery
+- Supports both MCP-style `tools/call` dispatch and direct action dispatch (e.g. method `"memory.search"`)
+- ACL (allowed npubs) and rate limiting at application level
+
+Implementation: `src/cvm.rs` (thin adapter over `api::dispatch()`).
+
+### MCP Server — Wrapper/Projection
+
+MCP is a **wrapper over the canonical API** for agent frameworks that speak MCP (JSON-RPC over stdio).
+
+- Tool names use underscore format: `memory_search`, `memory_put`, etc.
+- Same argument shapes and semantics as ContextVM
+- Calls `api::dispatch()` internally — no separate logic
+
+Implementation: `src/mcp.rs`.
+
 ### CLI
 
 ```
@@ -263,21 +305,13 @@ nomen list / store / delete / search / sync
 nomen send --to <recipient>
 nomen ingest / consolidate / prune
 nomen messages / entities / group
-nomen embed
-nomen serve --stdio | --http <addr>
+nomen embed / cluster
+nomen serve --stdio | --http <addr> [--context-vm]
 ```
-
-### MCP Server (`nomen serve --stdio`)
-
-Tools: `nomen_search`, `nomen_store`, `nomen_messages`, `nomen_entities`, `nomen_consolidate`, `nomen_ingest`. All tools accept optional `session_id` for automatic tier/scope resolution.
 
 ### HTTP Server (`nomen serve --http :3000`)
 
 REST API for remote agents and web UIs.
-
-### Context-VM (Nostr-native)
-
-NIP-44 encrypted request/response events for pure-Nostr agents. No MCP/HTTP dependency.
 
 ## Relay Sync
 

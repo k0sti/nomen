@@ -4,6 +4,7 @@
 //! message ingestion, consolidation, and Nostr relay sync backed by SurrealDB.
 
 pub mod access;
+pub mod api;
 pub mod cluster;
 pub mod config;
 pub mod consolidate;
@@ -19,7 +20,8 @@ pub mod search;
 pub mod send;
 pub mod session;
 pub mod signer;
-pub mod tools;
+// Legacy tools module removed — all operations now go through api::dispatch.
+// pub mod tools;
 
 #[cfg(feature = "migrate")]
 pub mod migrate;
@@ -114,6 +116,17 @@ impl Default for ClusterOptions {
 }
 
 impl Nomen {
+    /// Create a Nomen instance from an existing SurrealDB handle.
+    pub fn from_db(db: Surreal<Db>) -> Self {
+        Self {
+            db,
+            embedder: Box::new(embed::NoopEmbedder),
+            relay: None,
+            groups: GroupStore::empty(),
+            signer: None,
+        }
+    }
+
     /// Open a Nomen instance from a [`Config`].
     ///
     /// Initialises SurrealDB, builds the embedder, and loads groups.
