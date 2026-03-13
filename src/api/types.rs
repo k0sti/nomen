@@ -88,9 +88,15 @@ impl Default for RetrievalParams {
     }
 }
 
-fn default_vector_weight() -> f32 { 0.7 }
-fn default_text_weight() -> f32 { 0.3 }
-fn default_max_hops() -> usize { 1 }
+fn default_vector_weight() -> f32 {
+    0.7
+}
+fn default_text_weight() -> f32 {
+    0.3
+}
+fn default_max_hops() -> usize {
+    1
+}
 
 // ── Visibility enum ──────────────────────────────────────────────────
 
@@ -152,7 +158,10 @@ pub fn resolve_visibility_scope(
         .get("visibility")
         .and_then(|v| v.as_str())
         .and_then(Visibility::parse);
-    let scope = params.get("scope").and_then(|v| v.as_str()).map(String::from);
+    let scope = params
+        .get("scope")
+        .and_then(|v| v.as_str())
+        .map(String::from);
 
     if vis.is_some() {
         return validate_visibility_scope(&vis, &scope).map(|_| (vis, scope));
@@ -168,7 +177,11 @@ pub fn resolve_visibility_scope(
     if let Some(sid) = params.get("session_id").and_then(|v| v.as_str()) {
         if let Ok(resolved) = nomen.resolve_session(sid, default_channel) {
             let v = Visibility::parse(&resolved.tier);
-            let s = if resolved.scope.is_empty() { None } else { Some(resolved.scope) };
+            let s = if resolved.scope.is_empty() {
+                None
+            } else {
+                Some(resolved.scope)
+            };
             return Ok((v, s));
         }
     }
@@ -194,12 +207,9 @@ fn validate_visibility_scope(
     };
     let scope_empty = scope.as_ref().map_or(true, |s| s.is_empty());
     match vis {
-        Visibility::Group | Visibility::Circle if scope_empty => {
-            Err(ApiError::invalid_scope(format!(
-                "scope is required when visibility={}",
-                vis.as_str()
-            )))
-        }
+        Visibility::Group | Visibility::Circle if scope_empty => Err(ApiError::invalid_scope(
+            format!("scope is required when visibility={}", vis.as_str()),
+        )),
         _ => Ok(()),
     }
 }

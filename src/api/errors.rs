@@ -84,7 +84,10 @@ impl ApiError {
     }
 
     pub fn unknown_action(action: &str) -> Self {
-        Self::new(ErrorCode::UnknownAction, format!("Unknown action: {action}"))
+        Self::new(
+            ErrorCode::UnknownAction,
+            format!("Unknown action: {action}"),
+        )
     }
 
     /// Convert from anyhow::Error, preserving message.

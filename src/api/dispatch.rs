@@ -53,9 +53,7 @@ async fn dispatch_inner(
         "memory.consolidate" => {
             operations::maintenance::consolidate(nomen, default_channel, params).await
         }
-        "memory.cluster" => {
-            operations::maintenance::cluster(nomen, default_channel, params).await
-        }
+        "memory.cluster" => operations::maintenance::cluster(nomen, default_channel, params).await,
         "memory.sync" => operations::maintenance::sync(nomen, default_channel, params).await,
         "memory.embed" => operations::maintenance::embed(nomen, default_channel, params).await,
         "memory.prune" => operations::maintenance::prune(nomen, default_channel, params).await,
@@ -64,9 +62,7 @@ async fn dispatch_inner(
         "group.list" => operations::group::list(nomen, default_channel, params).await,
         "group.members" => operations::group::members(nomen, default_channel, params).await,
         "group.create" => operations::group::create(nomen, default_channel, params).await,
-        "group.add_member" => {
-            operations::group::add_member(nomen, default_channel, params).await
-        }
+        "group.add_member" => operations::group::add_member(nomen, default_channel, params).await,
         "group.remove_member" => {
             operations::group::remove_member(nomen, default_channel, params).await
         }
@@ -85,12 +81,26 @@ pub fn mcp_tool_to_action(tool_name: &str) -> Option<String> {
         let candidate = format!("{}.{}", parts[0], parts[1]);
         // Validate it's a known action
         match candidate.as_str() {
-            "memory.search" | "memory.put" | "memory.get" | "memory.list" | "memory.delete"
-            | "message.ingest" | "message.list" | "message.context" | "message.send"
-            | "memory.consolidate" | "memory.cluster" | "memory.sync" | "memory.embed"
+            "memory.search"
+            | "memory.put"
+            | "memory.get"
+            | "memory.list"
+            | "memory.delete"
+            | "message.ingest"
+            | "message.list"
+            | "message.context"
+            | "message.send"
+            | "memory.consolidate"
+            | "memory.cluster"
+            | "memory.sync"
+            | "memory.embed"
             | "memory.prune"
-            | "entity.list" | "entity.relationships"
-            | "group.list" | "group.members" | "group.create" | "group.add_member"
+            | "entity.list"
+            | "entity.relationships"
+            | "group.list"
+            | "group.members"
+            | "group.create"
+            | "group.add_member"
             | "group.remove_member" => Some(candidate),
             _ => None,
         }

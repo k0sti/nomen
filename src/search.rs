@@ -258,10 +258,7 @@ async fn graph_expand(
     }
 
     // Collect d_tags already in results for dedup
-    let mut seen_d_tags: HashSet<String> = results
-        .iter()
-        .filter_map(|r| r.d_tag.clone())
-        .collect();
+    let mut seen_d_tags: HashSet<String> = results.iter().filter_map(|r| r.d_tag.clone()).collect();
 
     let mut expanded: Vec<SearchResult> = Vec::new();
 
@@ -317,7 +314,8 @@ async fn graph_expand(
 
             // Apply confidence decay
             let raw_confidence = neighbor.confidence.unwrap_or(0.5);
-            let decay = confidence_decay_factor(neighbor.last_accessed.as_deref(), &neighbor.created_at);
+            let decay =
+                confidence_decay_factor(neighbor.last_accessed.as_deref(), &neighbor.created_at);
             let effective_confidence = raw_confidence * decay;
 
             expanded.push(SearchResult {

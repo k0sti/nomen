@@ -1,6 +1,6 @@
 # CLAUDE.md — Nomen Implementation Guide
 
-**Last modified:** 2026-03-07T14:00+02:00
+**Last modified:** 2026-03-12T20:30+02:00
 
 ## Project
 
@@ -30,7 +30,7 @@ src/
 ├── db.rs             SurrealDB schema, queries, CRUD
 ├── consolidate.rs    Raw messages → named memories, merge, dedup, relay publish
 ├── mcp.rs            MCP server (JSON-RPC stdio, 9+ tools)
-├── contextvm.rs      Nostr-native request/response via NIP-44
+├── cvm.rs            ContextVM server (CvmServer + CvmHandler) via NIP-44
 ├── http.rs           HTTP server + web UI serving
 ├── groups.rs         Group management (hierarchical, NIP-29 mapping)
 ├── search.rs         Hybrid vector + BM25 search + scoring

@@ -964,7 +964,10 @@ pub async fn get_graph_neighbors_simple(
         .take(0)?;
 
     for edge in &in_edges {
-        let (otb, orid) = edge.in_node.split_once(':').unwrap_or(("memory", &edge.in_node));
+        let (otb, orid) = edge
+            .in_node
+            .split_once(':')
+            .unwrap_or(("memory", &edge.in_node));
         let target_thing = surrealdb::sql::Thing::from((otb, orid));
         let mems: Vec<GraphNeighbor> = db
             .query("SELECT $edge_type AS edge_type, $relation AS relation, tier, topic, confidence, content, summary, created_at, d_tag, importance, last_accessed FROM $target")
@@ -991,7 +994,10 @@ pub async fn get_graph_neighbors_simple(
         .take(0)?;
 
     for mention in &mention_edges {
-        let (etb, erid) = mention.out.split_once(':').unwrap_or(("entity", &mention.out));
+        let (etb, erid) = mention
+            .out
+            .split_once(':')
+            .unwrap_or(("entity", &mention.out));
         let entity_thing = surrealdb::sql::Thing::from((etb, erid));
 
         // Find other memories that also mention this entity
@@ -1010,7 +1016,10 @@ pub async fn get_graph_neighbors_simple(
             .take(0)?;
 
         for back in &back_edges {
-            let (mtb, mrid) = back.in_node.split_once(':').unwrap_or(("memory", &back.in_node));
+            let (mtb, mrid) = back
+                .in_node
+                .split_once(':')
+                .unwrap_or(("memory", &back.in_node));
             let target_thing = surrealdb::sql::Thing::from((mtb, mrid));
             let mems: Vec<GraphNeighbor> = db
                 .query("SELECT $edge_type AS edge_type, NONE AS relation, tier, topic, confidence, content, summary, created_at, d_tag, importance, last_accessed FROM $target")
@@ -1037,7 +1046,10 @@ pub async fn get_graph_neighbors_simple(
         .take(0)?;
 
     for consol in &consolidated_edges {
-        let (rtb, rrid) = consol.out.split_once(':').unwrap_or(("raw_message", &consol.out));
+        let (rtb, rrid) = consol
+            .out
+            .split_once(':')
+            .unwrap_or(("raw_message", &consol.out));
         let raw_thing = surrealdb::sql::Thing::from((rtb, rrid));
 
         #[derive(Debug, Deserialize)]
@@ -1055,7 +1067,10 @@ pub async fn get_graph_neighbors_simple(
             .take(0)?;
 
         for back in &back_edges {
-            let (mtb, mrid) = back.in_node.split_once(':').unwrap_or(("memory", &back.in_node));
+            let (mtb, mrid) = back
+                .in_node
+                .split_once(':')
+                .unwrap_or(("memory", &back.in_node));
             let target_thing = surrealdb::sql::Thing::from((mtb, mrid));
             let mems: Vec<GraphNeighbor> = db
                 .query("SELECT $edge_type AS edge_type, NONE AS relation, tier, topic, confidence, content, summary, created_at, d_tag, importance, last_accessed FROM $target")

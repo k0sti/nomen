@@ -568,9 +568,7 @@ fn resolve_message_scope(msg: &RawMessageRecord) -> String {
     let is_group = !msg.channel.is_empty()
         && msg.channel != "dm"
         && msg.channel != "general"
-        && (msg.source == "nostr"
-            || msg.source == "telegram"
-            || msg.source.starts_with("group"));
+        && (msg.source == "nostr" || msg.source == "telegram" || msg.source.starts_with("group"));
 
     if is_group {
         return format!("group:{}", msg.channel);
@@ -665,7 +663,10 @@ pub async fn consolidate(
     // Scope partitioning ensures messages from different groups/tiers
     // are never consolidated together (cross-group guard).
     let grouped = group_messages(messages.clone());
-    debug!(groups = grouped.len(), "Grouped messages into time windows (scope-partitioned)");
+    debug!(
+        groups = grouped.len(),
+        "Grouped messages into time windows (scope-partitioned)"
+    );
 
     let mut report = ConsolidationReport {
         messages_processed: messages.len(),
@@ -945,14 +946,13 @@ pub async fn consolidate(
                                             .split_once(':')
                                             .map(|(_, id)| id)
                                             .unwrap_or(&record_id);
-                                        if let Err(e) =
-                                            crate::db::create_mention_edge(
-                                                db,
-                                                mid,
-                                                eid,
-                                                entity.relevance,
-                                            )
-                                            .await
+                                        if let Err(e) = crate::db::create_mention_edge(
+                                            db,
+                                            mid,
+                                            eid,
+                                            entity.relevance,
+                                        )
+                                        .await
                                         {
                                             warn!(
                                                 "Failed to create mention edge for entity '{}': {e}",
@@ -987,10 +987,8 @@ pub async fn consolidate(
                                         .split_once(':')
                                         .map(|(_, id)| id)
                                         .unwrap_or(&from_id);
-                                    let tid = to_id
-                                        .split_once(':')
-                                        .map(|(_, id)| id)
-                                        .unwrap_or(&to_id);
+                                    let tid =
+                                        to_id.split_once(':').map(|(_, id)| id).unwrap_or(&to_id);
                                     if let Err(e) = crate::db::create_typed_edge(
                                         db,
                                         fid,
@@ -1056,14 +1054,8 @@ pub async fn consolidate(
                 let (vis_tag, scope_tag) = crate::memory::extract_visibility_scope(&d_tag);
                 let mut event_tags = vec![
                     Tag::custom(TagKind::Custom("d".into()), vec![d_tag.clone()]),
-                    Tag::custom(
-                        TagKind::Custom("visibility".into()),
-                        vec![vis_tag],
-                    ),
-                    Tag::custom(
-                        TagKind::Custom("scope".into()),
-                        vec![scope_tag],
-                    ),
+                    Tag::custom(TagKind::Custom("visibility".into()), vec![vis_tag]),
+                    Tag::custom(TagKind::Custom("scope".into()), vec![scope_tag]),
                     Tag::custom(
                         TagKind::Custom("model".into()),
                         vec!["nomen/consolidation".to_string()],

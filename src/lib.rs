@@ -226,22 +226,23 @@ impl Nomen {
         let content_str = content.to_string();
 
         // Supersedes logic: check for existing memory with same topic
-        let (version, previous_nostr_id) = match db::get_memory_by_topic(&self.db, &mem.topic).await? {
-            Some(existing) => {
-                let new_version = existing.version + 1;
-                (new_version, existing.nostr_id)
-            }
-            None => {
-                // Also check by d_tag
-                match db::get_memory_by_dtag(&self.db, &d_tag).await? {
-                    Some(existing) => {
-                        let new_version = existing.version + 1;
-                        (new_version, existing.nostr_id)
-                    }
-                    None => (1, None),
+        let (version, previous_nostr_id) =
+            match db::get_memory_by_topic(&self.db, &mem.topic).await? {
+                Some(existing) => {
+                    let new_version = existing.version + 1;
+                    (new_version, existing.nostr_id)
                 }
-            }
-        };
+                None => {
+                    // Also check by d_tag
+                    match db::get_memory_by_dtag(&self.db, &d_tag).await? {
+                        Some(existing) => {
+                            let new_version = existing.version + 1;
+                            (new_version, existing.nostr_id)
+                        }
+                        None => (1, None),
+                    }
+                }
+            };
 
         let parsed = memory::ParsedMemory {
             tier: mem.tier.clone(),
@@ -508,11 +509,9 @@ impl Nomen {
         if let (Some(ref relay), Some(ref event_id_hex)) = (&self.relay, &nostr_event_id) {
             if !event_id_hex.is_empty() {
                 if let Ok(eid) = nostr_sdk::EventId::from_hex(event_id_hex) {
-                    let delete_builder = nostr_sdk::EventBuilder::new(
-                        nostr_sdk::Kind::Custom(5),
-                        "",
-                    )
-                    .tags(vec![nostr_sdk::Tag::event(eid)]);
+                    let delete_builder =
+                        nostr_sdk::EventBuilder::new(nostr_sdk::Kind::Custom(5), "")
+                            .tags(vec![nostr_sdk::Tag::event(eid)]);
 
                     if let Err(e) = relay.publish(delete_builder).await {
                         tracing::warn!("Failed to publish NIP-09 deletion to relay: {e}");

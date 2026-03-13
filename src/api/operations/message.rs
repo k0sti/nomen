@@ -70,16 +70,23 @@ pub async fn list(
     params: &Value,
 ) -> Result<Value, ApiError> {
     let opts = ingest::MessageQuery {
-        source: params.get("source").and_then(|v| v.as_str()).map(String::from),
-        channel: params.get("channel").and_then(|v| v.as_str()).map(String::from),
-        sender: params.get("sender").and_then(|v| v.as_str()).map(String::from),
-        since: params.get("since").and_then(|v| v.as_str()).map(String::from),
-        limit: Some(
-            params
-                .get("limit")
-                .and_then(|v| v.as_u64())
-                .unwrap_or(50) as usize,
-        ),
+        source: params
+            .get("source")
+            .and_then(|v| v.as_str())
+            .map(String::from),
+        channel: params
+            .get("channel")
+            .and_then(|v| v.as_str())
+            .map(String::from),
+        sender: params
+            .get("sender")
+            .and_then(|v| v.as_str())
+            .map(String::from),
+        since: params
+            .get("since")
+            .and_then(|v| v.as_str())
+            .map(String::from),
+        limit: Some(params.get("limit").and_then(|v| v.as_u64()).unwrap_or(50) as usize),
         consolidated_only: false,
     };
 
@@ -141,13 +148,15 @@ pub async fn context(
         .map_err(ApiError::from_anyhow)?;
 
     // Find the target message by source_id
-    let target_idx = all_messages
-        .iter()
-        .position(|m| m.source_id == source_id);
+    let target_idx = all_messages.iter().position(|m| m.source_id == source_id);
 
     let target_idx = match target_idx {
         Some(idx) => idx,
-        None => return Err(ApiError::not_found(format!("Message not found: {source_id}"))),
+        None => {
+            return Err(ApiError::not_found(format!(
+                "Message not found: {source_id}"
+            )))
+        }
     };
 
     let start = target_idx.saturating_sub(before);
@@ -184,10 +193,7 @@ pub async fn send_message(
         .get("recipient")
         .and_then(|v| v.as_str())
         .unwrap_or("");
-    let content = params
-        .get("content")
-        .and_then(|v| v.as_str())
-        .unwrap_or("");
+    let content = params.get("content").and_then(|v| v.as_str()).unwrap_or("");
     let channel = params
         .get("channel")
         .and_then(|v| v.as_str())
@@ -195,7 +201,9 @@ pub async fn send_message(
     let metadata = params.get("metadata").cloned();
 
     if recipient.is_empty() || content.is_empty() {
-        return Err(ApiError::invalid_params("recipient and content are required"));
+        return Err(ApiError::invalid_params(
+            "recipient and content are required",
+        ));
     }
 
     let target = send::parse_recipient(recipient).map_err(ApiError::from_anyhow)?;

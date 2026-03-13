@@ -25,7 +25,7 @@ use nomen::relay::{RelayConfig, RelayManager};
 use nomen::search;
 use nomen::send;
 use nomen::signer::{KeysSigner, NomenSigner};
-use nomen::{Nomen, NewMemory};
+use nomen::{NewMemory, Nomen};
 
 // ── CLI ─────────────────────────────────────────────────────────────
 
@@ -487,7 +487,18 @@ async fn main() -> Result<()> {
             hops,
         } => {
             let nomen = build_nomen(&config).await?;
-            cmd_search(&nomen, &query, tier.as_deref(), limit, vector_weight, text_weight, aggregate, graph, hops).await?;
+            cmd_search(
+                &nomen,
+                &query,
+                tier.as_deref(),
+                limit,
+                vector_weight,
+                text_weight,
+                aggregate,
+                graph,
+                hops,
+            )
+            .await?;
         }
         Command::Embed { limit } => {
             let nomen = build_nomen(&config).await?;
@@ -554,7 +565,15 @@ async fn main() -> Result<()> {
             min_members,
             namespace_depth,
         } => {
-            cmd_cluster(&config, &resolved, dry_run, prefix, min_members, namespace_depth).await?;
+            cmd_cluster(
+                &config,
+                &resolved,
+                dry_run,
+                prefix,
+                min_members,
+                namespace_depth,
+            )
+            .await?;
         }
         Command::Prune { days, dry_run } => {
             let nomen = build_nomen(&config).await?;
@@ -596,11 +615,7 @@ async fn main() -> Result<()> {
 
 // ── Command: list (relay-based) ─────────────────────────────────────
 
-async fn cmd_list_relay(
-    relay_url: &str,
-    nsecs: &[String],
-    named: bool,
-) -> Result<()> {
+async fn cmd_list_relay(relay_url: &str, nsecs: &[String], named: bool) -> Result<()> {
     let (all_keys, pubkeys) = parse_keys(nsecs)?;
     debug!("Parsed {} keys", all_keys.len());
 
@@ -765,11 +780,7 @@ async fn cmd_store(
 
 // ── Command: delete ─────────────────────────────────────────────────
 
-async fn cmd_delete(
-    nomen: &Nomen,
-    topic: Option<&str>,
-    event_id: Option<&str>,
-) -> Result<()> {
+async fn cmd_delete(nomen: &Nomen, topic: Option<&str>, event_id: Option<&str>) -> Result<()> {
     if topic.is_none() && event_id.is_none() {
         bail!("Provide either a topic or --id <event-id>");
     }
@@ -777,17 +788,9 @@ async fn cmd_delete(
     nomen.delete(topic, event_id).await?;
 
     if let Some(topic) = topic {
-        println!(
-            "{} Memory with topic: {}",
-            "Deleted.".red().bold(),
-            topic
-        );
+        println!("{} Memory with topic: {}", "Deleted.".red().bold(), topic);
     } else if let Some(id) = event_id {
-        println!(
-            "{} Memory with event ID: {}",
-            "Deleted.".red().bold(),
-            id
-        );
+        println!("{} Memory with event ID: {}", "Deleted.".red().bold(), id);
     }
 
     Ok(())
@@ -914,7 +917,11 @@ async fn cmd_embed(nomen: &Nomen, limit: usize) -> Result<()> {
     if report.total == 0 {
         println!("All memories already have embeddings.");
     } else {
-        println!("{}: {} memories embedded", "Done".green().bold(), report.embedded);
+        println!(
+            "{}: {} memories embedded",
+            "Done".green().bold(),
+            report.embedded
+        );
     }
 
     Ok(())
@@ -931,7 +938,15 @@ async fn cmd_group(nomen: &Nomen, action: GroupAction) -> Result<()> {
             nostr_group,
             relay,
         } => {
-            nomen.group_create(&id, &name, &members, nostr_group.as_deref(), relay.as_deref()).await?;
+            nomen
+                .group_create(
+                    &id,
+                    &name,
+                    &members,
+                    nostr_group.as_deref(),
+                    relay.as_deref(),
+                )
+                .await?;
             println!(
                 "{} group: {} ({})",
                 "Created".green().bold(),
@@ -1221,7 +1236,11 @@ async fn cmd_consolidate(
 
 // ── Command: entities ───────────────────────────────────────────────
 
-async fn cmd_entities(nomen: &Nomen, kind_filter: Option<&str>, show_relations: bool) -> Result<()> {
+async fn cmd_entities(
+    nomen: &Nomen,
+    kind_filter: Option<&str>,
+    show_relations: bool,
+) -> Result<()> {
     if kind_filter.is_some() && entities::EntityKind::from_str(kind_filter.unwrap()).is_none() {
         bail!(
             "Unknown entity kind: {}. Valid kinds: person, project, concept, place, organization, technology",
@@ -1266,7 +1285,11 @@ async fn cmd_entities(nomen: &Nomen, kind_filter: Option<&str>, show_relations: 
                     detail_str,
                 );
             }
-            println!("\n{}: {} relationships", "Total".bold(), relationships.len());
+            println!(
+                "\n{}: {} relationships",
+                "Total".bold(),
+                relationships.len()
+            );
         }
     }
 
@@ -1311,10 +1334,7 @@ async fn cmd_cluster(
     };
 
     if dry_run {
-        println!(
-            "{} Running cluster fusion...",
-            "[DRY RUN]".yellow().bold()
-        );
+        println!("{} Running cluster fusion...", "[DRY RUN]".yellow().bold());
     } else {
         println!("Running cluster fusion...");
     }
@@ -1324,9 +1344,7 @@ async fn cmd_cluster(
             .await?;
 
     if report.clusters_found == 0 {
-        println!(
-            "No clusters found (need at least {min_members} memories per namespace prefix)."
-        );
+        println!("No clusters found (need at least {min_members} memories per namespace prefix).");
         if report.memories_scanned == 0 {
             println!("  No named memories in the database. Run `nomen consolidate` first.");
         } else {
@@ -1354,10 +1372,7 @@ async fn cmd_cluster(
         );
 
         if !dry_run && report.edges_created > 0 {
-            println!(
-                "  Created {} 'summarizes' edges",
-                report.edges_created
-            );
+            println!("  Created {} 'summarizes' edges", report.edges_created);
         }
 
         for detail in &report.cluster_details {
@@ -1508,76 +1523,23 @@ async fn cmd_serve(
         None
     };
 
-    // HTTP server mode
-    if let Some(ref addr) = http_addr {
-        let bind_addr = if addr.starts_with(':') {
-            format!("0.0.0.0{addr}")
-        } else {
-            addr.clone()
-        };
-
-        let resolved_static = static_dir.or_else(|| {
-            if let Ok(exe) = std::env::current_exe() {
-                let dir = exe.parent()?.join("web/dist");
-                if dir.is_dir() {
-                    return Some(dir);
-                }
-            }
-            let cwd = PathBuf::from("web/dist");
-            if cwd.is_dir() {
-                Some(cwd)
-            } else {
-                None
-            }
-        });
-
-        let http_state = nomen::http::AppState {
-            db,
-            embedder: config.build_embedder(),
-            relay: relay_manager,
-            groups: group_store,
-            default_channel,
-            config: std::sync::Arc::new(tokio::sync::RwLock::new(config.clone())),
-        };
-
-        let resolved_landing = landing_dir.or_else(|| {
-            if let Ok(exe) = std::env::current_exe() {
-                let dir = exe.parent()?.join("web/dist-landing");
-                if dir.is_dir() {
-                    return Some(dir);
-                }
-            }
-            let cwd = PathBuf::from("web/dist-landing");
-            if cwd.is_dir() {
-                Some(cwd)
-            } else {
-                None
-            }
-        });
-
-        return nomen::http::serve(&bind_addr, http_state, resolved_static, resolved_landing).await;
-    }
-
-    // Default: stdio MCP mode (for backwards compat when neither --stdio nor --http given)
-    let _ = stdio; // accept --stdio flag but it's the default
-
     // Determine if CVM should run: CLI flag or config section
     let cvm_config = config.contextvm.as_ref();
     let cvm_enabled = context_vm || cvm_config.map(|c| c.enabled).unwrap_or(false);
 
-    if cvm_enabled {
-        // Need relay + keys for CVM
-        if resolved.nsecs.is_empty() {
-            bail!(
-                "CVM requires nsec keys. Set in {} or pass --nsec",
-                Config::path().display()
-            );
-        }
+    // Validate CVM requirements early
+    if cvm_enabled && resolved.nsecs.is_empty() {
+        bail!(
+            "CVM requires nsec keys. Set in {} or pass --nsec",
+            Config::path().display()
+        );
+    }
 
+    // ── Build CVM server (if enabled) ────────────────────────────
+    let cvm_server = if cvm_enabled {
         let (all_keys, _) = parse_keys(&resolved.nsecs)?;
         let cvm_keys = all_keys[0].clone();
 
-        // Merge CLI flags with config: CLI flags override config values
         let cvm_relay = cvm_config
             .and_then(|c| c.relay.clone())
             .unwrap_or_else(|| resolved.relay.clone());
@@ -1594,42 +1556,126 @@ async fn cmd_serve(
         let cvm_rate_limit = cvm_config.map(|c| c.rate_limit).unwrap_or(30);
         let cvm_announce = cvm_config.map(|c| c.announce).unwrap_or(true);
 
-        // Build a Nomen instance for the CVM server
         let cvm_nomen = nomen::Nomen::open(config).await?;
 
-        let cvm_server = cvm::CvmServer::new(
-            cvm_nomen,
-            cvm_keys,
-            &cvm_relay,
-            cvm_encryption,
-            cvm_allowed,
-            cvm_rate_limit,
-            default_channel.clone(),
-            cvm_announce,
+        Some(
+            cvm::CvmServer::new(
+                cvm_nomen,
+                cvm_keys,
+                &cvm_relay,
+                cvm_encryption,
+                cvm_allowed,
+                cvm_rate_limit,
+                default_channel.clone(),
+                cvm_announce,
+            )
+            .await?,
         )
-        .await?;
-
-        // Build MCP Nomen instance
-        let mcp_nomen = if let Some(relay) = relay_manager {
-            nomen::Nomen::open_with_relay(config, relay).await?
-        } else {
-            nomen::Nomen::open(config).await?
-        };
-
-        let mcp_future = mcp::serve_stdio(mcp_nomen, default_channel);
-        let cvm_future = cvm_server.run();
-
-        tokio::select! {
-            result = mcp_future => result,
-            result = cvm_future => result,
-        }
     } else {
-        let nomen_instance = if let Some(relay) = relay_manager {
-            nomen::Nomen::open_with_relay(config, relay).await?
+        None
+    };
+
+    // ── Resolve static/landing dirs (used by HTTP mode) ────────
+    let resolved_static = static_dir.or_else(|| {
+        if let Ok(exe) = std::env::current_exe() {
+            let dir = exe.parent()?.join("web/dist");
+            if dir.is_dir() {
+                return Some(dir);
+            }
+        }
+        let cwd = PathBuf::from("web/dist");
+        if cwd.is_dir() {
+            Some(cwd)
         } else {
-            nomen::Nomen::open(config).await?
-        };
-        mcp::serve_stdio(nomen_instance, default_channel).await
+            None
+        }
+    });
+
+    let resolved_landing = landing_dir.or_else(|| {
+        if let Ok(exe) = std::env::current_exe() {
+            let dir = exe.parent()?.join("web/dist-landing");
+            if dir.is_dir() {
+                return Some(dir);
+            }
+        }
+        let cwd = PathBuf::from("web/dist-landing");
+        if cwd.is_dir() {
+            Some(cwd)
+        } else {
+            None
+        }
+    });
+
+    // ── Run the selected combination ─────────────────────────────
+    // Supported modes:
+    //   HTTP only           — nomen serve --http :3000
+    //   HTTP + CVM          — nomen serve --http :3000 --context-vm
+    //   CVM + stdio MCP     — nomen serve --context-vm
+    //   stdio MCP only      — nomen serve [--stdio]
+
+    match (http_addr, cvm_server) {
+        // HTTP (± CVM): build HTTP state, run concurrently if CVM enabled
+        (Some(addr), cvm_opt) => {
+            let bind_addr = if addr.starts_with(':') {
+                format!("0.0.0.0{addr}")
+            } else {
+                addr
+            };
+
+            let http_state = nomen::http::AppState {
+                db,
+                embedder: config.build_embedder(),
+                relay: relay_manager,
+                groups: group_store,
+                default_channel: default_channel.clone(),
+                config: std::sync::Arc::new(tokio::sync::RwLock::new(config.clone())),
+            };
+
+            let http_fut =
+                nomen::http::serve(&bind_addr, http_state, resolved_static, resolved_landing);
+
+            if let Some(cvm) = cvm_opt {
+                // HTTP + CVM: run both concurrently
+                let cvm_fut = cvm.run();
+                tokio::select! {
+                    result = http_fut => result,
+                    result = cvm_fut => result,
+                }
+            } else {
+                // HTTP only
+                http_fut.await
+            }
+        }
+        // CVM (± stdio MCP)
+        (None, Some(cvm)) => {
+            if stdio {
+                // CVM + stdio MCP: run both concurrently
+                let mcp_nomen = if let Some(relay) = relay_manager {
+                    nomen::Nomen::open_with_relay(config, relay).await?
+                } else {
+                    nomen::Nomen::open(config).await?
+                };
+                let mcp_fut = mcp::serve_stdio(mcp_nomen, default_channel);
+                let cvm_fut = cvm.run();
+                tokio::select! {
+                    result = mcp_fut => result,
+                    result = cvm_fut => result,
+                }
+            } else {
+                // CVM only
+                cvm.run().await
+            }
+        }
+        // stdio MCP only (default)
+        (None, None) => {
+            let _ = stdio;
+            let nomen_instance = if let Some(relay) = relay_manager {
+                nomen::Nomen::open_with_relay(config, relay).await?
+            } else {
+                nomen::Nomen::open(config).await?
+            };
+            mcp::serve_stdio(nomen_instance, default_channel).await
+        }
     }
 }
 

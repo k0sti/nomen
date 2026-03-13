@@ -52,11 +52,7 @@ pub struct ClusterSynthesis {
 #[async_trait]
 pub trait ClusterLlmProvider: Send + Sync {
     /// Synthesize a coherent summary from a set of related memory summaries.
-    async fn synthesize_cluster(
-        &self,
-        prefix: &str,
-        context: &str,
-    ) -> Result<ClusterSynthesis>;
+    async fn synthesize_cluster(&self, prefix: &str, context: &str) -> Result<ClusterSynthesis>;
 }
 
 /// Noop implementation — concatenates member summaries without LLM call.
@@ -64,11 +60,7 @@ pub struct NoopClusterLlmProvider;
 
 #[async_trait]
 impl ClusterLlmProvider for NoopClusterLlmProvider {
-    async fn synthesize_cluster(
-        &self,
-        prefix: &str,
-        context: &str,
-    ) -> Result<ClusterSynthesis> {
+    async fn synthesize_cluster(&self, prefix: &str, context: &str) -> Result<ClusterSynthesis> {
         Ok(ClusterSynthesis {
             summary: format!("Cluster summary for {prefix}"),
             detail: context.to_string(),
@@ -148,11 +140,7 @@ fn default_confidence() -> f64 {
 
 #[async_trait]
 impl ClusterLlmProvider for OpenAiClusterLlmProvider {
-    async fn synthesize_cluster(
-        &self,
-        prefix: &str,
-        context: &str,
-    ) -> Result<ClusterSynthesis> {
+    async fn synthesize_cluster(&self, prefix: &str, context: &str) -> Result<ClusterSynthesis> {
         let system_prompt = "You are a memory synthesis agent. Given a collection of related memories \
 grouped under the same topic namespace, produce a coherent, comprehensive summary that captures \
 the key information across all of them. \
@@ -282,7 +270,9 @@ fn group_by_namespace(
 /// internal > personal > group > public
 fn derive_cluster_tier(members: &[&ClusterableMemory]) -> String {
     let has_internal = members.iter().any(|m| m.tier == "internal");
-    let has_personal = members.iter().any(|m| m.tier == "personal" || m.tier == "private");
+    let has_personal = members
+        .iter()
+        .any(|m| m.tier == "personal" || m.tier == "private");
     let has_group = members.iter().any(|m| m.tier.starts_with("group"));
 
     if has_internal {
@@ -405,7 +395,11 @@ pub async fn run_cluster_fusion(
             .join("\n");
 
         // LLM synthesis
-        let synthesis = match config.llm_provider.synthesize_cluster(prefix, &context).await {
+        let synthesis = match config
+            .llm_provider
+            .synthesize_cluster(prefix, &context)
+            .await
+        {
             Ok(s) => s,
             Err(e) => {
                 warn!(prefix = %prefix, "Cluster synthesis failed: {e}");
@@ -429,13 +423,14 @@ pub async fn run_cluster_fusion(
             model: Some("nomen/cluster".to_string()),
         };
 
-        let d_tag = match crate::Nomen::store_direct_with_author(db, embedder, mem, author_hex).await {
-            Ok(dt) => dt,
-            Err(e) => {
-                warn!(prefix = %prefix, "Failed to store cluster memory: {e}");
-                continue;
-            }
-        };
+        let d_tag =
+            match crate::Nomen::store_direct_with_author(db, embedder, mem, author_hex).await {
+                Ok(dt) => dt,
+                Err(e) => {
+                    warn!(prefix = %prefix, "Failed to store cluster memory: {e}");
+                    continue;
+                }
+            };
 
         report.clusters_synthesized += 1;
 

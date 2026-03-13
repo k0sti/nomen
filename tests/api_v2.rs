@@ -65,7 +65,10 @@ mod types_tests {
     #[test]
     fn visibility_to_tier() {
         assert_eq!(Visibility::Public.to_tier(""), "public");
-        assert_eq!(Visibility::Group.to_tier("engineering"), "group:engineering");
+        assert_eq!(
+            Visibility::Group.to_tier("engineering"),
+            "group:engineering"
+        );
         assert_eq!(Visibility::Personal.to_tier(""), "personal");
         assert_eq!(Visibility::Internal.to_tier(""), "internal");
         assert_eq!(Visibility::Circle.to_tier("abc123"), "circle:abc123");
@@ -276,7 +279,13 @@ mod dispatch_tests {
     #[tokio::test]
     async fn dispatch_unknown_action_returns_error() {
         let (nomen, _tmp) = super::test_nomen().await.unwrap();
-        let resp = nomen::api::dispatch(&nomen, "default", "nonexistent.action", &serde_json::json!({})).await;
+        let resp = nomen::api::dispatch(
+            &nomen,
+            "default",
+            "nonexistent.action",
+            &serde_json::json!({}),
+        )
+        .await;
         assert!(!resp.ok);
         let err = resp.error.unwrap();
         assert_eq!(err.code, "unknown_action");
@@ -307,10 +316,12 @@ mod operations_tests {
 
         // Get by topic
         let get_resp = nomen::api::dispatch(
-            &nomen, "test",
+            &nomen,
+            "test",
             "memory.get",
             &json!({"topic": "apiv2-test/roundtrip"}),
-        ).await;
+        )
+        .await;
         assert!(get_resp.ok, "get failed: {:?}", get_resp.error);
         let mem = get_resp.result.unwrap();
         assert_eq!(mem["topic"], "apiv2-test/roundtrip");
@@ -318,10 +329,12 @@ mod operations_tests {
 
         // Cleanup
         nomen::api::dispatch(
-            &nomen, "test",
+            &nomen,
+            "test",
             "memory.delete",
             &json!({"topic": "apiv2-test/roundtrip"}),
-        ).await;
+        )
+        .await;
     }
 
     #[tokio::test]
@@ -335,22 +348,28 @@ mod operations_tests {
         ).await;
 
         let search_resp = nomen::api::dispatch(
-            &nomen, "test",
+            &nomen,
+            "test",
             "memory.search",
             &json!({"query": "xylophone melody"}),
-        ).await;
+        )
+        .await;
         assert!(search_resp.ok, "search failed: {:?}", search_resp.error);
         let result = search_resp.result.unwrap();
         let results = result["results"].as_array().unwrap();
         assert!(!results.is_empty(), "search should find the stored memory");
-        assert!(results.iter().any(|r| r["topic"] == "apiv2-test/search-target"));
+        assert!(results
+            .iter()
+            .any(|r| r["topic"] == "apiv2-test/search-target"));
 
         // Cleanup
         nomen::api::dispatch(
-            &nomen, "test",
+            &nomen,
+            "test",
             "memory.delete",
             &json!({"topic": "apiv2-test/search-target"}),
-        ).await;
+        )
+        .await;
     }
 
     #[tokio::test]
@@ -358,27 +377,29 @@ mod operations_tests {
         let (nomen, _tmp) = super::test_nomen().await.unwrap();
 
         nomen::api::dispatch(
-            &nomen, "test",
+            &nomen,
+            "test",
             "memory.put",
             &json!({"topic": "apiv2-test/list-item", "summary": "A listable memory"}),
-        ).await;
+        )
+        .await;
 
-        let list_resp = nomen::api::dispatch(
-            &nomen, "test",
-            "memory.list",
-            &json!({}),
-        ).await;
+        let list_resp = nomen::api::dispatch(&nomen, "test", "memory.list", &json!({})).await;
         assert!(list_resp.ok, "list failed: {:?}", list_resp.error);
         let result = list_resp.result.unwrap();
         let memories = result["memories"].as_array().unwrap();
-        assert!(memories.iter().any(|m| m["topic"] == "apiv2-test/list-item"));
+        assert!(memories
+            .iter()
+            .any(|m| m["topic"] == "apiv2-test/list-item"));
 
         // Cleanup
         nomen::api::dispatch(
-            &nomen, "test",
+            &nomen,
+            "test",
             "memory.delete",
             &json!({"topic": "apiv2-test/list-item"}),
-        ).await;
+        )
+        .await;
     }
 
     #[tokio::test]
@@ -386,35 +407,43 @@ mod operations_tests {
         let (nomen, _tmp) = super::test_nomen().await.unwrap();
 
         nomen::api::dispatch(
-            &nomen, "test",
+            &nomen,
+            "test",
             "memory.put",
             &json!({"topic": "apiv2-test/delete-me", "summary": "Will be deleted"}),
-        ).await;
+        )
+        .await;
 
         // Verify it exists
         let get_resp = nomen::api::dispatch(
-            &nomen, "test",
+            &nomen,
+            "test",
             "memory.get",
             &json!({"topic": "apiv2-test/delete-me"}),
-        ).await;
+        )
+        .await;
         assert!(get_resp.ok);
         assert!(!get_resp.result.as_ref().unwrap().is_null());
 
         // Delete
         let del_resp = nomen::api::dispatch(
-            &nomen, "test",
+            &nomen,
+            "test",
             "memory.delete",
             &json!({"topic": "apiv2-test/delete-me"}),
-        ).await;
+        )
+        .await;
         assert!(del_resp.ok, "delete failed: {:?}", del_resp.error);
         assert_eq!(del_resp.result.unwrap()["deleted"], true);
 
         // Verify gone
         let get_resp2 = nomen::api::dispatch(
-            &nomen, "test",
+            &nomen,
+            "test",
             "memory.get",
             &json!({"topic": "apiv2-test/delete-me"}),
-        ).await;
+        )
+        .await;
         assert!(get_resp2.ok);
         assert!(get_resp2.result.unwrap().is_null());
     }
@@ -424,7 +453,8 @@ mod operations_tests {
         let (nomen, _tmp) = super::test_nomen().await.unwrap();
 
         let ingest_resp = nomen::api::dispatch(
-            &nomen, "test",
+            &nomen,
+            "test",
             "message.ingest",
             &json!({
                 "content": "Hello from API v2 test",
@@ -432,19 +462,24 @@ mod operations_tests {
                 "sender": "test-user",
                 "channel": "test-channel"
             }),
-        ).await;
+        )
+        .await;
         assert!(ingest_resp.ok, "ingest failed: {:?}", ingest_resp.error);
         assert!(ingest_resp.result.unwrap()["id"].as_str().is_some());
 
         let list_resp = nomen::api::dispatch(
-            &nomen, "test",
+            &nomen,
+            "test",
             "message.list",
             &json!({"source": "test-apiv2"}),
-        ).await;
+        )
+        .await;
         assert!(list_resp.ok, "message.list failed: {:?}", list_resp.error);
         let result = list_resp.result.unwrap();
         let messages = result["messages"].as_array().unwrap();
-        assert!(messages.iter().any(|m| m["content"] == "Hello from API v2 test"));
+        assert!(messages
+            .iter()
+            .any(|m| m["content"] == "Hello from API v2 test"));
     }
 
     #[tokio::test]
@@ -454,62 +489,66 @@ mod operations_tests {
 
         // Create
         let create_resp = nomen::api::dispatch(
-            &nomen, "test",
+            &nomen,
+            "test",
             "group.create",
             &json!({"id": group_id, "name": "Test Group", "members": ["npub1test"]}),
-        ).await;
-        assert!(create_resp.ok, "group.create failed: {:?}", create_resp.error);
+        )
+        .await;
+        assert!(
+            create_resp.ok,
+            "group.create failed: {:?}",
+            create_resp.error
+        );
 
         // List
-        let list_resp = nomen::api::dispatch(
-            &nomen, "test",
-            "group.list",
-            &json!({}),
-        ).await;
+        let list_resp = nomen::api::dispatch(&nomen, "test", "group.list", &json!({})).await;
         assert!(list_resp.ok);
-        let groups = list_resp.result.unwrap()["groups"].as_array().unwrap().clone();
+        let groups = list_resp.result.unwrap()["groups"]
+            .as_array()
+            .unwrap()
+            .clone();
         assert!(groups.iter().any(|g| g["id"] == group_id));
 
         // Members
-        let members_resp = nomen::api::dispatch(
-            &nomen, "test",
-            "group.members",
-            &json!({"id": group_id}),
-        ).await;
+        let members_resp =
+            nomen::api::dispatch(&nomen, "test", "group.members", &json!({"id": group_id})).await;
         assert!(members_resp.ok);
         let members = members_resp.result.unwrap();
         assert_eq!(members["count"], 1);
 
         // Add member
         let add_resp = nomen::api::dispatch(
-            &nomen, "test",
+            &nomen,
+            "test",
             "group.add_member",
             &json!({"id": group_id, "npub": "npub1new"}),
-        ).await;
+        )
+        .await;
         assert!(add_resp.ok, "group.add_member failed: {:?}", add_resp.error);
 
         // Verify added
-        let members_resp2 = nomen::api::dispatch(
-            &nomen, "test",
-            "group.members",
-            &json!({"id": group_id}),
-        ).await;
+        let members_resp2 =
+            nomen::api::dispatch(&nomen, "test", "group.members", &json!({"id": group_id})).await;
         assert_eq!(members_resp2.result.unwrap()["count"], 2);
 
         // Remove member
         let remove_resp = nomen::api::dispatch(
-            &nomen, "test",
+            &nomen,
+            "test",
             "group.remove_member",
             &json!({"id": group_id, "npub": "npub1new"}),
-        ).await;
-        assert!(remove_resp.ok, "group.remove_member failed: {:?}", remove_resp.error);
+        )
+        .await;
+        assert!(
+            remove_resp.ok,
+            "group.remove_member failed: {:?}",
+            remove_resp.error
+        );
 
         // Verify removed
-        let members_resp3 = nomen::api::dispatch(
-            &nomen, "test",
-            "group.members",
-            &json!({"id": group_id}),
-        ).await;
+        let members_resp3 =
+            nomen::api::dispatch(&nomen, "test", "group.members", &json!({"id": group_id})).await;
         assert_eq!(members_resp3.result.unwrap()["count"], 1);
     }
 
@@ -517,11 +556,7 @@ mod operations_tests {
     async fn entity_list_empty() {
         let (nomen, _tmp) = super::test_nomen().await.unwrap();
 
-        let resp = nomen::api::dispatch(
-            &nomen, "test",
-            "entity.list",
-            &json!({}),
-        ).await;
+        let resp = nomen::api::dispatch(&nomen, "test", "entity.list", &json!({})).await;
         assert!(resp.ok, "entity.list failed: {:?}", resp.error);
         let result = resp.result.unwrap();
         assert_eq!(result["count"], 0);
@@ -532,11 +567,7 @@ mod operations_tests {
     async fn unknown_action_error_response() {
         let (nomen, _tmp) = super::test_nomen().await.unwrap();
 
-        let resp = nomen::api::dispatch(
-            &nomen, "test",
-            "bogus.action",
-            &json!({}),
-        ).await;
+        let resp = nomen::api::dispatch(&nomen, "test", "bogus.action", &json!({})).await;
         assert!(!resp.ok);
         let err = resp.error.unwrap();
         assert_eq!(err.code, "unknown_action");
@@ -548,10 +579,12 @@ mod operations_tests {
         let (nomen, _tmp) = super::test_nomen().await.unwrap();
 
         let resp = nomen::api::dispatch(
-            &nomen, "test",
+            &nomen,
+            "test",
             "memory.put",
             &json!({"summary": "no topic provided"}),
-        ).await;
+        )
+        .await;
         assert!(!resp.ok);
         assert_eq!(resp.error.unwrap().code, "invalid_params");
     }
@@ -560,11 +593,7 @@ mod operations_tests {
     async fn memory_search_without_query_returns_invalid_params() {
         let (nomen, _tmp) = super::test_nomen().await.unwrap();
 
-        let resp = nomen::api::dispatch(
-            &nomen, "test",
-            "memory.search",
-            &json!({}),
-        ).await;
+        let resp = nomen::api::dispatch(&nomen, "test", "memory.search", &json!({})).await;
         assert!(!resp.ok);
         assert_eq!(resp.error.unwrap().code, "invalid_params");
     }

@@ -114,10 +114,7 @@ pub async fn embed(
     _default_channel: &str,
     params: &Value,
 ) -> Result<Value, ApiError> {
-    let limit = params
-        .get("limit")
-        .and_then(|v| v.as_u64())
-        .unwrap_or(100) as usize;
+    let limit = params.get("limit").and_then(|v| v.as_u64()).unwrap_or(100) as usize;
 
     let report = nomen.embed(limit).await.map_err(ApiError::from_anyhow)?;
 

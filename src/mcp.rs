@@ -414,16 +414,10 @@ impl McpServer {
             }
         };
 
-        let api_resp = crate::api::dispatch(
-            &self.nomen,
-            &self.default_channel,
-            &action,
-            &arguments,
-        )
-        .await;
+        let api_resp =
+            crate::api::dispatch(&self.nomen, &self.default_channel, &action, &arguments).await;
 
-        let result_json = serde_json::to_value(&api_resp)
-            .unwrap_or_else(|_| json!({"ok": false}));
+        let result_json = serde_json::to_value(&api_resp).unwrap_or_else(|_| json!({"ok": false}));
 
         JsonRpcResponse::success(
             id,

@@ -235,10 +235,14 @@ impl EntityExtractor for LlmEntityExtractor {
             String::new()
         } else {
             let names: Vec<&str> = known_entities.iter().map(|e| e.name.as_str()).collect();
-            format!("\n\nKnown entities (reuse these names if they appear): {}", names.join(", "))
+            format!(
+                "\n\nKnown entities (reuse these names if they appear): {}",
+                names.join(", ")
+            )
         };
 
-        let user_prompt = format!("Extract entities and relationships from this text:{known_context}\n\n{text}");
+        let user_prompt =
+            format!("Extract entities and relationships from this text:{known_context}\n\n{text}");
 
         let body = serde_json::json!({
             "model": self.model,
@@ -372,9 +376,7 @@ impl EntityExtractor for CompositeExtractor {
 /// Build the appropriate EntityExtractor from config.
 ///
 /// Returns a CompositeExtractor if LLM is configured, otherwise HeuristicExtractor.
-pub fn build_entity_extractor(
-    config: &crate::config::Config,
-) -> Box<dyn EntityExtractor> {
+pub fn build_entity_extractor(config: &crate::config::Config) -> Box<dyn EntityExtractor> {
     if let Some(ref entity_config) = config.entities {
         if entity_config.provider == "heuristic" || entity_config.provider == "none" {
             return Box::new(HeuristicExtractor);
@@ -596,7 +598,10 @@ mod tests {
 
     #[test]
     fn test_entity_kind_technology() {
-        assert_eq!(EntityKind::from_str("technology"), Some(EntityKind::Technology));
+        assert_eq!(
+            EntityKind::from_str("technology"),
+            Some(EntityKind::Technology)
+        );
         assert_eq!(EntityKind::Technology.as_str(), "technology");
     }
 

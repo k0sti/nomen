@@ -31,10 +31,22 @@ pub async fn search(
         .unwrap_or_else(|| {
             // Also check flat params for backward compat
             RetrievalParams {
-                vector_weight: params.get("vector_weight").and_then(|v| v.as_f64()).unwrap_or(0.7) as f32,
-                text_weight: params.get("text_weight").and_then(|v| v.as_f64()).unwrap_or(0.3) as f32,
-                aggregate: params.get("aggregate").and_then(|v| v.as_bool()).unwrap_or(false),
-                graph_expand: params.get("graph_expand").and_then(|v| v.as_bool()).unwrap_or(false),
+                vector_weight: params
+                    .get("vector_weight")
+                    .and_then(|v| v.as_f64())
+                    .unwrap_or(0.7) as f32,
+                text_weight: params
+                    .get("text_weight")
+                    .and_then(|v| v.as_f64())
+                    .unwrap_or(0.3) as f32,
+                aggregate: params
+                    .get("aggregate")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false),
+                graph_expand: params
+                    .get("graph_expand")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false),
                 max_hops: params.get("max_hops").and_then(|v| v.as_u64()).unwrap_or(1) as usize,
             }
         });
@@ -91,11 +103,7 @@ pub async fn search(
     }))
 }
 
-pub async fn put(
-    nomen: &Nomen,
-    default_channel: &str,
-    params: &Value,
-) -> Result<Value, ApiError> {
+pub async fn put(nomen: &Nomen, default_channel: &str, params: &Value) -> Result<Value, ApiError> {
     let topic = params
         .get("topic")
         .and_then(|v| v.as_str())
@@ -152,11 +160,7 @@ pub async fn put(
     }))
 }
 
-pub async fn get(
-    nomen: &Nomen,
-    default_channel: &str,
-    params: &Value,
-) -> Result<Value, ApiError> {
+pub async fn get(nomen: &Nomen, default_channel: &str, params: &Value) -> Result<Value, ApiError> {
     let d_tag = params.get("d_tag").and_then(|v| v.as_str());
     let topic = params.get("topic").and_then(|v| v.as_str());
 
@@ -166,7 +170,10 @@ pub async fn get(
 
     // Direct d_tag lookup
     if let Some(d_tag) = d_tag {
-        let record = nomen.get_by_topic(d_tag).await.map_err(ApiError::from_anyhow)?;
+        let record = nomen
+            .get_by_topic(d_tag)
+            .await
+            .map_err(ApiError::from_anyhow)?;
         return Ok(record_to_value(record));
     }
 
@@ -187,14 +194,20 @@ pub async fn get(
             Visibility::Public => String::new(),
         };
         let d_tag = crate::memory::build_v2_dtag(vis.as_str(), &context, topic);
-        let record = nomen.get_by_topic(&d_tag).await.map_err(ApiError::from_anyhow)?;
+        let record = nomen
+            .get_by_topic(&d_tag)
+            .await
+            .map_err(ApiError::from_anyhow)?;
         if record.is_some() {
             return Ok(record_to_value(record));
         }
     }
 
     // Fallback: raw topic lookup
-    let record = nomen.get_by_raw_topic(topic).await.map_err(ApiError::from_anyhow)?;
+    let record = nomen
+        .get_by_raw_topic(topic)
+        .await
+        .map_err(ApiError::from_anyhow)?;
     Ok(record_to_value(record))
 }
 
@@ -215,13 +228,12 @@ fn record_to_value(record: Option<crate::db::MemoryRecord>) -> Value {
     }
 }
 
-pub async fn list(
-    nomen: &Nomen,
-    default_channel: &str,
-    params: &Value,
-) -> Result<Value, ApiError> {
+pub async fn list(nomen: &Nomen, default_channel: &str, params: &Value) -> Result<Value, ApiError> {
     let limit = params.get("limit").and_then(|v| v.as_u64()).unwrap_or(100) as usize;
-    let include_stats = params.get("stats").and_then(|v| v.as_bool()).unwrap_or(false);
+    let include_stats = params
+        .get("stats")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
 
     let (vis, _scope) = resolve_visibility_scope(params, nomen, default_channel)?;
     let tier = vis.as_ref().map(|v| v.as_str().to_string());
@@ -278,9 +290,7 @@ pub async fn delete(
     let id = params.get("id").and_then(|v| v.as_str());
 
     if topic.is_none() && d_tag.is_none() && id.is_none() {
-        return Err(ApiError::invalid_params(
-            "Provide topic, d_tag, or id",
-        ));
+        return Err(ApiError::invalid_params("Provide topic, d_tag, or id"));
     }
 
     // If topic is provided with visibility/scope, build d_tag

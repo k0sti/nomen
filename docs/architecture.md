@@ -16,10 +16,10 @@ Nostr Relay (source of truth)
 SurrealDB (embedded, local cache)
     │ search / store / ingest
     ▼
-┌────────┬──────────┬──────────┐
-│  CLI   │  MCP     │  HTTP    │
-│ nomen  │  stdio   │  server  │
-└────────┴──────────┴──────────┘
+┌────────┬──────────┬──────────┬──────────┐
+│  CLI   │  MCP     │  HTTP    │ ContextVM│
+│ nomen  │  stdio   │  server  │  Nostr   │
+└────────┴──────────┴──────────┴──────────┘
 ```
 
 ## Module Map
@@ -36,7 +36,7 @@ src/
 ├── session.rs        (232)  Session ID resolution → tier/scope
 ├── mcp.rs            (796)  MCP server (JSON-RPC stdio)
 ├── http.rs           (376)  HTTP server
-├── contextvm.rs      (601)  Nostr-native request/response (NIP-44)
+├── cvm.rs            (500)  ContextVM server (Nostr MCP gateway + CvmHandler)
 ├── ingest.rs          (63)  Raw message ingestion
 ├── consolidate.rs    (354)  Raw messages → named memories
 ├── embed.rs          (188)  Embedding generation (OpenAI API)
@@ -286,7 +286,7 @@ ContextVM is the **authoritative remote interface** for external agents connecti
 - Supports both MCP-style `tools/call` dispatch and direct action dispatch (e.g. method `"memory.search"`)
 - ACL (allowed npubs) and rate limiting at application level
 
-Implementation: `src/cvm.rs` (thin adapter over `api::dispatch()`).
+Implementation: `src/cvm.rs` — `CvmServer` wraps the SDK gateway; `CvmHandler` provides the testable message-handling logic.
 
 ### MCP Server — Wrapper/Projection
 
@@ -309,9 +309,48 @@ nomen embed / cluster
 nomen serve --stdio | --http <addr> [--context-vm]
 ```
 
+### Serve Mode Combinations
+
+The `nomen serve` command supports running multiple interfaces concurrently:
+
+| Mode | Command | Description |
+|------|---------|-------------|
+| stdio MCP only | `nomen serve` | Default. MCP JSON-RPC over stdin/stdout. |
+| HTTP only | `nomen serve --http :3000` | REST API + web UI. |
+| CVM only | `nomen serve --context-vm` | ContextVM listener only. |
+| CVM + stdio MCP | `nomen serve --context-vm --stdio` | ContextVM + stdio MCP (both run). |
+| HTTP + CVM | `nomen serve --http :3000 --context-vm` | Both HTTP and ContextVM run concurrently. |
+
+CVM requires nsec keys (via config or `--nsec`). The `[contextvm]` config section controls relay, encryption, allowlist, and rate limiting.
+
 ### HTTP Server (`nomen serve --http :3000`)
 
 REST API for remote agents and web UIs.
+
+### CVM Transport Notes
+
+ContextVM uses Nostr kind 25910 (ephemeral) for unencrypted messages and kind 1059 (NIP-59 gift wrap) for encrypted messages. The server subscribes to both kinds filtered by `p` tag matching its own pubkey.
+
+**Encryption modes:**
+- `disabled` — plaintext kind 25910 events. Tested and working with Zooid relay.
+- `optional` (default) — defaults to gift-wrap encryption. Gift-wrap delivery depends on relay support for NIP-59 kind 1059 events with `p` tag filtering. Some relays may not deliver these reliably.
+- `required` — always gift-wrap encrypted.
+
+For initial setup, use `encryption = "disabled"` in `[contextvm]` config and verify basic round-trip before enabling encryption.
+
+### CVM Smoke Test
+
+A reusable smoke-test client lives in `examples/cvm_smoke_test.rs`:
+
+```bash
+# Verify a running Nomen CVM server over a relay
+NOMEN_SERVER_PUBKEY=<hex> NOMEN_NSEC=<nsec> ./scripts/cvm-smoke-test.sh
+
+# Test with encryption disabled (recommended for initial verification)
+NOMEN_SERVER_PUBKEY=<hex> NOMEN_NSEC=<nsec> NOMEN_ENCRYPTION=disabled ./scripts/cvm-smoke-test.sh
+```
+
+This sends `tools/list` and `memory.list` requests and verifies responses.
 
 ## Relay Sync
 
