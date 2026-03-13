@@ -16,7 +16,6 @@ use nomen::cvm;
 use nomen::db;
 use nomen::display::{display_memories, format_timestamp};
 use nomen::entities;
-use nomen::groups;
 use nomen::ingest;
 use nomen::kinds::{LEGACY_LESSON_KIND, LESSON_KIND};
 use nomen::mcp;
@@ -259,6 +258,9 @@ enum Command {
         /// Directory for landing page files (default: web/dist-landing relative to binary)
         #[arg(long)]
         landing_dir: Option<PathBuf>,
+        /// Enable socket server
+        #[arg(long)]
+        socket: bool,
         /// Also start Context-VM (Nostr-native request/response listener)
         #[arg(long)]
         context_vm: bool,
@@ -592,6 +594,7 @@ async fn main() -> Result<()> {
             http: http_addr,
             static_dir,
             landing_dir,
+            socket,
             context_vm,
             allowed_npubs,
         } => {
@@ -602,6 +605,7 @@ async fn main() -> Result<()> {
                 http_addr,
                 static_dir,
                 landing_dir,
+                socket,
                 context_vm,
                 allowed_npubs,
             )
@@ -1500,18 +1504,15 @@ async fn cmd_serve(
     http_addr: Option<String>,
     static_dir: Option<PathBuf>,
     landing_dir: Option<PathBuf>,
+    socket: bool,
     context_vm: bool,
     allowed_npubs: Vec<String>,
 ) -> Result<()> {
-    let db = db::init_db_with_dimensions(config.embedding_dimensions()).await?;
-
     let default_channel = config
         .messaging
         .as_ref()
         .map(|m| m.default_channel.clone())
         .unwrap_or_else(|| "nostr".to_string());
-
-    let group_store = groups::GroupStore::load(&config.groups, &db).await?;
 
     // Optionally build relay manager if nsecs are available
     let relay_manager = if !resolved.nsecs.is_empty() {
@@ -1575,6 +1576,39 @@ async fn cmd_serve(
         None
     };
 
+    // ── Build Socket server (if enabled) ────────────────────────
+    let socket_config = config.socket.as_ref();
+    let socket_enabled = socket || socket_config.map(|c| c.enabled).unwrap_or(false);
+
+    if socket_enabled {
+        let sock_config = socket_config.cloned().unwrap_or_else(|| {
+            nomen::config::SocketConfig {
+                enabled: true,
+                path: nomen::config::default_socket_path(),
+                max_connections: 32,
+                max_frame_size: 16 * 1024 * 1024,
+            }
+        });
+
+        let (event_tx, _) = tokio::sync::broadcast::channel(1024);
+
+        let mut socket_nomen = nomen::Nomen::open(config).await?;
+        socket_nomen.set_event_emitter(event_tx.clone());
+
+        let server = nomen::socket::SocketServer::new(
+            std::sync::Arc::new(socket_nomen),
+            &sock_config,
+            default_channel.clone(),
+            Some(event_tx),
+        );
+
+        tokio::spawn(async move {
+            if let Err(e) = server.run().await {
+                tracing::error!("Socket server error: {e}");
+            }
+        });
+    }
+
     // ── Resolve static/landing dirs (used by HTTP mode) ────────
     let resolved_static = static_dir.or_else(|| {
         if let Ok(exe) = std::env::current_exe() {
@@ -1622,11 +1656,14 @@ async fn cmd_serve(
                 addr
             };
 
+            let nomen_instance = if let Some(relay) = relay_manager {
+                nomen::Nomen::open_with_relay(config, relay).await?
+            } else {
+                nomen::Nomen::open(config).await?
+            };
+
             let http_state = nomen::http::AppState {
-                db,
-                embedder: config.build_embedder(),
-                relay: relay_manager,
-                groups: group_store,
+                nomen: std::sync::Arc::new(nomen_instance),
                 default_channel: default_channel.clone(),
                 config: std::sync::Arc::new(tokio::sync::RwLock::new(config.clone())),
             };
@@ -1882,6 +1919,7 @@ async fn cmd_init(force: bool, non_interactive: bool) -> Result<()> {
         server: server_config,
         entities: None,
         contextvm: None,
+        socket: None,
     };
 
     // Write config
@@ -1963,6 +2001,7 @@ async fn cmd_init_non_interactive() -> Result<()> {
         }),
         entities: None,
         contextvm: None,
+        socket: None,
     };
 
     let config_path = Config::path();

@@ -35,10 +35,13 @@ pub mod display;
 pub mod http;
 #[doc(hidden)]
 pub mod mcp;
+#[doc(hidden)]
+pub mod socket;
 
 use anyhow::Result;
 use surrealdb::engine::local::Db;
 use surrealdb::Surreal;
+use tokio::sync::broadcast;
 
 use std::sync::Arc;
 
@@ -60,6 +63,7 @@ pub struct Nomen {
     relay: Option<RelayManager>,
     groups: GroupStore,
     signer: Option<Arc<dyn NomenSigner>>,
+    event_tx: Option<broadcast::Sender<nomen_wire::Event>>,
 }
 
 /// Options for creating a new memory directly (without relay event).
@@ -124,6 +128,7 @@ impl Nomen {
             relay: None,
             groups: GroupStore::empty(),
             signer: None,
+            event_tx: None,
         }
     }
 
@@ -144,6 +149,7 @@ impl Nomen {
             relay: None,
             groups,
             signer,
+            event_tx: None,
         })
     }
 
@@ -181,6 +187,26 @@ impl Nomen {
     /// Get a reference to the group store.
     pub fn groups(&self) -> &GroupStore {
         &self.groups
+    }
+
+    /// Set the event emitter for push notifications (used by socket server).
+    pub fn set_event_emitter(&mut self, tx: broadcast::Sender<nomen_wire::Event>) {
+        self.event_tx = Some(tx);
+    }
+
+    /// Emit a push event if an event emitter is configured.
+    fn emit_event(&self, event_type: &str, data: serde_json::Value) {
+        if let Some(ref tx) = self.event_tx {
+            let event = nomen_wire::Event {
+                event: event_type.to_string(),
+                ts: std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs(),
+                data,
+            };
+            let _ = tx.send(event);
+        }
     }
 
     /// Hybrid (vector + full-text) search over stored memories.
@@ -342,6 +368,14 @@ impl Nomen {
             }
         }
 
+        self.emit_event("memory.updated", serde_json::json!({
+            "topic": mem.topic,
+            "visibility": base_tier,
+            "scope": context,
+            "author": author_pubkey_hex,
+            "source": source,
+        }));
+
         Ok(d_tag)
     }
 
@@ -428,13 +462,20 @@ impl Nomen {
             author_pubkey,
             ..Default::default()
         };
-        consolidate::consolidate(
+        let report = consolidate::consolidate(
             &self.db,
             self.embedder.as_ref(),
             &config,
             self.relay.as_ref(),
         )
-        .await
+        .await?;
+
+        self.emit_event("consolidation.complete", serde_json::json!({
+            "memories_created": report.memories_created,
+            "messages_processed": report.messages_processed,
+        }));
+
+        Ok(report)
     }
 
     /// Run the cluster fusion pipeline on named memories.
@@ -450,13 +491,20 @@ impl Nomen {
             prefix_filter: opts.prefix_filter,
             author_pubkey,
         };
-        cluster::run_cluster_fusion(
+        let report = cluster::run_cluster_fusion(
             &self.db,
             self.embedder.as_ref(),
             &config,
             self.relay.as_ref(),
         )
-        .await
+        .await?;
+
+        self.emit_event("cluster.fused", serde_json::json!({
+            "clusters_merged": report.clusters_found,
+            "dry_run": report.dry_run,
+        }));
+
+        Ok(report)
     }
 
     /// Query raw messages with filters.
@@ -519,6 +567,13 @@ impl Nomen {
                 }
             }
         }
+
+        let deleted_topic = topic.or(id).unwrap_or_default();
+        self.emit_event("memory.deleted", serde_json::json!({
+            "topic": deleted_topic,
+            "d_tag": topic.unwrap_or_default(),
+            "author": self.signer.as_ref().map(|s| s.public_key().to_hex()).unwrap_or_default(),
+        }));
 
         Ok(())
     }
@@ -614,6 +669,12 @@ impl Nomen {
                 }
             }
         }
+
+        self.emit_event("sync.complete", serde_json::json!({
+            "stored": stored,
+            "skipped": skipped,
+            "errors": errors,
+        }));
 
         Ok(SyncReport {
             stored,

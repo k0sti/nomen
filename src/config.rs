@@ -57,6 +57,9 @@ pub struct Config {
     /// ContextVM (CVM) server configuration
     #[serde(default)]
     pub contextvm: Option<ContextVmConfig>,
+    /// Socket server configuration
+    #[serde(default)]
+    pub socket: Option<SocketConfig>,
 }
 
 /// The [memory] config section, per spec.
@@ -300,6 +303,44 @@ fn default_cvm_encryption() -> String {
 
 fn default_cvm_rate_limit() -> u32 {
     30
+}
+
+/// Socket server configuration [socket] section.
+#[derive(Deserialize, Serialize, Clone)]
+pub struct SocketConfig {
+    /// Whether the socket server is enabled
+    #[serde(default)]
+    pub enabled: bool,
+    /// Socket file path. Defaults to $XDG_RUNTIME_DIR/nomen/nomen.sock
+    #[serde(default = "default_socket_path")]
+    pub path: String,
+    /// Max concurrent connections
+    #[serde(default = "default_max_connections")]
+    pub max_connections: usize,
+    /// Max frame size in bytes (default 16 MB)
+    #[serde(default = "default_max_frame_size")]
+    pub max_frame_size: usize,
+}
+
+pub fn default_socket_path() -> String {
+    if let Some(runtime_dir) = dirs::runtime_dir() {
+        runtime_dir
+            .join("nomen")
+            .join("nomen.sock")
+            .to_string_lossy()
+            .to_string()
+    } else {
+        let user = std::env::var("USER").unwrap_or_else(|_| std::process::id().to_string());
+        format!("/tmp/nomen-{}/nomen.sock", user)
+    }
+}
+
+fn default_max_connections() -> usize {
+    32
+}
+
+fn default_max_frame_size() -> usize {
+    16 * 1024 * 1024
 }
 
 impl ContextVmConfig {
