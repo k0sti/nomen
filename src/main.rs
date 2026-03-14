@@ -8,23 +8,20 @@ use dialoguer::{Confirm, Input, Password};
 use nostr_sdk::prelude::*;
 use tracing::debug;
 
+use serde_json::json;
+
 use nomen::config::{
     Config, EmbeddingConfig, MemoryConsolidationConfig, MemorySection, ServerConfig,
 };
-use nomen::consolidate;
 use nomen::cvm;
 use nomen::db;
-use nomen::display::{display_memories, format_timestamp};
-use nomen::entities;
-use nomen::ingest;
+use nomen::display::display_memories;
 use nomen::kinds::{LEGACY_LESSON_KIND, LESSON_KIND};
 use nomen::mcp;
 use nomen::memory::{get_tag_value, parse_event};
 use nomen::relay::{RelayConfig, RelayManager};
-use nomen::search;
-use nomen::send;
 use nomen::signer::{KeysSigner, NomenSigner};
-use nomen::{NewMemory, Nomen};
+use nomen::Nomen;
 
 // ── CLI ─────────────────────────────────────────────────────────────
 
@@ -397,6 +394,21 @@ async fn build_nomen(config: &Config) -> Result<Nomen> {
     Nomen::open(config).await
 }
 
+// ── CLI dispatch helper ──────────────────────────────────────────────
+
+const CLI_CHANNEL: &str = "cli";
+
+/// Call api::dispatch and extract the result or bail on error.
+async fn cli_dispatch(nomen: &Nomen, action: &str, params: &serde_json::Value) -> Result<serde_json::Value> {
+    let resp = nomen::api::dispatch(nomen, CLI_CHANNEL, action, params).await;
+    if resp.ok {
+        Ok(resp.result.unwrap_or(serde_json::Value::Null))
+    } else {
+        let err = resp.error.map(|e| e.message).unwrap_or_else(|| "unknown error".to_string());
+        bail!("{action}: {err}")
+    }
+}
+
 // ── Main ────────────────────────────────────────────────────────────
 
 #[tokio::main]
@@ -531,7 +543,9 @@ async fn main() -> Result<()> {
             around,
             context,
         } => {
+            let nomen = build_nomen(&config).await?;
             cmd_messages(
+                &nomen,
                 source.as_deref(),
                 channel.as_deref(),
                 sender.as_deref(),
@@ -549,9 +563,9 @@ async fn main() -> Result<()> {
             older_than,
             tier,
         } => {
+            let nomen = build_nomen_with_relay(&config, &resolved).await?;
             cmd_consolidate(
-                &config,
-                &resolved,
+                &nomen,
                 min_messages,
                 batch_size,
                 dry_run,
@@ -570,15 +584,8 @@ async fn main() -> Result<()> {
             min_members,
             namespace_depth,
         } => {
-            cmd_cluster(
-                &config,
-                &resolved,
-                dry_run,
-                prefix,
-                min_members,
-                namespace_depth,
-            )
-            .await?;
+            let nomen = build_nomen(&config).await?;
+            cmd_cluster(&nomen, dry_run, prefix, min_members, namespace_depth).await?;
         }
         Command::Prune { days, dry_run } => {
             let nomen = build_nomen(&config).await?;
@@ -669,11 +676,15 @@ async fn cmd_list_relay(relay_url: &str, nsecs: &[String], named: bool) -> Resul
 
 async fn cmd_list_local(nomen: &Nomen, ephemeral: bool, stats: bool) -> Result<()> {
     if stats {
-        let (total, _named_count, pending) = nomen.count_memories().await?;
-        println!("\n{}\n{}", "Memory Statistics".bold(), "═".repeat(40));
-        println!("  Named memories: {}", total);
-        println!("  Ephemeral (pending): {}", pending.to_string().yellow());
-        println!();
+        let result = cli_dispatch(nomen, "memory.list", &json!({"stats": true, "limit": 0})).await?;
+        if let Some(s) = result.get("stats") {
+            let total = s["total"].as_u64().unwrap_or(0);
+            let pending = s["pending"].as_u64().unwrap_or(0);
+            println!("\n{}\n{}", "Memory Statistics".bold(), "═".repeat(40));
+            println!("  Named memories: {}", total);
+            println!("  Ephemeral (pending): {}", pending.to_string().yellow());
+            println!();
+        }
         return Ok(());
     }
 
@@ -738,14 +749,17 @@ fn cmd_config(relay: &str, nsecs: &[String]) {
 
 async fn cmd_sync(nomen: &Nomen) -> Result<()> {
     println!("Connecting to relay...");
-    let report = nomen.sync().await?;
+    let result = cli_dispatch(nomen, "memory.sync", &json!({})).await?;
+    let stored = result["stored"].as_u64().unwrap_or(0);
+    let skipped = result["skipped"].as_u64().unwrap_or(0);
+    let errors = result["errors"].as_u64().unwrap_or(0);
     println!(
         "Sync complete: {} stored, {} skipped (already up to date)",
-        report.stored.to_string().green(),
-        report.skipped
+        stored.to_string().green(),
+        skipped
     );
-    if report.errors > 0 {
-        println!("  {} errors during sync", report.errors.to_string().red());
+    if errors > 0 {
+        println!("  {} errors during sync", errors.to_string().red());
     }
     Ok(())
 }
@@ -762,17 +776,16 @@ async fn cmd_store(
 ) -> Result<()> {
     println!("Publishing to relay...");
 
-    let mem = NewMemory {
-        topic: topic.to_string(),
-        summary: summary.to_string(),
-        detail: detail.to_string(),
-        tier: tier.to_string(),
-        confidence,
-        source: Some("cli".to_string()),
-        model: Some("human/manual".to_string()),
-    };
+    let params = json!({
+        "topic": topic,
+        "summary": summary,
+        "detail": detail,
+        "visibility": tier,
+        "confidence": confidence,
+    });
 
-    let d_tag = nomen.store(mem).await?;
+    let result = cli_dispatch(nomen, "memory.put", &params).await?;
+    let d_tag = result["d_tag"].as_str().unwrap_or("");
 
     println!(
         "{} stored: {} [{}]",
@@ -792,7 +805,15 @@ async fn cmd_delete(nomen: &Nomen, topic: Option<&str>, event_id: Option<&str>) 
         bail!("Provide either a topic or --id <event-id>");
     }
 
-    nomen.delete(topic, event_id).await?;
+    let mut params = json!({});
+    if let Some(topic) = topic {
+        params["topic"] = json!(topic);
+    }
+    if let Some(id) = event_id {
+        params["id"] = json!(id);
+    }
+
+    cli_dispatch(nomen, "memory.delete", &params).await?;
 
     if let Some(topic) = topic {
         println!("{} Memory with topic: {}", "Deleted.".red().bold(), topic);
@@ -838,25 +859,29 @@ async fn cmd_search(
     graph_expand: bool,
     max_hops: usize,
 ) -> Result<()> {
-    let opts = search::SearchOptions {
-        query: query.to_string(),
-        tier: tier.map(|t| t.to_string()),
-        allowed_scopes: None,
-        limit,
-        vector_weight,
-        text_weight,
-        min_confidence: None,
-        aggregate,
-        graph_expand,
-        max_hops,
-    };
+    let mut params = json!({
+        "query": query,
+        "limit": limit,
+        "retrieval": {
+            "vector_weight": vector_weight,
+            "text_weight": text_weight,
+            "aggregate": aggregate,
+            "graph_expand": graph_expand,
+            "max_hops": max_hops,
+        }
+    });
+    if let Some(tier) = tier {
+        params["visibility"] = json!(tier);
+    }
 
-    let results = nomen.search(opts).await?;
+    let result = cli_dispatch(nomen, "memory.search", &params).await?;
+    let results = result["results"].as_array();
 
-    if results.is_empty() {
+    if results.map(|r| r.is_empty()).unwrap_or(true) {
         println!("No results found for: {query}");
         return Ok(());
     }
+    let results = results.unwrap();
 
     println!(
         "\n{} for \"{}\"\n{}",
@@ -865,51 +890,56 @@ async fn cmd_search(
         "═".repeat(60)
     );
 
-    for (i, result) in results.iter().enumerate() {
-        let tier_display = format!("[{}]", result.tier);
-        let tier_colored = match result.tier.as_str() {
+    for (i, r) in results.iter().enumerate() {
+        let vis = r["visibility"].as_str().unwrap_or("public");
+        let tier_display = format!("[{}]", vis);
+        let tier_colored = match vis {
             "public" => tier_display.green(),
-            "personal" | "internal" | "private" => tier_display.red(),
+            "personal" | "internal" => tier_display.red(),
             _ => tier_display.yellow(),
         };
 
-        let match_indicator = match result.match_type {
-            search::MatchType::Hybrid => " [hybrid]",
-            search::MatchType::Vector => " [vector]",
-            search::MatchType::Text => " [text]",
-            search::MatchType::Graph => {
-                if let Some(ref edge) = result.graph_edge {
-                    // We'll format this below
-                    match edge.as_str() {
-                        "contradicts" => " [graph:contradicts]",
-                        "mentions" => " [graph:mentions]",
-                        "references" => " [graph:references]",
-                        "consolidated_from" => " [graph:consolidated]",
-                        _ => " [graph]",
-                    }
-                } else {
-                    " [graph]"
-                }
-            }
+        let match_type = r["match_type"].as_str().unwrap_or("");
+        let graph_edge = r["graph_edge"].as_str();
+        let match_indicator = match match_type {
+            "graph" => match graph_edge {
+                Some("contradicts") => " [graph:contradicts]",
+                Some("mentions") => " [graph:mentions]",
+                Some("references") => " [graph:references]",
+                Some("consolidated_from") => " [graph:consolidated]",
+                _ => " [graph]",
+            },
+            other => match other {
+                "hybrid" => " [hybrid]",
+                "vector" => " [vector]",
+                "text" => " [text]",
+                _ => "",
+            },
         };
 
-        let contradicts_prefix = if result.contradicts {
+        let contradicts = r["contradicts"].as_bool().unwrap_or(false);
+        let contradicts_prefix = if contradicts {
             format!("{} ", "[CONTRADICTS]".red().bold())
         } else {
             String::new()
         };
 
+        let topic = r["topic"].as_str().unwrap_or("");
+        let confidence = r["confidence"].as_f64().unwrap_or(0.0);
+        let summary = r["summary"].as_str().unwrap_or("");
+        let created_at = r["created_at"].as_str().unwrap_or("");
+
         println!(
-            "\n{}. {} {}{} (confidence: {}){}",
+            "\n{}. {} {}{} (confidence: {:.2}){}",
             i + 1,
             tier_colored,
             contradicts_prefix,
-            result.topic.bold(),
-            result.confidence,
+            topic.bold(),
+            confidence,
             match_indicator.dimmed()
         );
-        println!("   {}", result.summary);
-        println!("   Created: {}", format_timestamp(result.created_at));
+        println!("   {}", summary);
+        println!("   Created: {}", created_at);
     }
 
     println!("\n{}: {} results\n", "Found".bold(), results.len());
@@ -919,15 +949,17 @@ async fn cmd_search(
 // ── Command: embed ─────────────────────────────────────────────────
 
 async fn cmd_embed(nomen: &Nomen, limit: usize) -> Result<()> {
-    let report = nomen.embed(limit).await?;
+    let result = cli_dispatch(nomen, "memory.embed", &json!({"limit": limit})).await?;
+    let total = result["total"].as_u64().unwrap_or(0);
+    let embedded = result["embedded"].as_u64().unwrap_or(0);
 
-    if report.total == 0 {
+    if total == 0 {
         println!("All memories already have embeddings.");
     } else {
         println!(
             "{}: {} memories embedded",
             "Done".green().bold(),
-            report.embedded
+            embedded
         );
     }
 
@@ -945,15 +977,14 @@ async fn cmd_group(nomen: &Nomen, action: GroupAction) -> Result<()> {
             nostr_group,
             relay,
         } => {
-            nomen
-                .group_create(
-                    &id,
-                    &name,
-                    &members,
-                    nostr_group.as_deref(),
-                    relay.as_deref(),
-                )
-                .await?;
+            let params = json!({
+                "id": id,
+                "name": name,
+                "members": members,
+                "nostr_group": nostr_group,
+                "relay": relay,
+            });
+            cli_dispatch(nomen, "group.create", &params).await?;
             println!(
                 "{} group: {} ({})",
                 "Created".green().bold(),
@@ -965,63 +996,76 @@ async fn cmd_group(nomen: &Nomen, action: GroupAction) -> Result<()> {
             }
         }
         GroupAction::List => {
-            let all = nomen.groups().list();
+            let result = cli_dispatch(nomen, "group.list", &json!({})).await?;
+            let groups = result["groups"].as_array();
 
-            if all.is_empty() {
+            if groups.map(|g| g.is_empty()).unwrap_or(true) {
                 println!("No groups configured.");
                 return Ok(());
             }
+            let groups = groups.unwrap();
 
             println!("\n{}\n{}", "Groups".bold(), "═".repeat(60));
 
-            for group in all {
-                let parent_display = if group.parent.is_empty() {
+            for group in groups {
+                let id = group["id"].as_str().unwrap_or("");
+                let name = group["name"].as_str().unwrap_or("");
+                let parent = group["parent"].as_str().unwrap_or("");
+                let nostr_group = group["nostr_group"].as_str().unwrap_or("");
+                let member_count = group["members"].as_array().map(|m| m.len()).unwrap_or(0);
+
+                let parent_display = if parent.is_empty() {
                     String::new()
                 } else {
-                    format!(" (parent: {})", group.parent)
+                    format!(" (parent: {})", parent)
                 };
-                let nostr_display = if group.nostr_group.is_empty() {
+                let nostr_display = if nostr_group.is_empty() {
                     String::new()
                 } else {
-                    format!(" [NIP-29: {}]", group.nostr_group)
+                    format!(" [NIP-29: {}]", nostr_group)
                 };
 
                 println!(
                     "\n  {} — {}{}{}",
-                    group.id.bold(),
-                    group.name,
+                    id.bold(),
+                    name,
                     parent_display,
                     nostr_display.dimmed()
                 );
                 println!(
                     "    Members: {}",
-                    if group.members.is_empty() {
+                    if member_count == 0 {
                         "(none)".to_string()
                     } else {
-                        format!("{} member(s)", group.members.len())
+                        format!("{} member(s)", member_count)
                     }
                 );
             }
             println!();
         }
         GroupAction::Members { id } => {
-            let members = nomen.group_members(&id).await?;
+            let result = cli_dispatch(nomen, "group.members", &json!({"id": id})).await?;
+            let members = result["members"].as_array();
             println!("\n{} members of {}:\n", "Showing".bold(), id.bold());
-            if members.is_empty() {
-                println!("  (no members)");
-            } else {
-                for m in &members {
-                    println!("  {m}");
+            if let Some(members) = members {
+                if members.is_empty() {
+                    println!("  (no members)");
+                } else {
+                    for m in members {
+                        println!("  {}", m.as_str().unwrap_or(""));
+                    }
                 }
+            } else {
+                println!("  (no members)");
             }
             println!();
         }
         GroupAction::AddMember { id, npub } => {
-            nomen.group_add_member(&id, &npub).await?;
+            cli_dispatch(nomen, "group.add_member", &json!({"id": id, "npub": npub})).await?;
             println!("{} {} to group {}", "Added".green().bold(), npub, id.bold());
         }
         GroupAction::RemoveMember { id, npub } => {
-            nomen.group_remove_member(&id, &npub).await?;
+            cli_dispatch(nomen, "group.remove_member", &json!({"id": id, "npub": npub})).await?;
             println!(
                 "{} {} from group {}",
                 "Removed".red().bold(),
@@ -1043,17 +1087,15 @@ async fn cmd_ingest(
     sender: &str,
     channel: Option<&str>,
 ) -> Result<()> {
-    let msg = ingest::RawMessage {
-        source: source.to_string(),
-        source_id: None,
-        sender: sender.to_string(),
-        channel: channel.map(|c| c.to_string()),
-        content: content.to_string(),
-        metadata: None,
-        created_at: None,
-    };
+    let params = json!({
+        "content": content,
+        "source": source,
+        "sender": sender,
+        "channel": channel,
+    });
 
-    let id = nomen.ingest_message(msg).await?;
+    let result = cli_dispatch(nomen, "message.ingest", &params).await?;
+    let id = result["id"].as_str().unwrap_or("");
     println!(
         "{} message from {} [{}]{}",
         "Ingested".green().bold(),
@@ -1068,6 +1110,7 @@ async fn cmd_ingest(
 // ── Command: messages ───────────────────────────────────────────────
 
 async fn cmd_messages(
+    nomen: &Nomen,
     source: Option<&str>,
     channel: Option<&str>,
     sender: Option<&str>,
@@ -1076,36 +1119,47 @@ async fn cmd_messages(
     around: Option<&str>,
     context_count: usize,
 ) -> Result<()> {
-    let db_handle = db::init_db().await?;
-
-    let messages = if let Some(source_id) = around {
-        db::query_messages_around(&db_handle, source_id, context_count).await?
+    let result = if let Some(source_id) = around {
+        let params = json!({
+            "source_id": source_id,
+            "before": context_count,
+            "after": context_count,
+        });
+        cli_dispatch(nomen, "message.context", &params).await?
     } else {
-        let opts = ingest::MessageQuery {
-            source: source.map(|s| s.to_string()),
-            channel: channel.map(|c| c.to_string()),
-            sender: sender.map(|s| s.to_string()),
-            since: since.map(|s| s.to_string()),
-            limit: Some(limit),
-            consolidated_only: false,
-        };
-        ingest::get_messages(&db_handle, &opts).await?
+        let params = json!({
+            "source": source,
+            "channel": channel,
+            "sender": sender,
+            "since": since,
+            "limit": limit,
+        });
+        cli_dispatch(nomen, "message.list", &params).await?
     };
 
-    if messages.is_empty() {
+    let messages = result["messages"].as_array();
+    if messages.map(|m| m.is_empty()).unwrap_or(true) {
         println!("No messages found.");
         return Ok(());
     }
+    let messages = messages.unwrap();
 
     println!("\n{}\n{}", "Raw Messages".bold(), "═".repeat(60));
 
-    for msg in &messages {
-        let channel_display = if msg.channel.is_empty() {
+    for msg in messages {
+        let msg_source = msg["source"].as_str().unwrap_or("");
+        let msg_sender = msg["sender"].as_str().unwrap_or("");
+        let msg_channel = msg["channel"].as_str().unwrap_or("");
+        let msg_content = msg["content"].as_str().unwrap_or("");
+        let msg_created = msg["created_at"].as_str().unwrap_or("");
+        let consolidated = msg["consolidated"].as_bool().unwrap_or(false);
+
+        let channel_display = if msg_channel.is_empty() {
             String::new()
         } else {
-            format!(" #{}", msg.channel)
+            format!(" #{}", msg_channel)
         };
-        let consolidated_marker = if msg.consolidated {
+        let consolidated_marker = if consolidated {
             " [consolidated]".dimmed().to_string()
         } else {
             String::new()
@@ -1113,13 +1167,13 @@ async fn cmd_messages(
 
         println!(
             "\n  [{}] {}{}{}\n    {}",
-            msg.source,
-            msg.sender.bold(),
+            msg_source,
+            msg_sender.bold(),
             channel_display,
             consolidated_marker,
-            msg.content
+            msg_content
         );
-        println!("    {}", msg.created_at.dimmed());
+        println!("    {}", msg_created.dimmed());
     }
 
     println!("\n{}: {} messages\n", "Total".bold(), messages.len());
@@ -1129,57 +1183,13 @@ async fn cmd_messages(
 // ── Command: consolidate ────────────────────────────────────────────
 
 async fn cmd_consolidate(
-    config: &Config,
-    resolved: &ResolvedConfig,
+    nomen: &Nomen,
     min_messages: usize,
     batch_size: usize,
     dry_run: bool,
     older_than: Option<String>,
     tier: Option<String>,
 ) -> Result<()> {
-    let embedder = config.build_embedder();
-    let db_handle = db::init_db_with_dimensions(config.embedding_dimensions()).await?;
-
-    // Build relay manager for NIP-09 deletion events
-    let relay_manager = if !resolved.nsecs.is_empty() && !dry_run {
-        let (all_keys, _) = parse_keys(&resolved.nsecs)?;
-        let mgr = build_relay_manager(&resolved.relay, &all_keys[0]);
-        mgr.connect().await.ok();
-        Some(mgr)
-    } else {
-        None
-    };
-
-    // Build LLM provider from config
-    let llm_provider: Box<dyn consolidate::LlmProvider> = config
-        .consolidation_llm_config()
-        .and_then(|c| consolidate::OpenAiLlmProvider::from_config(&c))
-        .map(|p| Box::new(p) as Box<dyn consolidate::LlmProvider>)
-        .unwrap_or_else(|| Box::new(consolidate::NoopLlmProvider));
-
-    let author_pubkey = relay_manager
-        .as_ref()
-        .map(|mgr| mgr.public_key().to_hex())
-        .or_else(|| {
-            config
-                .all_nsecs()
-                .first()
-                .and_then(|nsec| nostr_sdk::SecretKey::from_bech32(nsec).ok())
-                .map(|sk| nostr_sdk::Keys::new(sk).public_key().to_hex())
-        });
-    let entity_extractor = entities::build_entity_extractor(config);
-
-    let consolidation_config = consolidate::ConsolidationConfig {
-        batch_size,
-        min_messages,
-        llm_provider,
-        entity_extractor,
-        dry_run,
-        older_than,
-        tier,
-        author_pubkey,
-    };
-
     if dry_run {
         println!(
             "{} Running consolidation pipeline...",
@@ -1189,15 +1199,22 @@ async fn cmd_consolidate(
         println!("Running consolidation pipeline...");
     }
 
-    let report = consolidate::consolidate(
-        &db_handle,
-        embedder.as_ref(),
-        &consolidation_config,
-        relay_manager.as_ref(),
-    )
-    .await?;
+    let params = json!({
+        "min_messages": min_messages,
+        "batch_size": batch_size,
+        "dry_run": dry_run,
+        "older_than": older_than,
+        "tier": tier,
+    });
 
-    if report.memories_created == 0 {
+    let result = cli_dispatch(nomen, "memory.consolidate", &params).await?;
+
+    let memories_created = result["memories_created"].as_u64().unwrap_or(0);
+    let messages_processed = result["messages_processed"].as_u64().unwrap_or(0);
+    let events_published = result["events_published"].as_u64().unwrap_or(0);
+    let events_deleted = result["events_deleted"].as_u64().unwrap_or(0);
+
+    if memories_created == 0 {
         println!("Nothing to consolidate (need at least {min_messages} unconsolidated messages).");
     } else {
         let prefix = if dry_run {
@@ -1207,35 +1224,26 @@ async fn cmd_consolidate(
         };
         println!(
             "{}: {} messages → {} memories",
-            prefix, report.messages_processed, report.memories_created
+            prefix, messages_processed, memories_created
         );
-        if report.events_published > 0 {
+        if events_published > 0 {
             println!(
                 "  Published {} memories to relay (kind 31234)",
-                report.events_published
+                events_published
             );
         }
-        if report.events_deleted > 0 {
+        if events_deleted > 0 {
             println!(
                 "  Deleted {} ephemeral events from relay (NIP-09)",
-                report.events_deleted
+                events_deleted
             );
         }
-        if !report.channels.is_empty() {
-            println!("  Channels: {}", report.channels.join(", "));
+        if let Some(channels) = result["channels"].as_array() {
+            let channel_strs: Vec<&str> = channels.iter().filter_map(|c| c.as_str()).collect();
+            if !channel_strs.is_empty() {
+                println!("  Channels: {}", channel_strs.join(", "));
+            }
         }
-        for group in &report.groups {
-            println!(
-                "  {} → {} ({} messages)",
-                group.key.dimmed(),
-                group.topic.bold(),
-                group.message_count
-            );
-        }
-    }
-
-    if let Some(ref mgr) = relay_manager {
-        mgr.disconnect().await;
     }
 
     Ok(())
@@ -1248,47 +1256,53 @@ async fn cmd_entities(
     kind_filter: Option<&str>,
     show_relations: bool,
 ) -> Result<()> {
-    if kind_filter.is_some() && entities::EntityKind::from_str(kind_filter.unwrap()).is_none() {
-        bail!(
-            "Unknown entity kind: {}. Valid kinds: person, project, concept, place, organization, technology",
-            kind_filter.unwrap()
-        );
-    }
+    let params = json!({ "kind": kind_filter });
+    let result = cli_dispatch(nomen, "entity.list", &params).await?;
+    let entities = result["entities"].as_array();
 
-    let entity_list = nomen.entities(kind_filter).await?;
-
-    if entity_list.is_empty() {
+    if entities.map(|e| e.is_empty()).unwrap_or(true) {
         println!("No entities found.");
         return Ok(());
     }
+    let entities = entities.unwrap();
 
     println!("\n{}\n{}", "Entities".bold(), "═".repeat(60));
 
-    for entity in &entity_list {
-        println!("\n  {} [{}]", entity.name.bold(), entity.kind.yellow());
-        println!("    Created: {}", entity.created_at.dimmed());
+    for entity in entities {
+        let name = entity["name"].as_str().unwrap_or("");
+        let kind = entity["kind"].as_str().unwrap_or("");
+        let created_at = entity["created_at"].as_str().unwrap_or("");
+        println!("\n  {} [{}]", name.bold(), kind.yellow());
+        println!("    Created: {}", created_at.dimmed());
     }
 
-    println!("\n{}: {} entities", "Total".bold(), entity_list.len());
+    println!("\n{}: {} entities", "Total".bold(), entities.len());
 
     if show_relations {
-        let relationships = nomen.entity_relationships(None).await?;
-        if relationships.is_empty() {
+        let rel_result = cli_dispatch(nomen, "entity.relationships", &json!({})).await?;
+        let relationships = rel_result["relationships"].as_array();
+
+        if relationships.map(|r| r.is_empty()).unwrap_or(true) {
             println!("\nNo relationships found.");
         } else {
+            let relationships = relationships.unwrap();
             println!("\n{}\n{}", "Relationships".bold(), "═".repeat(60));
-            for rel in &relationships {
-                let detail_str = if rel.detail.is_empty() {
+            for rel in relationships {
+                let from_name = rel["from_name"].as_str().unwrap_or("");
+                let relation = rel["relation"].as_str().unwrap_or("");
+                let to_name = rel["to_name"].as_str().unwrap_or("");
+                let detail = rel["detail"].as_str().unwrap_or("");
+                let detail_str = if detail.is_empty() {
                     String::new()
                 } else {
-                    format!(" ({})", rel.detail.dimmed())
+                    format!(" ({})", detail.dimmed())
                 };
                 println!(
                     "  {} {} {} {}{}",
-                    rel.from_name.bold(),
+                    from_name.bold(),
                     "→".dimmed(),
-                    rel.relation.cyan(),
-                    rel.to_name.bold(),
+                    relation.cyan(),
+                    to_name.bold(),
                     detail_str,
                 );
             }
@@ -1307,57 +1321,40 @@ async fn cmd_entities(
 // ── Command: cluster ────────────────────────────────────────────────
 
 async fn cmd_cluster(
-    config: &Config,
-    _resolved: &ResolvedConfig,
+    nomen: &Nomen,
     dry_run: bool,
     prefix: Option<String>,
     min_members: usize,
     namespace_depth: usize,
 ) -> Result<()> {
-    let embedder = config.build_embedder();
-    let db_handle = db::init_db_with_dimensions(config.embedding_dimensions()).await?;
-
-    // Build LLM provider — reuse consolidation LLM config
-    let llm_provider: Box<dyn nomen::cluster::ClusterLlmProvider> = config
-        .consolidation_llm_config()
-        .and_then(|c| nomen::cluster::OpenAiClusterLlmProvider::from_config(&c))
-        .map(|p| Box::new(p) as Box<dyn nomen::cluster::ClusterLlmProvider>)
-        .unwrap_or_else(|| Box::new(nomen::cluster::NoopClusterLlmProvider));
-
-    // Author pubkey for d-tag construction
-    let author_pubkey = config
-        .all_nsecs()
-        .first()
-        .and_then(|nsec| nostr_sdk::SecretKey::from_bech32(nsec).ok())
-        .map(|sk| nostr_sdk::Keys::new(sk).public_key().to_hex());
-
-    let cluster_config = nomen::cluster::ClusterConfig {
-        min_members,
-        namespace_depth,
-        llm_provider,
-        dry_run,
-        prefix_filter: prefix.clone(),
-        author_pubkey,
-    };
-
     if dry_run {
         println!("{} Running cluster fusion...", "[DRY RUN]".yellow().bold());
     } else {
         println!("Running cluster fusion...");
     }
 
-    let report =
-        nomen::cluster::run_cluster_fusion(&db_handle, embedder.as_ref(), &cluster_config, None)
-            .await?;
+    let params = json!({
+        "prefix": prefix,
+        "min_members": min_members,
+        "namespace_depth": namespace_depth,
+        "dry_run": dry_run,
+    });
 
-    if report.clusters_found == 0 {
+    let result = cli_dispatch(nomen, "memory.cluster", &params).await?;
+
+    let clusters_found = result["clusters_found"].as_u64().unwrap_or(0);
+    let clusters_synthesized = result["clusters_synthesized"].as_u64().unwrap_or(0);
+    let memories_scanned = result["memories_scanned"].as_u64().unwrap_or(0);
+    let edges_created = result["edges_created"].as_u64().unwrap_or(0);
+
+    if clusters_found == 0 {
         println!("No clusters found (need at least {min_members} memories per namespace prefix).");
-        if report.memories_scanned == 0 {
+        if memories_scanned == 0 {
             println!("  No named memories in the database. Run `nomen consolidate` first.");
         } else {
             println!(
                 "  Scanned {} memories at namespace depth {}.",
-                report.memories_scanned, namespace_depth
+                memories_scanned, namespace_depth
             );
         }
     } else {
@@ -1370,26 +1367,25 @@ async fn cmd_cluster(
         println!(
             "{}: {} clusters from {} memories",
             prefix_display,
-            if dry_run {
-                report.clusters_found
-            } else {
-                report.clusters_synthesized
-            },
-            report.memories_scanned
+            if dry_run { clusters_found } else { clusters_synthesized },
+            memories_scanned
         );
 
-        if !dry_run && report.edges_created > 0 {
-            println!("  Created {} 'summarizes' edges", report.edges_created);
+        if !dry_run && edges_created > 0 {
+            println!("  Created {} 'summarizes' edges", edges_created);
         }
 
-        for detail in &report.cluster_details {
-            println!(
-                "\n  {} ({} members)",
-                detail.prefix.bold(),
-                detail.member_count
-            );
-            for topic in &detail.member_topics {
-                println!("    - {}", topic.dimmed());
+        if let Some(details) = result["cluster_details"].as_array() {
+            for detail in details {
+                let pfx = detail["prefix"].as_str().unwrap_or("");
+                let member_count = detail["member_count"].as_u64().unwrap_or(0);
+                println!("\n  {} ({} members)", pfx.bold(), member_count);
+                if let Some(topics) = detail["member_topics"].as_array() {
+                    for topic in topics {
+                        let t = topic.as_str().unwrap_or("");
+                        println!("    - {}", t.dimmed());
+                    }
+                }
             }
         }
     }
@@ -1411,57 +1407,61 @@ async fn cmd_prune(nomen: &Nomen, days: u64, dry_run: bool) -> Result<()> {
         println!("Pruning memories (older than {} days)...", days);
     }
 
-    let report = nomen.prune(days, dry_run).await?;
+    let result = cli_dispatch(nomen, "memory.prune", &json!({"days": days, "dry_run": dry_run})).await?;
 
-    if report.pruned.is_empty() {
-        println!("No memories eligible for pruning.");
-    } else {
-        println!("\n{} memories eligible for pruning:", report.pruned.len());
-        for mem in &report.pruned {
-            let confidence_str = mem
-                .confidence
-                .map(|c| format!("{c:.2}"))
-                .unwrap_or("?".to_string());
-            let access_str = mem
-                .access_count
-                .map(|c| c.to_string())
-                .unwrap_or("0".to_string());
-            println!(
-                "  {} (confidence: {}, accesses: {}, created: {})",
-                mem.topic.bold(),
-                confidence_str,
-                access_str,
-                &mem.created_at[..10]
-            );
-        }
+    let memories_pruned = result["memories_pruned"].as_u64().unwrap_or(0);
+    let raw_messages_pruned = result["raw_messages_pruned"].as_u64().unwrap_or(0);
 
-        if dry_run {
-            println!(
-                "\n{}: Would prune {} memories",
-                "[DRY RUN]".yellow().bold(),
-                report.memories_pruned
-            );
+    if let Some(pruned) = result["pruned"].as_array() {
+        if pruned.is_empty() {
+            println!("No memories eligible for pruning.");
         } else {
-            println!(
-                "\n{}: {} memories pruned",
-                "Pruned".green().bold(),
-                report.memories_pruned
-            );
+            println!("\n{} memories eligible for pruning:", pruned.len());
+            for mem in pruned {
+                let topic = mem["topic"].as_str().unwrap_or("");
+                let confidence = mem["confidence"].as_f64().map(|c| format!("{c:.2}")).unwrap_or_else(|| "?".to_string());
+                let access_count = mem["access_count"].as_u64().unwrap_or(0);
+                let created_at = mem["created_at"].as_str().unwrap_or("");
+                let date = if created_at.len() >= 10 { &created_at[..10] } else { created_at };
+                println!(
+                    "  {} (confidence: {}, accesses: {}, created: {})",
+                    topic.bold(),
+                    confidence,
+                    access_count,
+                    date
+                );
+            }
+
+            if dry_run {
+                println!(
+                    "\n{}: Would prune {} memories",
+                    "[DRY RUN]".yellow().bold(),
+                    memories_pruned
+                );
+            } else {
+                println!(
+                    "\n{}: {} memories pruned",
+                    "Pruned".green().bold(),
+                    memories_pruned
+                );
+            }
         }
+    } else {
+        println!("No memories eligible for pruning.");
     }
 
-    if report.raw_messages_pruned > 0 {
+    if raw_messages_pruned > 0 {
         if dry_run {
             println!(
                 "{}: Would also prune {} consolidated raw messages",
                 "[DRY RUN]".yellow().bold(),
-                report.raw_messages_pruned
+                raw_messages_pruned
             );
         } else {
             println!(
                 "{}: {} consolidated raw messages pruned",
                 "Pruned".green().bold(),
-                report.raw_messages_pruned
+                raw_messages_pruned
             );
         }
     }
@@ -1477,23 +1477,25 @@ async fn cmd_send(
     content: &str,
     channel: Option<&str>,
 ) -> Result<()> {
-    let target = send::parse_recipient(recipient)?;
-    let opts = send::SendOptions {
-        target,
-        content: content.to_string(),
-        channel: channel.map(String::from),
-        metadata: None,
-    };
+    let params = json!({
+        "recipient": recipient,
+        "content": content,
+        "channel": channel,
+    });
 
-    let result = nomen.send(opts).await?;
+    let result = cli_dispatch(nomen, "message.send", &params).await?;
+    let event_id = result["event_id"].as_str().unwrap_or("");
+    let summary = result["summary"].as_str().unwrap_or("");
 
     println!(
         "{} to {}: event_id={}",
         "Sent".green().bold(),
         recipient.bold(),
-        result.event_id
+        event_id
     );
-    println!("  {}", result.summary());
+    if !summary.is_empty() {
+        println!("  {}", summary);
+    }
 
     Ok(())
 }

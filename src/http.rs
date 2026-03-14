@@ -98,22 +98,18 @@ pub async fn serve(
     Ok(())
 }
 
-// ── Dispatch helpers ─────────────────────────────────────────────
-
-/// Call dispatch and return the ApiResponse as JSON.
-async fn call_dispatch(state: &AppState, action: &str, params: &Value) -> impl IntoResponse {
-    let resp =
-        crate::api::dispatch(&state.nomen, &state.default_channel, action, params).await;
-    Json(serde_json::to_value(&resp).unwrap_or_default())
-}
-
 // ── Dispatch endpoint ─────────────────────────────────────────────
 
 async fn api_dispatch(
     State(state): State<SharedState>,
     Json(req): Json<crate::api::types::ApiRequest>,
 ) -> impl IntoResponse {
-    call_dispatch(&state, &req.action, &req.params).await
+    let request_id = req.meta.as_ref().and_then(|m| m.request_id.clone());
+    let resp =
+        crate::api::dispatch(&state.nomen, &state.default_channel, &req.action, &req.params)
+            .await
+            .with_request_id(request_id);
+    Json(serde_json::to_value(&resp).unwrap_or_default())
 }
 
 async fn api_health(State(state): State<SharedState>) -> impl IntoResponse {

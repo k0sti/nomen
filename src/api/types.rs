@@ -26,6 +26,8 @@ pub struct ApiErrorBody {
 #[derive(Debug, Serialize)]
 pub struct ApiMeta {
     pub version: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub request_id: Option<String>,
 }
 
 impl ApiResponse {
@@ -34,7 +36,16 @@ impl ApiResponse {
             ok: true,
             result: Some(result),
             error: None,
-            meta: ApiMeta { version: "v2" },
+            meta: ApiMeta { version: "v2", request_id: None },
+        }
+    }
+
+    pub fn success_with_request_id(result: Value, request_id: Option<String>) -> Self {
+        Self {
+            ok: true,
+            result: Some(result),
+            error: None,
+            meta: ApiMeta { version: "v2", request_id },
         }
     }
 
@@ -46,8 +57,26 @@ impl ApiResponse {
                 code: err.code().to_string(),
                 message: err.message().to_string(),
             }),
-            meta: ApiMeta { version: "v2" },
+            meta: ApiMeta { version: "v2", request_id: None },
         }
+    }
+
+    pub fn error_with_request_id(err: ApiError, request_id: Option<String>) -> Self {
+        Self {
+            ok: false,
+            result: None,
+            error: Some(ApiErrorBody {
+                code: err.code().to_string(),
+                message: err.message().to_string(),
+            }),
+            meta: ApiMeta { version: "v2", request_id },
+        }
+    }
+
+    /// Set the request_id on this response (pass-through from request).
+    pub fn with_request_id(mut self, request_id: Option<String>) -> Self {
+        self.meta.request_id = request_id;
+        self
     }
 }
 
@@ -58,6 +87,14 @@ pub struct ApiRequest {
     pub action: String,
     #[serde(default)]
     pub params: Value,
+    #[serde(default)]
+    pub meta: Option<RequestMeta>,
+}
+
+/// Optional metadata on incoming requests.
+#[derive(Debug, Deserialize)]
+pub struct RequestMeta {
+    pub request_id: Option<String>,
 }
 
 // ── Retrieval tuning ─────────────────────────────────────────────────

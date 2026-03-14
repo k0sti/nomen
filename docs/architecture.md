@@ -125,13 +125,17 @@ Cluster memories are replaceable by d-tag (refreshed on next run). Tier is deriv
 
 Configured via `[memory.cluster]` in config.toml. CLI: `nomen cluster [--dry-run] [--prefix]`.
 
-## Memory Tiers
+## Memory Tiers (5-level visibility model)
 
-| Tier | Scope | Encryption | Access |
-|------|-------|-----------|--------|
-| Public | `""` | None | All agents on relay |
-| Group | `group:<id>` | None (relay auth) | Group members |
-| Private | `npub:<hex>` | NIP-44 | Owning agent only |
+| Visibility | Scope | Encryption | Access |
+|------------|-------|-----------|--------|
+| Public | `""` (empty) | None | All agents on relay |
+| Group | NIP-29 group id | None (relay auth) | Group members |
+| Circle | Deterministic participant-set hash | NIP-44 to participant set | Circle participants (unimplemented) |
+| Personal | Hex pubkey | NIP-44 self-encrypt | Owning agent only |
+| Internal | Hex pubkey | NIP-44 self-encrypt | Agent-only reasoning |
+
+Legacy `private` is accepted on read and normalized to `personal`.
 
 ## Groups
 
@@ -242,19 +246,6 @@ Channel is provider-specific transport/container identity. Examples:
 ### Integration
 
 Host integrations should provide or resolve a `scope` for memory operations. They may also pass a `channel` when ingesting or querying raw message history, but channel/provider details should not be embedded into durable memory d-tags.
-
-## Zeroclaw/OpenClaw Compatibility
-
-Nomen is designed to interoperate with existing agent runtimes that expose a simpler memory API built around `key`, `category`, and optional `session_id` fields.
-
-Compatibility rules:
-
-- `category` is a host organizational bucket, not a Nomen visibility/scope primitive
-- `key` is a host identifier or topic hint, not always a canonical Nomen topic
-- `session_id` is a host compatibility hint for partitioning/filtering, not a canonical scope model
-- memories attach to `scope`; raw messages attach to `channel` and resolve to scope
-
-See `docs/zeroclaw-integration-spec.md` for the full adapter contract.
 
 ## Interfaces
 

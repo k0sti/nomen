@@ -163,6 +163,7 @@ async function publishEvent(event: NostrEvent, timeoutMs = 10000): Promise<strin
 // ── Memory helpers ───────────────────────────────────────────────
 
 function isMemoryEvent(e: NostrEvent): boolean {
+  if (e.kind !== 31234) return false;
   const dTag = e.tags.find(t => t[0] === 'd')?.[1];
   if (!dTag) return false;
   // Exclude config events
@@ -176,33 +177,40 @@ function parseMemory(e: NostrEvent): Memory {
 
   const getTag = (name: string) => e.tags.find(t => t[0] === name)?.[1];
 
+  // Parse v0.2 d-tag: {visibility}:{scope}:{topic}
+  const dTag = getTag('d') || '';
+  const parts = dTag.split(':');
+  const dtag_visibility = parts[0] || '';
+  const dtag_scope = parts.length >= 3 ? parts[1] : '';
+  const dtag_topic = parts.length >= 3 ? parts.slice(2).join(':') : parts.slice(1).join(':');
+
   return {
     id: e.id,
-    d_tag: getTag('d') || '',
-    topic: getTag('snow:topic') || parsed.topic || '',
+    d_tag: dTag,
+    topic: dtag_topic || parsed.topic || '',
     summary: parsed.summary || '',
     detail: parsed.detail || '',
-    visibility: getTag('snow:tier') || parsed.tier || 'public',
-    scope: getTag('snow:scope') || getTag('h') || parsed.scope || '',
-    confidence: parseFloat(getTag('snow:confidence') || String(parsed.confidence || '0.8')),
+    visibility: getTag('visibility') || dtag_visibility || 'public',
+    scope: getTag('scope') || getTag('h') || dtag_scope || '',
+    confidence: parseFloat(getTag('confidence') || String(parsed.confidence || '0.8')),
     source: e.pubkey,
-    model: parsed.model || '',
+    model: getTag('model') || parsed.model || '',
     created_at: new Date(e.created_at * 1000).toISOString(),
-    version: parseInt(getTag('snow:version') || String(parsed.version || '1'), 10),
+    version: parseInt(getTag('version') || String(parsed.version || '1'), 10),
   };
 }
 
 // ── Exported operations ──────────────────────────────────────────
 
 export async function listMemories(_pubkey?: string): Promise<Memory[]> {
-  const events = await requestEvents([{ kinds: [30078], limit: 500 }]);
+  const events = await requestEvents([{ kinds: [31234], limit: 500 }]);
   return events.filter(isMemoryEvent).map(parseMemory);
 }
 
 export function subscribeMemories(_pubkey: string | undefined, callback: (m: Memory) => void): Subscription {
   const relay = getRelay();
   const sub = relay.subscription(
-    [{ kinds: [30078], since: Math.floor(Date.now() / 1000) }],
+    [{ kinds: [31234], since: Math.floor(Date.now() / 1000) }],
   ).subscribe({
     next: (resp) => {
       if (resp === 'EOSE') return;
@@ -225,22 +233,34 @@ export async function storeMemory(
   tier: string,
   signer: Signer,
 ): Promise<string> {
-  const dTag = `snow:memory:${tier}:${topic}`;
+  // Build v0.2 d-tag: {visibility}:{scope}:{topic}
+  // For public tier, scope is empty. For personal/internal, scope should be pubkey.
+  const pubkey = await signer.getPublicKey();
+  let visibility = tier;
+  let scope = '';
+  if (tier === 'personal' || tier === 'internal' || tier === 'private') {
+    visibility = tier === 'private' ? 'personal' : tier;
+    scope = pubkey;
+  } else if (tier.startsWith('group:')) {
+    visibility = 'group';
+    scope = tier.slice(6);
+  }
+  const dTag = `${visibility}:${scope}:${topic}`;
+
   const content = JSON.stringify({
-    summary, detail, topic,
-    confidence: 0.8,
-    created_at: Math.floor(Date.now() / 1000),
+    summary, detail,
+    context: null,
   });
 
   const event: EventTemplate = {
-    kind: 30078,
+    kind: 31234,
     created_at: Math.floor(Date.now() / 1000),
     tags: [
       ['d', dTag],
-      ['snow:tier', tier],
-      ['snow:topic', topic],
-      ['snow:confidence', '0.8'],
-      ['snow:version', '1'],
+      ['visibility', visibility],
+      ['scope', scope],
+      ['confidence', '0.8'],
+      ['version', '1'],
     ],
     content,
   };
@@ -251,7 +271,7 @@ export async function storeMemory(
 
 export async function deleteMemory(eventId: string, signer: Signer, dTag?: string): Promise<void> {
   const tags: string[][] = [['e', eventId]];
-  if (dTag) tags.push(['a', `30078:${await signer.getPublicKey()}:${dTag}`]);
+  if (dTag) tags.push(['a', `31234:${await signer.getPublicKey()}:${dTag}`]);
 
   const event: EventTemplate = {
     kind: 5,

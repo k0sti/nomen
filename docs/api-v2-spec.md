@@ -715,6 +715,9 @@ Each canonical operation maps to an MCP tool with the same name and argument sch
 | `message.ingest` | `message_ingest` | |
 | `message.list` | `message_list` | |
 | `message.context` | `message_context` | |
+| `message.send` | `message_send` | |
+| `entity.list` | `entity_list` | |
+| `entity.relationships` | `entity_relationships` | |
 | `memory.consolidate` | `memory_consolidate` | |
 | `memory.cluster` | `memory_cluster` | |
 | `memory.sync` | `memory_sync` | |

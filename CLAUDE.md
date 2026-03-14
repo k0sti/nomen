@@ -1,6 +1,6 @@
 # CLAUDE.md — Nomen Implementation Guide
 
-**Last modified:** 2026-03-12T20:30+02:00
+**Last modified:** 2026-03-14T00:00+02:00
 
 ## Project
 
@@ -18,7 +18,7 @@ These are the canonical specifications. Code must match these.
 ### Design & working docs (`~/Obsidian/vault/Projects/Nomen/`)
 Important design documents, research, RFCs, and audit reports. Less organized than `docs/` but contains critical context. Symlinked at `obsidian/` if available.
 
-**Latest audit:** `03-07 Implementation Audit.md`
+**Latest audit:** `03-14 Full Spec Audit.md`
 New audit reports should be placed here with `MM-DD` prefix and full timestamps (created + modified).
 
 ## Module Map

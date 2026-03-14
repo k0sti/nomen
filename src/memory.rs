@@ -26,40 +26,20 @@ pub struct ParsedMemory {
     pub detail: String,
 }
 
-/// Parse a d-tag into a clean topic string.
+/// Parse a d-tag into a normalized string.
 ///
-/// Supports both v0.1 and v0.2 d-tag formats:
-/// - v0.2: `{visibility}:{context}:{topic}` → returns topic as-is (full d-tag is the identifier)
-/// - v0.1: `snow:memory:{topic}` → extracts topic
-/// - v0.1: `snowclaw:memory:npub:{npub}` → `user:{npub_prefix}`
-/// - v0.1: `snowclaw:memory:group:{id}` → `group:{id}`
-/// - v0.1: `snowclaw:config:{key}` → `config:{key}`
+/// v0.2 format only: `{visibility}:{scope}:{topic}` — returned as-is.
+/// Unrecognized formats are returned verbatim.
 pub fn parse_d_tag(d_tag: &str) -> String {
-    // v0.2 format: starts with a known visibility prefix
-    if is_v2_dtag(d_tag) {
-        return d_tag.to_string();
-    }
-
-    // v0.1 formats
-    if let Some(topic) = d_tag.strip_prefix("snow:memory:") {
-        topic.to_string()
-    } else if let Some(rest) = d_tag.strip_prefix("snowclaw:memory:npub:") {
-        format!("user:{}", &rest[..12.min(rest.len())])
-    } else if let Some(group) = d_tag.strip_prefix("snowclaw:memory:group:") {
-        format!("group:{group}")
-    } else if d_tag.starts_with("snowclaw:config:") {
-        format!("config:{}", d_tag.strip_prefix("snowclaw:config:").unwrap())
-    } else {
-        d_tag.to_string()
-    }
+    d_tag.to_string()
 }
 
-/// Check if a d-tag uses the v0.2 format: `{visibility}:{context}:{topic}`.
+/// Check if a d-tag uses the v0.2 format: `{visibility}:{scope}:{topic}`.
 pub fn is_v2_dtag(d_tag: &str) -> bool {
     let prefix = d_tag.split(':').next().unwrap_or("");
     matches!(
         prefix,
-        "public" | "group" | "circle" | "personal" | "internal" | "private"
+        "public" | "group" | "circle" | "personal" | "internal"
     )
 }
 
@@ -119,28 +99,32 @@ pub fn build_dtag_from_tier(tier: &str, author_pubkey_hex: &str, topic: &str) ->
     }
 }
 
-/// Parse tier from event tags. Checks both new ("tier") and legacy ("snow:tier") tag names.
-/// Also extracts visibility from the v0.2 d-tag format if no tier tag is present.
-/// Normalizes "private" → "personal" (canonical 4-tier model).
+/// Parse tier from event tags.
+///
+/// Reads `visibility` tag first, then falls back to d-tag prefix.
+/// Normalizes "private" → "personal".
 pub fn parse_tier(tags: &Tags) -> String {
-    // Try tier tag first (legacy/compat)
-    let tier_from_tag = get_tag_value(tags, "tier").or_else(|| get_tag_value(tags, "snow:tier"));
-
-    // Try extracting from v0.2 d-tag format: {visibility}:{context}:{topic}
-    let tier_val = tier_from_tag.unwrap_or_else(|| {
+    // Try visibility tag first (canonical v0.2)
+    let tier_val = if let Some(vis) = get_tag_value(tags, "visibility") {
+        vis
+    } else {
+        // Fall back to d-tag prefix
         if let Some(d) = get_tag_value(tags, "d") {
             if let Some(vis) = d.split(':').next() {
                 match vis {
                     "public" | "group" | "personal" | "internal" | "circle" => {
-                        return vis.to_string()
+                        vis.to_string()
                     }
-                    "private" => return "personal".to_string(),
-                    _ => {}
+                    "private" => "personal".to_string(),
+                    _ => "unknown".to_string(),
                 }
+            } else {
+                "unknown".to_string()
             }
+        } else {
+            "unknown".to_string()
         }
-        "unknown".to_string()
-    });
+    };
 
     // Normalize legacy "private" → "personal"
     let tier_val = if tier_val == "private" {
@@ -179,11 +163,6 @@ pub fn get_tag_value(tags: &Tags, name: &str) -> Option<String> {
     None
 }
 
-/// Get a tag value, checking new name first, then legacy "snow:" prefixed name.
-fn get_tag_compat(tags: &Tags, name: &str) -> Option<String> {
-    get_tag_value(tags, name).or_else(|| get_tag_value(tags, &format!("snow:{name}")))
-}
-
 /// Try to decrypt NIP-44 encrypted content using the provided signer.
 pub fn try_decrypt_content(event: &Event, signer: &dyn NomenSigner) -> Option<String> {
     let content = event.content.as_str();
@@ -217,13 +196,11 @@ pub fn parse_event(event: &Event, signer: &dyn NomenSigner) -> ParsedMemory {
     let d_tag_raw = get_tag_value(tags, "d").unwrap_or_default();
     let topic = parse_d_tag(&d_tag_raw);
     let tier = parse_tier(tags);
-    // Check new tag names first, fall back to legacy "snow:" prefixed names
-    let version = get_tag_compat(tags, "version").unwrap_or_else(|| "?".to_string());
-    let confidence = get_tag_compat(tags, "confidence").unwrap_or_else(|| "?".to_string());
-    let model = get_tag_compat(tags, "model").unwrap_or_else(|| "unknown".to_string());
-    let source = get_tag_compat(tags, "source").unwrap_or_default();
+    let version = get_tag_value(tags, "version").unwrap_or_else(|| "?".to_string());
+    let confidence = get_tag_value(tags, "confidence").unwrap_or_else(|| "?".to_string());
+    let model = get_tag_value(tags, "model").unwrap_or_else(|| "unknown".to_string());
 
-    let content_str = if tier == "personal" || tier == "internal" || tier == "private" {
+    let content_str = if tier == "personal" || tier == "internal" {
         match try_decrypt_content(event, signer) {
             Some(decrypted) => decrypted,
             None => event.content.to_string(),
@@ -254,7 +231,7 @@ pub fn parse_event(event: &Event, signer: &dyn NomenSigner) -> ParsedMemory {
         summary,
         created_at: event.created_at,
         d_tag: topic,
-        source,
+        source: event.pubkey.to_hex(),
         content_raw: content_str,
         detail,
     }
