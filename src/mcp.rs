@@ -15,27 +15,27 @@ use crate::Nomen;
 // ── JSON-RPC types ──────────────────────────────────────────────────
 
 #[derive(Debug, Deserialize)]
-struct JsonRpcRequest {
+pub struct JsonRpcRequest {
     #[allow(dead_code)]
-    jsonrpc: String,
-    id: Option<Value>,
-    method: String,
+    pub jsonrpc: String,
+    pub id: Option<Value>,
+    pub method: String,
     #[serde(default)]
-    params: Value,
+    pub params: Value,
 }
 
 #[derive(Debug, Serialize)]
-struct JsonRpcResponse {
-    jsonrpc: String,
-    id: Value,
+pub struct JsonRpcResponse {
+    pub jsonrpc: String,
+    pub id: Value,
     #[serde(skip_serializing_if = "Option::is_none")]
-    result: Option<Value>,
+    pub result: Option<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    error: Option<JsonRpcError>,
+    pub error: Option<JsonRpcError>,
 }
 
 #[derive(Debug, Serialize)]
-struct JsonRpcError {
+pub struct JsonRpcError {
     code: i64,
     message: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -372,13 +372,13 @@ fn v2_tools_list() -> Value {
 
 // ── MCP Server ──────────────────────────────────────────────────────
 
-struct McpServer {
-    nomen: Nomen,
-    default_channel: String,
+pub struct McpServer {
+    pub nomen: Nomen,
+    pub default_channel: String,
 }
 
 impl McpServer {
-    async fn handle_request(&self, req: &JsonRpcRequest) -> JsonRpcResponse {
+    pub async fn handle_request(&self, req: &JsonRpcRequest) -> JsonRpcResponse {
         let id = req.id.clone().unwrap_or(Value::Null);
 
         match req.method.as_str() {
@@ -391,7 +391,7 @@ impl McpServer {
         }
     }
 
-    async fn handle_tool_call(&self, id: Value, params: &Value) -> JsonRpcResponse {
+    pub async fn handle_tool_call(&self, id: Value, params: &Value) -> JsonRpcResponse {
         let tool_name = params.get("name").and_then(|n| n.as_str()).unwrap_or("");
         let arguments = params.get("arguments").cloned().unwrap_or(json!({}));
 

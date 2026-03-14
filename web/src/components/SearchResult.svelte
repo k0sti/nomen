@@ -21,7 +21,7 @@
     <div class="min-w-0 flex-1">
       <div class="flex items-center gap-2 flex-wrap">
         <h3 class="font-mono text-sm font-medium text-gray-200">{result.topic}</h3>
-        <TierBadge tier={result.tier} scope={result.scope} />
+        <TierBadge visibility={result.visibility} scope={result.scope} />
         <span class="text-xs px-1.5 py-0.5 rounded bg-gray-800 text-gray-400">{result.match_type}</span>
       </div>
       <p class="text-sm text-gray-400 mt-1">{result.summary}</p>

@@ -1,6 +1,7 @@
 use anyhow::{bail, Result};
 use serde::{Deserialize, Serialize};
 use surrealdb::engine::local::Db;
+use surrealdb::types::SurrealValue;
 use surrealdb::Surreal;
 use tracing::debug;
 
@@ -12,7 +13,7 @@ use crate::config::GroupConfig;
 /// record ID. We use `meta::id(id)` in SELECT queries to extract it as a plain string.
 /// All optional fields use String (not Option<String>) to avoid SurrealDB NONE
 /// serialization issues.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, SurrealValue)]
 pub struct Group {
     pub id: String,
     pub name: String,
@@ -264,7 +265,7 @@ pub async fn remove_member(db: &Surreal<Db>, group_id: &str, npub: &str) -> Resu
             if !g.members.contains(&npub.to_string()) {
                 bail!("{npub} is not a member of {group_id}");
             }
-            db.query("UPDATE nomen_group SET members = array::remove(members, array::find_index(members, $npub)) WHERE meta::id(id) = $id")
+            db.query("UPDATE nomen_group SET members = array::complement(members, [$npub]) WHERE meta::id(id) = $id")
                 .bind(("id", group_id.to_string()))
                 .bind(("npub", npub.to_string()))
                 .await?

@@ -182,7 +182,7 @@ function parseMemory(e: NostrEvent): Memory {
     topic: getTag('snow:topic') || parsed.topic || '',
     summary: parsed.summary || '',
     detail: parsed.detail || '',
-    tier: getTag('snow:tier') || parsed.tier || 'public',
+    visibility: getTag('snow:tier') || parsed.tier || 'public',
     scope: getTag('snow:scope') || getTag('h') || parsed.scope || '',
     confidence: parseFloat(getTag('snow:confidence') || String(parsed.confidence || '0.8')),
     source: e.pubkey,

@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onDestroy } from 'svelte';
   import MemoryCard from '../components/MemoryCard.svelte';
-  import { relay, memories, tierFilter, loading, profile, isLoggedIn, getSigner, ensureConnected, showError } from '../lib/stores';
+  import { relay, memories, visibilityFilter, loading, profile, isLoggedIn, getSigner, ensureConnected, showError } from '../lib/stores';
   import { nip19, nip44, nip04 } from 'nostr-tools';
   import type { Memory } from '../lib/api';
   import type { Subscription } from '../lib/relay';
@@ -11,20 +11,20 @@
 
   const filtered = $derived(
     $memories.filter((m) => {
-      const matchesTier = !$tierFilter || m.tier === $tierFilter;
+      const matchesVisibility = !$visibilityFilter || m.visibility === $visibilityFilter;
       const matchesText =
         !filterText ||
         m.topic.toLowerCase().includes(filterText.toLowerCase()) ||
         m.summary.toLowerCase().includes(filterText.toLowerCase());
-      return matchesTier && matchesText;
+      return matchesVisibility && matchesText;
     })
   );
 
   const stats = $derived({
     total: $memories.length,
-    public: $memories.filter((m) => m.tier === 'public').length,
-    group: $memories.filter((m) => m.tier === 'group').length,
-    private: $memories.filter((m) => m.tier === 'private').length,
+    public: $memories.filter((m) => m.visibility === 'public').length,
+    group: $memories.filter((m) => m.visibility === 'group').length,
+    personal: $memories.filter((m) => m.visibility === 'personal' || m.visibility === 'private').length,
   });
 
   function bytesToHex(bytes: Uint8Array): string {
@@ -88,7 +88,7 @@
 
     const out: Memory[] = [];
     for (const m of ms) {
-      if (m.tier !== 'private') {
+      if (m.visibility !== 'personal' && m.visibility !== 'private') {
         out.push(m);
         continue;
       }
@@ -166,8 +166,8 @@
     }
   }
 
-  function setTierFilter(tier: string) {
-    tierFilter.set($tierFilter === tier ? '' : tier);
+  function setVisibilityFilter(vis: string) {
+    visibilityFilter.set($visibilityFilter === vis ? '' : vis);
   }
 
   // ── Create memory form ─────────────────────────────────────────
@@ -175,7 +175,7 @@
   let newTopic = $state('');
   let newSummary = $state('');
   let newDetail = $state('');
-  let newTier = $state('public');
+  let newVisibility = $state('public');
   let creating = $state(false);
 
   async function createMemory() {
@@ -183,7 +183,7 @@
     creating = true;
     try {
       const signer = getSigner();
-      await $relay.storeMemory(newTopic.trim(), newSummary.trim(), newDetail.trim(), newTier, signer);
+      await $relay.storeMemory(newTopic.trim(), newSummary.trim(), newDetail.trim(), newVisibility, signer);
       // Reload memories to include the new one
       const result = await $relay.listMemories($profile!.pubkey);
       memories.set(result);
@@ -191,7 +191,7 @@
       newTopic = '';
       newSummary = '';
       newDetail = '';
-      newTier = 'public';
+      newVisibility = 'public';
       showCreateForm = false;
     } catch (err: any) {
       showError('Failed to create memory: ' + (err.message || err));
@@ -206,7 +206,7 @@
     <div>
       <h2 class="text-2xl font-bold text-gray-100">Memories</h2>
       <p class="text-sm text-gray-500 mt-1">
-        {stats.total} memories &mdash; {stats.public} public, {stats.group} group, {stats.private} private
+        {stats.total} memories &mdash; {stats.public} public, {stats.group} group, {stats.personal} personal
       </p>
     </div>
     {#if $isLoggedIn}
@@ -227,11 +227,11 @@
           <input type="text" bind:value={newTopic} placeholder="e.g. project/nomen/overview" class="mt-1 w-full px-3 py-2 bg-gray-900 border border-gray-700 rounded-lg text-sm text-gray-200 focus:border-accent-500" />
         </label>
         <label class="block">
-          <span class="text-xs text-gray-400">Tier</span>
-          <select bind:value={newTier} class="mt-1 w-full px-3 py-2 bg-gray-900 border border-gray-700 rounded-lg text-sm text-gray-200 focus:border-accent-500">
+          <span class="text-xs text-gray-400">Visibility</span>
+          <select bind:value={newVisibility} class="mt-1 w-full px-3 py-2 bg-gray-900 border border-gray-700 rounded-lg text-sm text-gray-200 focus:border-accent-500">
             <option value="public">Public</option>
             <option value="group">Group</option>
-            <option value="private">Private</option>
+            <option value="personal">Personal</option>
           </select>
         </label>
       </div>
@@ -263,15 +263,15 @@
       class="flex-1 px-4 py-2.5 min-h-11 bg-gray-900 border border-gray-700 rounded-lg text-sm text-gray-200 placeholder-gray-500 transition-colors duration-150 focus:border-accent-500"
     />
     <div class="flex gap-1.5">
-      {#each ['public', 'group', 'private'] as tier}
+      {#each ['public', 'group', 'personal'] as vis}
         <button
-          onclick={() => setTierFilter(tier)}
+          onclick={() => setVisibilityFilter(vis)}
           class="px-3 py-2 min-h-11 rounded-md text-xs font-medium border transition-colors duration-150
-            {$tierFilter === tier
+            {$visibilityFilter === vis
               ? 'border-accent-500 bg-accent-500/20 text-accent-400'
               : 'border-gray-700 bg-gray-800/50 text-gray-400 hover:text-gray-200 active:bg-gray-700'}"
         >
-          {tier}
+          {vis}
         </button>
       {/each}
     </div>

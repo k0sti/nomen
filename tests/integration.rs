@@ -2,12 +2,13 @@
 
 use anyhow::Result;
 use surrealdb::engine::local::{Db, SurrealKv};
+use surrealdb::types::SurrealValue;
 use surrealdb::Surreal;
 
 /// Initialize a SurrealDB instance in a temp directory with the nomen schema.
 async fn init_test_db() -> Result<(Surreal<Db>, tempfile::TempDir)> {
     let tmp = tempfile::tempdir()?;
-    let db = Surreal::new::<SurrealKv>(tmp.path()).await?;
+    let db = Surreal::new::<SurrealKv>(tmp.path()).versioned().await?;
     db.use_ns("nomen_test").use_db("nomen_test").await?;
     db.query(nomen::db::SCHEMA).await?.check()?;
     Ok((db, tmp))
@@ -134,7 +135,7 @@ async fn test_groups() -> Result<()> {
     .await?;
 
     // Debug: count records
-    #[derive(serde::Deserialize, Debug)]
+    #[derive(serde::Deserialize, Debug, SurrealValue)]
     struct CountResult {
         count: usize,
     }
@@ -146,7 +147,7 @@ async fn test_groups() -> Result<()> {
     eprintln!("DEBUG: nomen_group count: {:?}", count);
 
     // Debug: try meta::id query
-    #[derive(serde::Deserialize, Debug)]
+    #[derive(serde::Deserialize, Debug, SurrealValue)]
     struct IdGroup {
         id: String,
         name: String,

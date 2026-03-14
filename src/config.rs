@@ -25,12 +25,16 @@ pub struct GroupConfig {
 pub struct Config {
     #[serde(default)]
     pub relay: Option<String>,
-    #[serde(default)]
-    pub nsecs: Vec<String>,
-    /// Single nsec shorthand
+    /// Agent nsecs — keys for agents whose memories this Nomen instance manages.
+    #[serde(default, alias = "nsecs")]
+    pub agent_nsecs: Vec<String>,
+    /// Nomen's own Nostr identity (nsec) — used for relay AUTH and daemon-level ops.
     #[serde(default)]
     pub nsec: Option<String>,
-    /// Default writer identity: "guardian" or "agent:N"
+    /// Owner's npub — the human who owns this Nomen instance.
+    #[serde(default)]
+    pub owner: Option<String>,
+    /// Default writer identity (deprecated, kept for backward compat)
     #[serde(default)]
     pub default_writer: Option<String>,
     /// Embedding provider configuration
@@ -195,9 +199,8 @@ pub struct EmbeddingConfig {
     /// Environment variable name containing the API key
     #[serde(default = "default_api_key_env")]
     pub api_key_env: String,
-    /// Direct API key passthrough (avoids env var mutation in multi-threaded contexts).
-    /// Takes precedence over `api_key_env` when set.
-    #[serde(default, skip_serializing)]
+    /// Direct API key. Takes precedence over `api_key_env` when set.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub api_key: Option<String>,
     /// Base URL override (optional, provider default used if absent)
     #[serde(default)]
@@ -389,9 +392,9 @@ impl Config {
             .join("config.toml")
     }
 
-    /// Merge nsec + nsecs into a single list
+    /// Merge nsec + agent_nsecs into a single list (daemon identity first).
     pub fn all_nsecs(&self) -> Vec<String> {
-        let mut out = self.nsecs.clone();
+        let mut out = self.agent_nsecs.clone();
         if let Some(ref single) = self.nsec {
             if !out.contains(single) {
                 out.insert(0, single.clone());

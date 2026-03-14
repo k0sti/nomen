@@ -4,7 +4,7 @@ use std::sync::Arc;
 use anyhow::{bail, Context, Result};
 use clap::{Parser, Subcommand};
 use colored::Colorize;
-use dialoguer::{Confirm, Input, Password, Select};
+use dialoguer::{Confirm, Input, Password};
 use nostr_sdk::prelude::*;
 use tracing::debug;
 
@@ -348,7 +348,7 @@ fn resolve_config(cli: &Cli) -> Result<ResolvedConfig> {
         .relay
         .clone()
         .or(config.relay)
-        .unwrap_or_else(|| "wss://zooid.atlantislabs.space".to_string());
+        .unwrap_or_else(|| "wss://nomen.atlantislabs.space".to_string());
 
     Ok(ResolvedConfig { nsecs, relay })
 }
@@ -401,6 +401,9 @@ async fn build_nomen(config: &Config) -> Result<Nomen> {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    // SurrealDB 3.x requires a rustls CryptoProvider
+    let _ = rustls::crypto::ring::default_provider().install_default();
+
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::from_default_env()
@@ -1524,6 +1527,10 @@ async fn cmd_serve(
         None
     };
 
+    // Open DB once and share across CVM, socket, and HTTP servers
+    // SurrealDB 3.x uses exclusive file locks — cannot open the same path twice
+    let shared_db = nomen::db::init_db_with_dimensions(config.embedding_dimensions()).await?;
+
     // Determine if CVM should run: CLI flag or config section
     let cvm_config = config.contextvm.as_ref();
     let cvm_enabled = context_vm || cvm_config.map(|c| c.enabled).unwrap_or(false);
@@ -1557,7 +1564,7 @@ async fn cmd_serve(
         let cvm_rate_limit = cvm_config.map(|c| c.rate_limit).unwrap_or(30);
         let cvm_announce = cvm_config.map(|c| c.announce).unwrap_or(true);
 
-        let cvm_nomen = nomen::Nomen::open(config).await?;
+        let cvm_nomen = nomen::Nomen::open_with_db(config, shared_db.clone()).await?;
 
         Some(
             cvm::CvmServer::new(
@@ -1592,7 +1599,7 @@ async fn cmd_serve(
 
         let (event_tx, _) = tokio::sync::broadcast::channel(1024);
 
-        let mut socket_nomen = nomen::Nomen::open(config).await?;
+        let mut socket_nomen = nomen::Nomen::open_with_db(config, shared_db.clone()).await?;
         socket_nomen.set_event_emitter(event_tx.clone());
 
         let server = nomen::socket::SocketServer::new(
@@ -1657,9 +1664,9 @@ async fn cmd_serve(
             };
 
             let nomen_instance = if let Some(relay) = relay_manager {
-                nomen::Nomen::open_with_relay(config, relay).await?
+                nomen::Nomen::open_with_db_and_relay(config, shared_db.clone(), relay).await?
             } else {
-                nomen::Nomen::open(config).await?
+                nomen::Nomen::open_with_db(config, shared_db.clone()).await?
             };
 
             let http_state = nomen::http::AppState {
@@ -1688,9 +1695,9 @@ async fn cmd_serve(
             if stdio {
                 // CVM + stdio MCP: run both concurrently
                 let mcp_nomen = if let Some(relay) = relay_manager {
-                    nomen::Nomen::open_with_relay(config, relay).await?
+                    nomen::Nomen::open_with_db_and_relay(config, shared_db.clone(), relay).await?
                 } else {
-                    nomen::Nomen::open(config).await?
+                    nomen::Nomen::open_with_db(config, shared_db.clone()).await?
                 };
                 let mcp_fut = mcp::serve_stdio(mcp_nomen, default_channel);
                 let cvm_fut = cvm.run();
@@ -1707,9 +1714,9 @@ async fn cmd_serve(
         (None, None) => {
             let _ = stdio;
             let nomen_instance = if let Some(relay) = relay_manager {
-                nomen::Nomen::open_with_relay(config, relay).await?
+                nomen::Nomen::open_with_db_and_relay(config, shared_db.clone(), relay).await?
             } else {
-                nomen::Nomen::open(config).await?
+                nomen::Nomen::open_with_db(config, shared_db.clone()).await?
             };
             mcp::serve_stdio(nomen_instance, default_channel).await
         }
@@ -1750,66 +1757,18 @@ async fn cmd_init(force: bool, non_interactive: bool) -> Result<()> {
     println!("  {}", "1. Relay".bold());
     let relay: String = Input::new()
         .with_prompt("     Nostr relay URL")
-        .default("wss://zooid.atlantislabs.space".to_string())
+        .default("wss://nomen.atlantislabs.space".to_string())
         .interact_text()?;
 
-    // 2. Identities
-    println!("\n  {}", "2. Identities".bold());
-    let guardian_nsec: String = Password::new()
-        .with_prompt("     User nsec (your key)")
+    // 2. Identity
+    println!("\n  {}", "2. Identity".bold());
+    println!("     Nomen needs its own Nostr keypair to sign and encrypt memories.");
+    let nomen_nsec: String = Password::new()
+        .with_prompt("     Nomen nsec")
         .interact()?;
-    let guardian_keys = Keys::parse(&guardian_nsec).context("Invalid user nsec")?;
-    let guardian_npub = guardian_keys.public_key().to_bech32()?;
-    println!("     {} {}", "✓".green(), guardian_npub);
-
-    let mut agent_nsecs: Vec<String> = Vec::new();
-    let add_agents = Confirm::new()
-        .with_prompt("     Add agent identities?")
-        .default(false)
-        .interact()?;
-
-    if add_agents {
-        loop {
-            let agent_nsec: String = Password::new().with_prompt("     Agent nsec").interact()?;
-            let agent_keys = Keys::parse(&agent_nsec).context("Invalid agent nsec")?;
-            let agent_npub = agent_keys.public_key().to_bech32()?;
-            let idx = agent_nsecs.len() + 1;
-            println!("     {} {} (agent #{})", "✓".green(), agent_npub, idx);
-            agent_nsecs.push(agent_nsec);
-
-            let add_another = Confirm::new()
-                .with_prompt("     Add another?")
-                .default(false)
-                .interact()?;
-            if !add_another {
-                break;
-            }
-        }
-    }
-
-    // Default writer selection
-    let mut writer_options = vec![format!("Guardian ({}...)", &guardian_npub[..16])];
-    for (i, nsec) in agent_nsecs.iter().enumerate() {
-        let k = Keys::parse(nsec)?;
-        let npub = k.public_key().to_bech32()?;
-        writer_options.push(format!("Agent #{} ({}...)", i + 1, &npub[..16]));
-    }
-
-    let default_writer = if writer_options.len() > 1 {
-        println!("\n     {}", "Default writer identity:".bold());
-        let selection = Select::new()
-            .with_prompt("     Select")
-            .items(&writer_options)
-            .default(0)
-            .interact()?;
-        if selection == 0 {
-            "guardian".to_string()
-        } else {
-            format!("agent:{}", selection - 1)
-        }
-    } else {
-        "guardian".to_string()
-    };
+    let nomen_keys = Keys::parse(&nomen_nsec).context("Invalid nsec")?;
+    let nomen_npub = nomen_keys.public_key().to_bech32()?;
+    println!("     {} {}", "✓".green(), nomen_npub);
 
     // 3. Embedding
     println!("\n  {}", "3. Embedding".bold());
@@ -1821,9 +1780,21 @@ async fn cmd_init(force: bool, non_interactive: bool) -> Result<()> {
         .with_prompt("     Model")
         .default("text-embedding-3-small".to_string())
         .interact_text()?;
-    let emb_api_key_env: String = Input::new()
-        .with_prompt("     API key env var")
-        .default("OPENAI_API_KEY".to_string())
+    let emb_api_key: String = Password::new()
+        .with_prompt("     API key (leave empty to use env var)")
+        .allow_empty_password(true)
+        .interact()?;
+    let emb_api_key_env: String = if emb_api_key.is_empty() {
+        Input::new()
+            .with_prompt("     API key env var")
+            .default("OPENAI_API_KEY".to_string())
+            .interact_text()?
+    } else {
+        String::new()
+    };
+    let emb_base_url: String = Input::new()
+        .with_prompt("     Base URL (leave default for provider default)")
+        .default(String::new())
         .interact_text()?;
     let emb_dimensions: usize = Input::new()
         .with_prompt("     Dimensions")
@@ -1846,10 +1817,18 @@ async fn cmd_init(force: bool, non_interactive: bool) -> Result<()> {
             .with_prompt("     Model")
             .default("anthropic/claude-sonnet-4-6".to_string())
             .interact_text()?;
-        let cons_api_key_env: String = Input::new()
-            .with_prompt("     API key env var")
-            .default("OPENROUTER_API_KEY".to_string())
-            .interact_text()?;
+        let cons_api_key: String = Password::new()
+            .with_prompt("     API key (leave empty to use env var)")
+            .allow_empty_password(true)
+            .interact()?;
+        let cons_api_key_env: String = if cons_api_key.is_empty() {
+            Input::new()
+                .with_prompt("     API key env var")
+                .default("OPENROUTER_API_KEY".to_string())
+                .interact_text()?
+        } else {
+            String::new()
+        };
         let cons_interval: u32 = Input::new()
             .with_prompt("     Interval hours")
             .default(4)
@@ -1877,8 +1856,8 @@ async fn cmd_init(force: bool, non_interactive: bool) -> Result<()> {
         None
     };
 
-    // 5. Dashboard Server
-    println!("\n  {}", "5. Dashboard Server".bold());
+    // 5. HTTP Server
+    println!("\n  {}", "5. HTTP Server".bold());
     let server_enabled = Confirm::new()
         .with_prompt("     Enable HTTP server?")
         .default(true)
@@ -1900,15 +1879,16 @@ async fn cmd_init(force: bool, non_interactive: bool) -> Result<()> {
     // Build config
     let config = Config {
         relay: Some(relay.clone()),
-        nsec: Some(guardian_nsec.clone()),
-        nsecs: agent_nsecs.clone(),
-        default_writer: Some(default_writer),
+        nsec: Some(nomen_nsec.clone()),
+        agent_nsecs: Vec::new(),
+        owner: None,
+        default_writer: None,
         embedding: Some(EmbeddingConfig {
             provider: emb_provider,
             model: emb_model,
             api_key_env: emb_api_key_env,
-            api_key: None,
-            base_url: None,
+            api_key: if emb_api_key.is_empty() { None } else { Some(emb_api_key) },
+            base_url: if emb_base_url.is_empty() { None } else { Some(emb_base_url) },
             dimensions: emb_dimensions,
             batch_size: 100,
         }),
@@ -1968,15 +1948,16 @@ async fn cmd_init_non_interactive() -> Result<()> {
     // Validate the nsec
     let keys = Keys::parse(&nsec).context("Invalid NOMEN_NSEC")?;
     let npub = keys.public_key().to_bech32()?;
-    println!("  Guardian: {npub}");
+    println!("  Nomen identity: {npub}");
 
-    let relay = std::env::var("NOMEN_RELAY").unwrap_or_else(|_| "wss://relay.damus.io".to_string());
+    let relay = std::env::var("NOMEN_RELAY").unwrap_or_else(|_| "wss://nomen.atlantislabs.space".to_string());
 
     let config = Config {
         relay: Some(relay.clone()),
         nsec: Some(nsec),
-        nsecs: Vec::new(),
-        default_writer: Some("guardian".to_string()),
+        agent_nsecs: Vec::new(),
+        owner: None,
+        default_writer: None,
         embedding: Some(EmbeddingConfig::default()),
         groups: Vec::new(),
         consolidation: None,
@@ -2110,7 +2091,7 @@ async fn cmd_doctor() -> Result<()> {
     let relay_url = config
         .relay
         .as_deref()
-        .unwrap_or("wss://zooid.atlantislabs.space");
+        .unwrap_or("wss://nomen.atlantislabs.space");
     print!("  Relay ({relay_url}): ");
     if !nsecs.is_empty() {
         match test_relay_connection(relay_url, &nsecs).await {

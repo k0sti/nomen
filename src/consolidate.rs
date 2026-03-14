@@ -5,6 +5,7 @@ use async_trait::async_trait;
 use nostr_sdk::prelude::*;
 use serde::Deserialize;
 use surrealdb::engine::local::Db;
+use surrealdb::types::SurrealValue;
 use surrealdb::Surreal;
 use tracing::{debug, info, warn};
 
@@ -1218,10 +1219,9 @@ async fn publish_deletion_events(
 
 /// Fetch an existing memory record by d_tag for merge checks.
 async fn get_existing_memory(db: &Surreal<Db>, d_tag: &str) -> Result<Option<ExistingMemory>> {
-    #[derive(Deserialize)]
+    #[derive(Deserialize, SurrealValue)]
     struct Row {
         content: String,
-        #[serde(default, deserialize_with = "crate::db::deserialize_option_string")]
         summary: Option<String>,
         version: i64,
         confidence: Option<f64>,
@@ -1268,9 +1268,8 @@ async fn find_similar_memory(
     embedding: &[f32],
     threshold: f64,
 ) -> Result<Option<String>> {
-    #[derive(Deserialize)]
+    #[derive(Deserialize, SurrealValue)]
     struct SimRow {
-        #[serde(default, deserialize_with = "crate::db::deserialize_option_string")]
         d_tag: Option<String>,
         similarity: Option<f64>,
     }
@@ -1297,13 +1296,12 @@ async fn find_similar_memory(
 
 /// Get the SurrealDB record ID for a memory by its d_tag.
 async fn get_memory_record_id(db: &Surreal<Db>, d_tag: &str) -> Result<String> {
-    #[derive(Deserialize)]
+    #[derive(Deserialize, SurrealValue)]
     struct IdRow {
-        #[serde(deserialize_with = "crate::db::deserialize_thing_as_string")]
         id: String,
     }
     let rows: Vec<IdRow> = db
-        .query("SELECT id FROM memory WHERE d_tag = $d_tag LIMIT 1")
+        .query("SELECT string::concat(meta::tb(id), ':', meta::id(id)) AS id FROM memory WHERE d_tag = $d_tag LIMIT 1")
         .bind(("d_tag", d_tag.to_string()))
         .await?
         .check()?

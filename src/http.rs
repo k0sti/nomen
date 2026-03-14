@@ -4,9 +4,9 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use anyhow::Result;
-use axum::extract::{Path, Query, State};
+use axum::extract::State;
 use axum::response::{IntoResponse, Json, Redirect};
-use axum::routing::{delete, get, post};
+use axum::routing::{get, post};
 use axum::Router;
 use serde_json::{json, Value};
 use tokio::sync::RwLock;
@@ -36,31 +36,11 @@ pub fn build_router(
     let shared = Arc::new(state);
 
     let api = Router::new()
-        .route("/search", post(api_search))
-        .route("/store", post(api_store))
-        .route("/ingest", post(api_ingest))
-        .route("/messages", get(api_messages))
-        .route("/messages/{id}/context", get(api_message_context))
-        .route("/entities", get(api_entities))
-        .route("/entities/relationships", get(api_entity_relationships))
-        .route("/consolidate", post(api_consolidate))
-        .route("/memories", get(api_list_memories))
-        .route("/memories/{topic}", get(api_get_memory))
-        .route("/memories/{topic}", delete(api_delete_memory))
-        .route("/groups", get(api_list_groups))
-        .route("/groups", post(api_create_group))
-        .route("/groups/{id}/members", get(api_group_members))
-        .route("/groups/{id}/members", post(api_group_add_member))
-        .route("/groups/{id}/members/{npub}", delete(api_group_remove_member))
-        .route("/send", post(api_send))
+        .route("/dispatch", post(api_dispatch))
+        .route("/health", get(api_health))
+        .route("/stats", get(api_stats))
         .route("/config", get(api_get_config))
         .route("/config/reload", post(api_reload_config))
-        .route("/stats", get(api_stats))
-        .route("/prune", post(api_prune))
-        .route("/embed", post(api_embed))
-        .route("/sync", post(api_sync))
-        .route("/cluster", post(api_cluster))
-        .route("/health", get(api_health))
         .layer(CorsLayer::permissive())
         .with_state(shared.clone());
 
@@ -127,144 +107,13 @@ async fn call_dispatch(state: &AppState, action: &str, params: &Value) -> impl I
     Json(serde_json::to_value(&resp).unwrap_or_default())
 }
 
-// ── API handlers (thin dispatch wrappers) ────────────────────────
+// ── Dispatch endpoint ─────────────────────────────────────────────
 
-async fn api_search(State(state): State<SharedState>, Json(body): Json<Value>) -> impl IntoResponse {
-    call_dispatch(&state, "memory.search", &body).await
-}
-
-async fn api_store(State(state): State<SharedState>, Json(body): Json<Value>) -> impl IntoResponse {
-    call_dispatch(&state, "memory.put", &body).await
-}
-
-async fn api_ingest(State(state): State<SharedState>, Json(body): Json<Value>) -> impl IntoResponse {
-    call_dispatch(&state, "message.ingest", &body).await
-}
-
-async fn api_messages(
+async fn api_dispatch(
     State(state): State<SharedState>,
-    Query(q): Query<Value>,
+    Json(req): Json<crate::api::types::ApiRequest>,
 ) -> impl IntoResponse {
-    call_dispatch(&state, "message.list", &q).await
-}
-
-async fn api_message_context(
-    State(state): State<SharedState>,
-    Path(id): Path<String>,
-    Query(q): Query<Value>,
-) -> impl IntoResponse {
-    let mut params = q;
-    params
-        .as_object_mut()
-        .map(|o| o.insert("id".to_string(), json!(id)));
-    call_dispatch(&state, "message.context", &params).await
-}
-
-async fn api_entities(
-    State(state): State<SharedState>,
-    Query(q): Query<Value>,
-) -> impl IntoResponse {
-    call_dispatch(&state, "entity.list", &q).await
-}
-
-async fn api_entity_relationships(
-    State(state): State<SharedState>,
-    Query(q): Query<Value>,
-) -> impl IntoResponse {
-    call_dispatch(&state, "entity.relationships", &q).await
-}
-
-async fn api_consolidate(
-    State(state): State<SharedState>,
-    Json(body): Json<Value>,
-) -> impl IntoResponse {
-    call_dispatch(&state, "memory.consolidate", &body).await
-}
-
-async fn api_list_memories(
-    State(state): State<SharedState>,
-    Query(q): Query<Value>,
-) -> impl IntoResponse {
-    call_dispatch(&state, "memory.list", &q).await
-}
-
-async fn api_get_memory(
-    State(state): State<SharedState>,
-    Path(topic): Path<String>,
-) -> impl IntoResponse {
-    call_dispatch(&state, "memory.get", &json!({"topic": topic})).await
-}
-
-async fn api_delete_memory(
-    State(state): State<SharedState>,
-    Path(topic): Path<String>,
-) -> impl IntoResponse {
-    call_dispatch(&state, "memory.delete", &json!({"topic": topic})).await
-}
-
-async fn api_list_groups(State(state): State<SharedState>) -> impl IntoResponse {
-    call_dispatch(&state, "group.list", &json!({})).await
-}
-
-async fn api_create_group(
-    State(state): State<SharedState>,
-    Json(body): Json<Value>,
-) -> impl IntoResponse {
-    call_dispatch(&state, "group.create", &body).await
-}
-
-async fn api_group_members(
-    State(state): State<SharedState>,
-    Path(id): Path<String>,
-) -> impl IntoResponse {
-    call_dispatch(&state, "group.members", &json!({"id": id})).await
-}
-
-async fn api_group_add_member(
-    State(state): State<SharedState>,
-    Path(id): Path<String>,
-    Json(body): Json<Value>,
-) -> impl IntoResponse {
-    let mut params = body;
-    params
-        .as_object_mut()
-        .map(|o| o.insert("id".to_string(), json!(id)));
-    call_dispatch(&state, "group.add_member", &params).await
-}
-
-async fn api_group_remove_member(
-    State(state): State<SharedState>,
-    Path((id, npub)): Path<(String, String)>,
-) -> impl IntoResponse {
-    call_dispatch(
-        &state,
-        "group.remove_member",
-        &json!({"id": id, "npub": npub}),
-    )
-    .await
-}
-
-async fn api_send(State(state): State<SharedState>, Json(body): Json<Value>) -> impl IntoResponse {
-    call_dispatch(&state, "message.send", &body).await
-}
-
-async fn api_prune(State(state): State<SharedState>, Json(body): Json<Value>) -> impl IntoResponse {
-    call_dispatch(&state, "memory.prune", &body).await
-}
-
-async fn api_embed(State(state): State<SharedState>, Json(body): Json<Value>) -> impl IntoResponse {
-    call_dispatch(&state, "memory.embed", &body).await
-}
-
-async fn api_sync(State(state): State<SharedState>) -> impl IntoResponse {
-    call_dispatch(&state, "memory.sync", &json!({})).await
-}
-
-async fn api_cluster(
-    State(state): State<SharedState>,
-    Json(body): Json<Value>,
-) -> impl IntoResponse {
-    call_dispatch(&state, "memory.cluster", &body).await
+    call_dispatch(&state, &req.action, &req.params).await
 }
 
 async fn api_health(State(state): State<SharedState>) -> impl IntoResponse {

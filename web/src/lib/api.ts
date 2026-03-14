@@ -4,7 +4,7 @@ export interface SearchResult {
   topic: string;
   summary: string;
   detail: string;
-  tier: string;
+  visibility: string;
   scope: string;
   confidence: number;
   score: number;
@@ -17,7 +17,7 @@ export interface Memory {
   topic: string;
   summary: string;
   detail: string;
-  tier: string;
+  visibility: string;
   scope: string;
   confidence: number;
   model: string;
@@ -60,7 +60,7 @@ export interface ConsolidateReport {
 }
 
 export interface SearchOpts {
-  tier?: string;
+  visibility?: string;
   scope?: string;
   limit?: number;
   mode?: 'hybrid' | 'text';
@@ -92,18 +92,6 @@ export interface SystemStats {
   last_consolidation: string | null;
   last_prune: string | null;
   db_size_bytes: number;
-}
-
-export interface ConsolidationStatus {
-  due: boolean;
-  reason: string;
-  last_run: string | null;
-  hours_since_last_run: number | null;
-  pending_messages: number;
-  interval_hours: number;
-  max_ephemeral_count: number;
-  enabled: boolean;
-  ephemeral_ttl_minutes: number;
 }
 
 export interface PruneResult {
@@ -156,10 +144,18 @@ export class NomenApi {
     return resp.json();
   }
 
+  private async dispatch<T = unknown>(action: string, params: Record<string, unknown> = {}): Promise<T> {
+    const envelope = await this.postJson<{ ok: boolean; result: T; error?: { code: string; message: string } }>('/dispatch', { action, params });
+    if (!envelope.ok) {
+      throw new Error(envelope.error?.message ?? 'Unknown error');
+    }
+    return envelope.result;
+  }
+
   async search(query: string, opts?: SearchOpts): Promise<SearchResult[]> {
-    const data = await this.postJson<{ results: RawSearchResult[] }>('/search', {
+    const data = await this.dispatch<{ results: RawSearchResult[] }>('memory.search', {
       query,
-      tier: opts?.tier,
+      visibility: opts?.visibility,
       scope: opts?.scope,
       limit: opts?.limit,
       mode: opts?.mode,
@@ -168,7 +164,7 @@ export class NomenApi {
   }
 
   async getEntities(opts?: EntityOpts): Promise<Entity[]> {
-    const data = await this.getJson<{ entities: Entity[] }>('/entities', {
+    const data = await this.dispatch<{ entities: Entity[] }>('entity.list', {
       kind: opts?.kind,
       query: opts?.query,
     });
@@ -176,16 +172,16 @@ export class NomenApi {
   }
 
   async consolidate(opts?: ConsolidateOpts): Promise<ConsolidateReport> {
-    return this.postJson('/consolidate', { ...opts });
+    return this.dispatch('memory.consolidate', { ...opts });
   }
 
   async getGroups(): Promise<Group[]> {
-    const data = await this.getJson<{ groups: Group[] }>('/groups');
+    const data = await this.dispatch<{ groups: Group[] }>('group.list');
     return data.groups;
   }
 
   async createGroup(opts: CreateGroupOpts): Promise<{ created: string }> {
-    return this.postJson('/groups', opts as unknown as Record<string, unknown>);
+    return this.dispatch('group.create', opts as unknown as Record<string, unknown>);
   }
 
   async getConfig(): Promise<NomenConfig> {
@@ -200,23 +196,21 @@ export class NomenApi {
     return this.getJson('/stats');
   }
 
-  async getConsolidationStatus(): Promise<ConsolidationStatus> {
-    return this.getJson('/consolidate/status');
-  }
-
   async prune(days: number, dryRun: boolean): Promise<PruneResult> {
-    return this.postJson('/prune', { days, dry_run: dryRun });
+    return this.dispatch('memory.prune', { days, dry_run: dryRun });
   }
 }
 
 // ── Raw backend types & mappers ──────────────────────────────────
 
 interface RawSearchResult {
-  tier: string;
+  visibility: string;
   topic: string;
   confidence: string;
   summary: string;
-  created_at: number;
+  detail: string;
+  scope: string;
+  created_at: string;
   score: number;
   match_type: string;
 }
@@ -225,12 +219,12 @@ function mapSearchResult(r: RawSearchResult): SearchResult {
   return {
     topic: r.topic,
     summary: r.summary,
-    detail: '',
-    tier: r.tier,
-    scope: '',
+    detail: r.detail || '',
+    visibility: r.visibility,
+    scope: r.scope || '',
     confidence: parseFloat(r.confidence) || 0,
     score: r.score,
     match_type: r.match_type,
-    created_at: r.created_at ? new Date(r.created_at * 1000).toISOString() : '',
+    created_at: r.created_at || '',
   };
 }

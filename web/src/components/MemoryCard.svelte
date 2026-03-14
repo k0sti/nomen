@@ -66,12 +66,12 @@
       <div class="min-w-0 flex-1">
         <div class="flex items-center gap-2 flex-wrap">
           <h3 class="font-mono text-sm font-medium text-gray-200">{memory.topic}</h3>
-          <TierBadge tier={memory.tier} scope={memory.scope} />
+          <TierBadge visibility={memory.visibility} scope={memory.scope} />
         </div>
         <p class="text-sm text-gray-400 mt-1 {isExpanded ? '' : 'line-clamp-2'}">{memory.summary}</p>
-        {#if memory.tier === 'private' || memory.tier === 'group'}
+        {#if memory.visibility === 'personal' || memory.visibility === 'private' || memory.visibility === 'group'}
           <div class="mt-2 flex items-center gap-2 text-[11px] text-gray-500">
-            {#if memory.tier === 'private'}
+            {#if memory.visibility === 'personal' || memory.visibility === 'private'}
               <span class="inline-flex items-center gap-1">🔒 private</span>
               <span>•</span>
               {#if sourceMeta?.picture}

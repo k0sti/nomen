@@ -1,7 +1,7 @@
 <script lang="ts">
   import { relayUrl, apiBaseUrl, relay, relayConnected, api, showError, showInfo } from '../lib/stores';
   import { NomenRelay } from '../lib/relay';
-  import type { SystemStats, ConsolidationStatus, PruneResult, NomenConfig } from '../lib/api';
+  import type { SystemStats, PruneResult, NomenConfig } from '../lib/api';
 
   let saved = $state(false);
   let nip46Relays = $state(localStorage.getItem('nomen:nip46Relays') || 'wss://relay.nsec.app');
@@ -11,8 +11,6 @@
   let statsLoading = $state(false);
 
   // Consolidation
-  let consolStatus = $state<ConsolidationStatus | null>(null);
-  let consolLoading = $state(false);
   let consolidating = $state(false);
 
   // Pruning
@@ -38,24 +36,12 @@
     }
   }
 
-  async function loadConsolidationStatus() {
-    consolLoading = true;
-    try {
-      consolStatus = await $api.getConsolidationStatus();
-    } catch (err: any) {
-      showError('Failed to load consolidation status: ' + (err.message || err));
-    } finally {
-      consolLoading = false;
-    }
-  }
-
   async function runConsolidation() {
     consolidating = true;
     try {
       const report = await $api.consolidate({});
       showInfo(`Consolidated ${report.messages_processed} messages into ${report.memories_created} memories`);
       await loadStats();
-      await loadConsolidationStatus();
     } catch (err: any) {
       showError('Consolidation failed: ' + (err.message || err));
     } finally {
@@ -135,7 +121,6 @@
   // Load data on mount
   $effect(() => {
     loadStats();
-    loadConsolidationStatus();
     loadConfig();
   });
 </script>
@@ -194,47 +179,17 @@
   <div class="bg-gray-800/50 border border-gray-700 rounded-lg p-5">
     <div class="flex items-center justify-between mb-4">
       <h3 class="text-lg font-semibold text-gray-200">Consolidation</h3>
-      {#if consolStatus}
-        <span class="text-xs px-2 py-0.5 rounded-full {consolStatus.enabled ? 'bg-emerald-900/50 text-emerald-400' : 'bg-red-900/50 text-red-400'}">
-          {consolStatus.enabled ? 'Enabled' : 'Disabled'}
-        </span>
-      {/if}
     </div>
 
-    {#if consolStatus}
-      <div class="space-y-2 text-sm text-gray-400 mb-4">
-        <div class="flex justify-between">
-          <span>Pending messages</span>
-          <span class="text-gray-200">{consolStatus.pending_messages}</span>
-        </div>
-        <div class="flex justify-between">
-          <span>Interval</span>
-          <span class="text-gray-200">{consolStatus.interval_hours}h</span>
-        </div>
-        <div class="flex justify-between">
-          <span>TTL</span>
-          <span class="text-gray-200">{consolStatus.ephemeral_ttl_minutes}min</span>
-        </div>
-        <div class="flex justify-between">
-          <span>Last run</span>
-          <span class="text-gray-200">{formatTime(consolStatus.last_run)}</span>
-        </div>
-        <div class="flex justify-between">
-          <span>Status</span>
-          <span class="{consolStatus.due ? 'text-yellow-400' : 'text-emerald-400'}">{consolStatus.reason}</span>
-        </div>
-      </div>
+    <p class="text-sm text-gray-400 mb-4">Run consolidation to merge pending ephemeral messages into named memories.</p>
 
-      <button
-        onclick={runConsolidation}
-        disabled={consolidating}
-        class="px-4 py-2 rounded-lg text-sm font-medium bg-accent-600 text-white hover:bg-accent-500 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-      >
-        {consolidating ? 'Running...' : 'Run Now'}
-      </button>
-    {:else if consolLoading}
-      <div class="text-sm text-gray-500">Loading...</div>
-    {/if}
+    <button
+      onclick={runConsolidation}
+      disabled={consolidating}
+      class="px-4 py-2 rounded-lg text-sm font-medium bg-accent-600 text-white hover:bg-accent-500 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+    >
+      {consolidating ? 'Running...' : 'Run Now'}
+    </button>
   </div>
 
   <!-- Section 3: Pruning -->

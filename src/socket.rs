@@ -213,16 +213,24 @@ async fn is_subscribed(state: &ServerState, conn_id: ConnId, event_type: &str) -
 }
 
 /// Handle a single request frame.
+///
+/// Request routing:
+/// 1. **Transport capabilities** — `subscribe` and `unsubscribe` are socket-specific
+///    transport features for push event management. They are NOT canonical API actions
+///    and are handled directly by the socket layer.
+/// 2. **Canonical dispatch** — all other actions are routed through `api::dispatch()`,
+///    producing the same canonical request/response envelope as HTTP, MCP, and CVM.
 async fn handle_request(
     state: &ServerState,
     conn_id: ConnId,
     req: nomen_wire::Request,
 ) -> Response {
     match req.action.as_str() {
+        // Transport-specific: event subscription management
         "subscribe" => handle_subscribe(state, conn_id, &req).await,
         "unsubscribe" => handle_unsubscribe(state, conn_id, &req).await,
+        // Canonical dispatch — same semantics as HTTP/MCP/CVM
         _ => {
-            // Route through dispatch
             let api_resp = crate::api::dispatch(
                 &state.nomen,
                 &state.default_channel,
@@ -231,7 +239,7 @@ async fn handle_request(
             )
             .await;
 
-            // Convert ApiResponse to wire Response
+            // Map canonical ApiResponse to wire Response envelope
             let resp_value = serde_json::to_value(&api_resp).unwrap_or_default();
             Response {
                 id: req.id,

@@ -18,14 +18,18 @@
     raw?: any;
   }
 
+  import type { Snippet } from 'svelte';
+
   let {
     entries = [],
     onselect,
     emptyText = 'No entries',
+    actions,
   }: {
     entries: ProfileListEntry[];
     onselect?: (entry: ProfileListEntry) => void;
     emptyText?: string;
+    actions?: Snippet<[ProfileListEntry]>;
   } = $props();
 </script>
 
@@ -52,7 +56,9 @@
           agentCount={entry.agentCount}
         >
           {#snippet children()}
-            <slot name="actions" {entry} />
+            {#if actions}
+              {@render actions(entry)}
+            {/if}
           {/snippet}
         </ProfileCard>
       </button>

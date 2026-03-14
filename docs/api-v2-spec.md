@@ -6,7 +6,7 @@
 
 ## Design Principle
 
-ContextVM is the **canonical external interface**. MCP is a **wrapper/projection** of the same operations. Both use the same shared dispatch layer internally.
+The canonical operation model is transport-independent. HTTP, MCP, ContextVM, and socket are transport adapters or projections of the same operations. All canonical actions route through `api::dispatch()`. Individual transports may expose additional transport-specific capabilities (e.g., socket provides `subscribe`/`unsubscribe` for push event management) that are not part of the canonical operation model.
 
 ## Field Model
 
@@ -90,6 +90,54 @@ All responses use a structured JSON envelope:
 | `rate_limited` | Too many requests |
 | `internal_error` | Unexpected server error |
 | `unknown_action` | Action name not recognized |
+
+---
+
+## HTTP Transport
+
+The HTTP server exposes the canonical dispatch endpoint for remote agents and integrations.
+
+### Canonical dispatch endpoint
+
+**`POST /memory/api/dispatch`**
+
+Request body:
+
+```json
+{
+  "action": "memory.search",
+  "params": {
+    "query": "relay configuration",
+    "limit": 10
+  }
+}
+```
+
+Response body: the canonical response envelope defined above.
+
+```json
+{
+  "ok": true,
+  "result": {
+    "count": 3,
+    "results": [...]
+  },
+  "meta": {
+    "version": "v2"
+  }
+}
+```
+
+### Utility endpoints
+
+These endpoints live outside the dispatch model and serve operational needs:
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/health` | GET | Health check |
+| `/stats` | GET | Memory statistics |
+| `/config` | GET | Current configuration |
+| `/config/reload` | POST | Reload configuration |
 
 ---
 
@@ -636,7 +684,7 @@ Prune old/unused memories and consolidated raw messages.
 
 ## ContextVM transport mapping
 
-ContextVM wraps the canonical API over Nostr:
+ContextVM is one of several transport adapters. It wraps the canonical API over Nostr:
 
 - Request: kind 25910 ephemeral event, NIP-44/NIP-59 encrypted
 - Response: kind 25910 response, encrypted to requester
@@ -680,26 +728,6 @@ Each canonical operation maps to an MCP tool with the same name and argument sch
 
 MCP tools use the same parameter names and types. The MCP response wraps the structured result as MCP content text (JSON-serialized).
 
-### Legacy compatibility
-
-Old `nomen_*` tools should remain temporarily, mapping internally to v2 operations:
-
-| Legacy tool | Maps to |
-|-------------|---------|
-| `nomen_search` | `memory.search` |
-| `nomen_store` | `memory.put` |
-| `nomen_delete` | `memory.delete` |
-| `nomen_ingest` | `message.ingest` |
-| `nomen_messages` | `message.list` |
-| `nomen_entities` | (keep as-is or add `entity.list`) |
-| `nomen_consolidate` | `memory.consolidate` |
-| `nomen_groups` | `group.*` (dispatch by sub-action) |
-| `nomen_send` | (keep or move to `message.send`) |
-| `nomen_list` | `memory.list` |
-| `nomen_sync` | `memory.sync` |
-| `nomen_embed` | `memory.embed` |
-| `nomen_prune` | `memory.prune` |
-
 ---
 
 ## Implementation architecture
@@ -716,13 +744,17 @@ src/
 │       ├── message.rs  — ingest, list, context
 │       ├── maintenance.rs — consolidate, cluster, sync, embed, prune
 │       └── group.rs    — list, members, create, add/remove member
-├── mcp.rs              — MCP wrapper (calls api::dispatch)
-├── cvm.rs              — ContextVM wrapper (calls api::dispatch)
+├── http.rs             — HTTP transport (calls api::dispatch)
+├── mcp.rs              — MCP transport (calls api::dispatch)
+├── cvm.rs              — ContextVM transport (calls api::dispatch)
+├── socket.rs           — Socket transport (calls api::dispatch)
 └── ... (existing modules unchanged)
 ```
 
-Both `mcp.rs` and `cvm.rs` become thin adapters that:
+All four transport adapters (`http.rs`, `mcp.rs`, `cvm.rs`, `socket.rs`) follow the same pattern for canonical operations:
 1. Parse transport-specific framing
 2. Extract `action` + `params`
 3. Call `api::dispatch()`
 4. Format transport-specific response
+
+Socket additionally handles `subscribe` and `unsubscribe` as transport-specific capabilities for push event management. These are not canonical API actions and are handled directly by the socket layer before reaching dispatch.

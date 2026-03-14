@@ -1,6 +1,7 @@
 use anyhow::Result;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
+use surrealdb::types::SurrealValue;
 use tracing::warn;
 
 /// Kind of entity extracted from text.
@@ -63,7 +64,7 @@ pub struct ExtractedRelationship {
 }
 
 /// An entity record from SurrealDB.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, SurrealValue)]
 pub struct EntityRecord {
     #[serde(default)]
     pub id: String,
@@ -74,7 +75,7 @@ pub struct EntityRecord {
 }
 
 /// A relationship record from SurrealDB.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, SurrealValue)]
 pub struct RelationshipRecord {
     pub from_name: String,
     pub to_name: String,

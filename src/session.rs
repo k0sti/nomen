@@ -13,6 +13,7 @@
 use anyhow::{bail, Result};
 use nostr_sdk::prelude::*;
 use serde::{Deserialize, Serialize};
+use surrealdb::types::SurrealValue;
 
 use crate::groups::GroupStore;
 
@@ -34,7 +35,7 @@ pub struct ResolvedSession {
 }
 
 /// SurrealDB session record.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, SurrealValue)]
 pub struct SessionRecord {
     #[serde(default, deserialize_with = "crate::db::deserialize_thing_as_string")]
     pub id: String,

@@ -139,6 +139,11 @@ impl Nomen {
     /// separately if relay interaction is needed.
     pub async fn open(config: &Config) -> Result<Self> {
         let db = db::init_db_with_dimensions(config.embedding_dimensions()).await?;
+        Self::open_with_db(config, db).await
+    }
+
+    /// Open with a pre-existing DB handle (avoids SurrealDB 3.x exclusive lock conflicts).
+    pub async fn open_with_db(config: &Config, db: surrealdb::Surreal<surrealdb::engine::local::Db>) -> Result<Self> {
         let embedder = config.build_embedder();
         let groups = GroupStore::load(&config.groups, &db).await?;
         let signer = config.build_signer();
@@ -151,6 +156,16 @@ impl Nomen {
             signer,
             event_tx: None,
         })
+    }
+
+    /// Open with a pre-existing DB and relay manager.
+    pub async fn open_with_db_and_relay(config: &Config, db: surrealdb::Surreal<surrealdb::engine::local::Db>, relay: RelayManager) -> Result<Self> {
+        let mut nomen = Self::open_with_db(config, db).await?;
+        if nomen.signer.is_none() {
+            nomen.signer = Some(relay.arc_signer().clone());
+        }
+        nomen.relay = Some(relay);
+        Ok(nomen)
     }
 
     /// Open with an explicit relay manager (already connected or not).

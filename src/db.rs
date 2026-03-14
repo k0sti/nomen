@@ -2,6 +2,7 @@ use anyhow::{Context, Result};
 use nostr_sdk::prelude::*;
 use serde::{Deserialize, Deserializer, Serialize};
 use surrealdb::engine::local::{Db, SurrealKv};
+use surrealdb::types::{RecordId, SurrealValue};
 use surrealdb::Surreal;
 use tracing::debug;
 
@@ -105,7 +106,7 @@ where
 }
 
 /// SurrealDB memory record
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, SurrealValue)]
 pub struct MemoryRecord {
     pub content: String,
     pub summary: Option<String>,
@@ -126,13 +127,13 @@ pub struct MemoryRecord {
 }
 
 /// Version check result
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, SurrealValue)]
 struct VersionCheck {
     version: i64,
 }
 
 /// Search result from SurrealDB (text-only search)
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, SurrealValue)]
 pub struct TextSearchResult {
     pub content: String,
     pub summary: Option<String>,
@@ -145,7 +146,7 @@ pub struct TextSearchResult {
 }
 
 /// Hybrid search result from SurrealDB
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, SurrealValue)]
 pub struct HybridSearchRow {
     pub content: String,
     pub summary: Option<String>,
@@ -168,7 +169,7 @@ pub struct HybridSearchRow {
 }
 
 /// Row for memories missing embeddings
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, SurrealValue)]
 pub struct MissingEmbeddingRow {
     pub d_tag: Option<String>,
     pub content: String,
@@ -222,7 +223,7 @@ DEFINE FIELD IF NOT EXISTS importance        ON memory TYPE option<int>;
 -- still support lexicographic ordering which is sufficient for our queries.
 
 DEFINE ANALYZER IF NOT EXISTS memory_analyzer TOKENIZERS class FILTERS ascii, lowercase, snowball(english);
-DEFINE INDEX IF NOT EXISTS memory_fulltext ON memory FIELDS content SEARCH ANALYZER memory_analyzer BM25;
+DEFINE INDEX IF NOT EXISTS memory_fulltext ON memory FIELDS content FULLTEXT ANALYZER memory_analyzer BM25;
 DEFINE INDEX IF NOT EXISTS memory_d_tag  ON memory FIELDS d_tag UNIQUE;
 DEFINE INDEX IF NOT EXISTS memory_tier   ON memory FIELDS tier;
 DEFINE INDEX IF NOT EXISTS memory_scope  ON memory FIELDS scope;
@@ -297,6 +298,7 @@ pub async fn init_db_with_dimensions(dimensions: usize) -> Result<Surreal<Db>> {
 
     debug!("Opening SurrealDB at {}", path.display());
     let db = Surreal::new::<SurrealKv>(path)
+        .versioned()
         .await
         .context("Failed to open SurrealDB")?;
 
@@ -313,7 +315,7 @@ pub async fn init_db_with_dimensions(dimensions: usize) -> Result<Surreal<Db>> {
     db.query(&hnsw_sql)
         .await
         .context("Failed to apply HNSW index")?;
-    debug!(dimensions, "Schema applied with HNSW dimensions");
+    debug!(dimensions, "Schema applied");
 
     Ok(db)
 }
@@ -391,11 +393,34 @@ pub async fn store_memory_direct(
     let record = build_record(parsed, event_id);
     let d_tag_owned = record.d_tag.clone().unwrap_or_default();
 
-    db.query("DELETE FROM memory WHERE d_tag = $d_tag; CREATE memory CONTENT $record")
+    db.query("DELETE FROM memory WHERE d_tag = $d_tag")
         .bind(("d_tag", d_tag_owned.clone()))
-        .bind(("record", record))
         .await?
         .check()?;
+
+    db.query(
+        "CREATE memory SET \
+         content = $content, summary = $summary, tier = $tier, scope = $scope, \
+         topic = $topic, confidence = $confidence, source = $source, model = $model, \
+         version = $version, nostr_id = $nostr_id, d_tag = $d_tag, \
+         created_at = $created_at, updated_at = $updated_at, ephemeral = $ephemeral"
+    )
+    .bind(("content", record.content))
+    .bind(("summary", record.summary))
+    .bind(("tier", record.tier))
+    .bind(("scope", record.scope))
+    .bind(("topic", record.topic))
+    .bind(("confidence", record.confidence))
+    .bind(("source", record.source))
+    .bind(("model", record.model))
+    .bind(("version", record.version))
+    .bind(("nostr_id", record.nostr_id))
+    .bind(("d_tag", record.d_tag))
+    .bind(("created_at", record.created_at))
+    .bind(("updated_at", record.updated_at))
+    .bind(("ephemeral", record.ephemeral))
+    .await?
+    .check()?;
 
     Ok(d_tag_owned)
 }
@@ -476,13 +501,15 @@ pub async fn list_memories(
     limit: usize,
 ) -> Result<Vec<MemoryRecord>> {
     let (sql, bind_tier);
+    // Exclude embedding from SELECT to avoid SurrealDB HNSW index deserialization issues
+    let fields = "content, summary, tier, scope, topic, confidence, source, model, version, nostr_id, d_tag, created_at, updated_at, ephemeral, consolidated_from, consolidated_at, last_accessed, access_count, importance";
     if let Some(t) = tier {
         sql = format!(
-            "SELECT * FROM memory WHERE tier = $tier ORDER BY created_at DESC LIMIT {limit}"
+            "SELECT {fields} FROM memory WHERE tier = $tier ORDER BY created_at DESC LIMIT {limit}"
         );
         bind_tier = Some(t.to_string());
     } else {
-        sql = format!("SELECT * FROM memory ORDER BY created_at DESC LIMIT {limit}");
+        sql = format!("SELECT {fields} FROM memory ORDER BY created_at DESC LIMIT {limit}");
         bind_tier = None;
     }
 
@@ -571,7 +598,7 @@ pub async fn hybrid_search(
 /// Get a single memory by d-tag (topic).
 pub async fn get_memory_by_dtag(db: &Surreal<Db>, d_tag: &str) -> Result<Option<MemoryRecord>> {
     let mut results: Vec<MemoryRecord> = db
-        .query("SELECT * FROM memory WHERE d_tag = $d_tag LIMIT 1")
+        .query("SELECT content, summary, tier, scope, topic, confidence, source, model, version, nostr_id, d_tag, created_at, updated_at, ephemeral, consolidated_from, consolidated_at, last_accessed, access_count, importance FROM memory WHERE d_tag = $d_tag LIMIT 1")
         .bind(("d_tag", d_tag.to_string()))
         .await?
         .check()?
@@ -582,7 +609,7 @@ pub async fn get_memory_by_dtag(db: &Surreal<Db>, d_tag: &str) -> Result<Option<
 /// Get a single memory by topic field (raw topic, not d-tag).
 pub async fn get_memory_by_topic(db: &Surreal<Db>, topic: &str) -> Result<Option<MemoryRecord>> {
     let mut results: Vec<MemoryRecord> = db
-        .query("SELECT * FROM memory WHERE topic = $topic LIMIT 1")
+        .query("SELECT content, summary, tier, scope, topic, confidence, source, model, version, nostr_id, d_tag, created_at, updated_at, ephemeral, consolidated_from, consolidated_at, last_accessed, access_count, importance FROM memory WHERE topic = $topic LIMIT 1")
         .bind(("topic", topic.to_string()))
         .await?
         .check()?
@@ -658,7 +685,7 @@ pub async fn store_raw_message(db: &Surreal<Db>, msg: &RawMessage) -> Result<Str
     let source_id = msg.source_id.clone().unwrap_or_default();
     let channel = msg.channel.clone().unwrap_or_default();
     // Use serde-based record creation to avoid bind serialization issues
-    #[derive(Serialize)]
+    #[derive(Serialize, SurrealValue)]
     struct NewRawMessage {
         source: String,
         source_id: String,
@@ -750,7 +777,7 @@ pub async fn mark_messages_consolidated(db: &Surreal<Db>, ids: &[String]) -> Res
         db.query("UPDATE $id SET consolidated = true")
             .bind((
                 "id",
-                surrealdb::sql::Thing::from(("raw_message", id.as_str())),
+                RecordId::new("raw_message", id.as_str()),
             ))
             .await?
             .check()?;
@@ -831,10 +858,9 @@ pub async fn create_references_edge(
     relation: &str,
 ) -> Result<()> {
     // Resolve d_tags to record IDs
-    #[derive(Deserialize)]
+    #[derive(Deserialize, SurrealValue)]
     struct IdRow {
-        #[serde(deserialize_with = "deserialize_thing_as_string")]
-        id: String,
+        id: RecordId,
     }
     let from_rows: Vec<IdRow> = db
         .query("SELECT id FROM memory WHERE d_tag = $d_tag LIMIT 1")
@@ -858,13 +884,9 @@ pub async fn create_references_edge(
         .map(|r| &r.id)
         .ok_or_else(|| anyhow::anyhow!("Memory not found: {to_d_tag}"))?;
 
-    // Parse table:id format
-    let (from_tb, from_rid) = from_id.split_once(':').unwrap_or(("memory", from_id));
-    let (to_tb, to_rid) = to_id.split_once(':').unwrap_or(("memory", to_id));
-
     db.query("RELATE $from->references->$to SET relation = $relation, created_at = $now")
-        .bind(("from", surrealdb::sql::Thing::from((from_tb, from_rid))))
-        .bind(("to", surrealdb::sql::Thing::from((to_tb, to_rid))))
+        .bind(("from", from_id.clone()))
+        .bind(("to", to_id.clone()))
         .bind(("relation", relation.to_string()))
         .bind(("now", chrono::Utc::now().to_rfc3339()))
         .await?
@@ -873,7 +895,7 @@ pub async fn create_references_edge(
 }
 
 /// A memory discovered through graph edge traversal.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, SurrealValue)]
 pub struct GraphNeighbor {
     /// Edge type: "mentions", "references", "consolidated_from", or "contradicts"
     pub edge_type: String,
@@ -900,10 +922,9 @@ pub async fn get_graph_neighbors_simple(
     let mut all: Vec<GraphNeighbor> = Vec::new();
 
     // Find the memory record ID first
-    #[derive(Deserialize)]
+    #[derive(Deserialize, SurrealValue)]
     struct IdRow {
-        #[serde(deserialize_with = "deserialize_thing_as_string")]
-        id: String,
+        id: RecordId,
     }
     let rows: Vec<IdRow> = db
         .query("SELECT id FROM memory WHERE d_tag = $d_tag LIMIT 1")
@@ -912,20 +933,16 @@ pub async fn get_graph_neighbors_simple(
         .check()?
         .take(0)?;
 
-    let mem_id = match rows.first() {
+    let thing = match rows.first() {
         Some(r) => r.id.clone(),
         None => return Ok(all),
     };
 
-    let (tb, rid) = mem_id.split_once(':').unwrap_or(("memory", &mem_id));
-    let thing = surrealdb::sql::Thing::from((tb, rid));
-
     // 1. Outgoing references: memory->references->memory
-    #[derive(Debug, Deserialize)]
+    #[derive(Debug, Deserialize, SurrealValue)]
     struct RefEdge {
         relation: Option<String>,
-        #[serde(deserialize_with = "deserialize_thing_as_string")]
-        out: String,
+        out: RecordId,
     }
     let out_edges: Vec<RefEdge> = db
         .query("SELECT relation, out FROM references WHERE in = $mid")
@@ -935,11 +952,9 @@ pub async fn get_graph_neighbors_simple(
         .take(0)?;
 
     for edge in &out_edges {
-        let (otb, orid) = edge.out.split_once(':').unwrap_or(("memory", &edge.out));
-        let target_thing = surrealdb::sql::Thing::from((otb, orid));
         let mems: Vec<GraphNeighbor> = db
             .query("SELECT $edge_type AS edge_type, $relation AS relation, tier, topic, confidence, content, summary, created_at, d_tag, importance, last_accessed FROM $target")
-            .bind(("target", target_thing))
+            .bind(("target", edge.out.clone()))
             .bind(("edge_type", "references".to_string()))
             .bind(("relation", edge.relation.clone().unwrap_or_default()))
             .await?
@@ -949,12 +964,12 @@ pub async fn get_graph_neighbors_simple(
     }
 
     // 2. Incoming references: memory<-references<-memory
-    #[derive(Debug, Deserialize)]
+    #[derive(Debug, Deserialize, SurrealValue)]
     struct RefEdgeIn {
         relation: Option<String>,
         #[serde(rename = "in")]
-        #[serde(deserialize_with = "deserialize_thing_as_string")]
-        in_node: String,
+        #[surreal(rename = "in")]
+        in_node: RecordId,
     }
     let in_edges: Vec<RefEdgeIn> = db
         .query("SELECT relation, in FROM references WHERE out = $mid")
@@ -964,14 +979,9 @@ pub async fn get_graph_neighbors_simple(
         .take(0)?;
 
     for edge in &in_edges {
-        let (otb, orid) = edge
-            .in_node
-            .split_once(':')
-            .unwrap_or(("memory", &edge.in_node));
-        let target_thing = surrealdb::sql::Thing::from((otb, orid));
         let mems: Vec<GraphNeighbor> = db
             .query("SELECT $edge_type AS edge_type, $relation AS relation, tier, topic, confidence, content, summary, created_at, d_tag, importance, last_accessed FROM $target")
-            .bind(("target", target_thing))
+            .bind(("target", edge.in_node.clone()))
             .bind(("edge_type", "references".to_string()))
             .bind(("relation", edge.relation.clone().unwrap_or_default()))
             .await?
@@ -981,10 +991,9 @@ pub async fn get_graph_neighbors_simple(
     }
 
     // 3. Shared entity mentions: find entities this memory mentions, then find other memories mentioning those entities
-    #[derive(Debug, Deserialize)]
+    #[derive(Debug, Deserialize, SurrealValue)]
     struct MentionEdge {
-        #[serde(deserialize_with = "deserialize_thing_as_string")]
-        out: String,
+        out: RecordId,
     }
     let mention_edges: Vec<MentionEdge> = db
         .query("SELECT out FROM mentions WHERE in = $mid")
@@ -994,36 +1003,25 @@ pub async fn get_graph_neighbors_simple(
         .take(0)?;
 
     for mention in &mention_edges {
-        let (etb, erid) = mention
-            .out
-            .split_once(':')
-            .unwrap_or(("entity", &mention.out));
-        let entity_thing = surrealdb::sql::Thing::from((etb, erid));
-
         // Find other memories that also mention this entity
-        #[derive(Debug, Deserialize)]
+        #[derive(Debug, Deserialize, SurrealValue)]
         struct MentionBack {
             #[serde(rename = "in")]
-            #[serde(deserialize_with = "deserialize_thing_as_string")]
-            in_node: String,
+            #[surreal(rename = "in")]
+            in_node: RecordId,
         }
         let back_edges: Vec<MentionBack> = db
             .query("SELECT in FROM mentions WHERE out = $ent AND in != $mid")
-            .bind(("ent", entity_thing))
+            .bind(("ent", mention.out.clone()))
             .bind(("mid", thing.clone()))
             .await?
             .check()?
             .take(0)?;
 
         for back in &back_edges {
-            let (mtb, mrid) = back
-                .in_node
-                .split_once(':')
-                .unwrap_or(("memory", &back.in_node));
-            let target_thing = surrealdb::sql::Thing::from((mtb, mrid));
             let mems: Vec<GraphNeighbor> = db
                 .query("SELECT $edge_type AS edge_type, NONE AS relation, tier, topic, confidence, content, summary, created_at, d_tag, importance, last_accessed FROM $target")
-                .bind(("target", target_thing))
+                .bind(("target", back.in_node.clone()))
                 .bind(("edge_type", "mentions".to_string()))
                 .await?
                 .check()?
@@ -1033,10 +1031,9 @@ pub async fn get_graph_neighbors_simple(
     }
 
     // 4. Consolidated_from siblings: memories that share the same raw message sources
-    #[derive(Debug, Deserialize)]
+    #[derive(Debug, Deserialize, SurrealValue)]
     struct ConsolidatedEdge {
-        #[serde(deserialize_with = "deserialize_thing_as_string")]
-        out: String,
+        out: RecordId,
     }
     let consolidated_edges: Vec<ConsolidatedEdge> = db
         .query("SELECT out FROM consolidated_from WHERE in = $mid")
@@ -1046,35 +1043,24 @@ pub async fn get_graph_neighbors_simple(
         .take(0)?;
 
     for consol in &consolidated_edges {
-        let (rtb, rrid) = consol
-            .out
-            .split_once(':')
-            .unwrap_or(("raw_message", &consol.out));
-        let raw_thing = surrealdb::sql::Thing::from((rtb, rrid));
-
-        #[derive(Debug, Deserialize)]
+        #[derive(Debug, Deserialize, SurrealValue)]
         struct ConsolBack {
             #[serde(rename = "in")]
-            #[serde(deserialize_with = "deserialize_thing_as_string")]
-            in_node: String,
+            #[surreal(rename = "in")]
+            in_node: RecordId,
         }
         let back_edges: Vec<ConsolBack> = db
             .query("SELECT in FROM consolidated_from WHERE out = $raw AND in != $mid")
-            .bind(("raw", raw_thing))
+            .bind(("raw", consol.out.clone()))
             .bind(("mid", thing.clone()))
             .await?
             .check()?
             .take(0)?;
 
         for back in &back_edges {
-            let (mtb, mrid) = back
-                .in_node
-                .split_once(':')
-                .unwrap_or(("memory", &back.in_node));
-            let target_thing = surrealdb::sql::Thing::from((mtb, mrid));
             let mems: Vec<GraphNeighbor> = db
                 .query("SELECT $edge_type AS edge_type, NONE AS relation, tier, topic, confidence, content, summary, created_at, d_tag, importance, last_accessed FROM $target")
-                .bind(("target", target_thing))
+                .bind(("target", back.in_node.clone()))
                 .bind(("edge_type", "consolidated_from".to_string()))
                 .await?
                 .check()?
@@ -1106,7 +1092,7 @@ pub async fn get_ephemeral_messages_before(
 
 /// Delete ephemeral raw messages older than a cutoff.
 pub async fn delete_ephemeral_before(db: &Surreal<Db>, before: &str) -> Result<usize> {
-    #[derive(Deserialize)]
+    #[derive(Deserialize, SurrealValue)]
     struct CountResult {
         count: usize,
     }
@@ -1128,7 +1114,7 @@ pub async fn delete_ephemeral_before(db: &Surreal<Db>, before: &str) -> Result<u
 
 /// Count memories by type (ephemeral vs named).
 pub async fn count_memories_by_type(db: &Surreal<Db>) -> Result<(usize, usize, usize)> {
-    #[derive(Deserialize)]
+    #[derive(Deserialize, SurrealValue)]
     struct CountRow {
         count: usize,
     }
@@ -1168,7 +1154,7 @@ pub async fn query_messages_around(
     context_count: usize,
 ) -> Result<Vec<RawMessageRecord>> {
     // First, find the target message's created_at
-    #[derive(Deserialize)]
+    #[derive(Deserialize, SurrealValue)]
     struct TimeRow {
         created_at: String,
     }
@@ -1196,9 +1182,9 @@ pub async fn query_messages_around(
          FROM raw_message WHERE created_at > $pivot ORDER BY created_at ASC LIMIT {context_count}"
     );
 
+    let combined_sql = format!("{before_sql}; {after_sql}");
     let mut result = db
-        .query(&before_sql)
-        .query(&after_sql)
+        .query(&combined_sql)
         .bind(("pivot", pivot_time))
         .await?
         .check()?;
@@ -1214,7 +1200,7 @@ pub async fn query_messages_around(
 
 /// Count consolidated raw messages older than the given cutoff date (RFC3339).
 pub async fn count_old_messages(db: &Surreal<Db>, before: &str) -> Result<usize> {
-    #[derive(Deserialize)]
+    #[derive(Deserialize, SurrealValue)]
     struct CountResult {
         count: usize,
     }
@@ -1264,7 +1250,7 @@ pub async fn update_access_tracking_batch(db: &Surreal<Db>, d_tags: &[String]) -
 // ── Memory pruning ──────────────────────────────────────────────────
 
 /// Record for pruning candidates.
-#[derive(Debug, Deserialize, serde::Serialize)]
+#[derive(Debug, Deserialize, serde::Serialize, SurrealValue)]
 pub struct PrunableMemory {
     #[serde(default, deserialize_with = "deserialize_option_string")]
     pub d_tag: Option<String>,
@@ -1423,8 +1409,8 @@ pub async fn create_mention_edge(
     relevance: f64,
 ) -> Result<()> {
     db.query("RELATE $from->mentions->$to SET relevance = $relevance")
-        .bind(("from", surrealdb::sql::Thing::from(("memory", memory_id))))
-        .bind(("to", surrealdb::sql::Thing::from(("entity", entity_id))))
+        .bind(("from", RecordId::new("memory", memory_id)))
+        .bind(("to", RecordId::new("entity", entity_id)))
         .bind(("relevance", relevance))
         .await?
         .check()?;
@@ -1445,8 +1431,8 @@ pub async fn create_typed_edge(
     db.query(
         "RELATE $from->related_to->$to SET relation = $relation, detail = $detail, created_at = $now",
     )
-    .bind(("from", surrealdb::sql::Thing::from(("entity", from_entity_id))))
-    .bind(("to", surrealdb::sql::Thing::from(("entity", to_entity_id))))
+    .bind(("from", RecordId::new("entity", from_entity_id)))
+    .bind(("to", RecordId::new("entity", to_entity_id)))
     .bind(("relation", relation.to_string()))
     .bind(("detail", detail.unwrap_or("").to_string()))
     .bind(("now", now))
@@ -1490,11 +1476,8 @@ pub async fn create_consolidated_edge(
     raw_message_id: &str,
 ) -> Result<()> {
     db.query("RELATE $from->consolidated_from->$to")
-        .bind(("from", surrealdb::sql::Thing::from(("memory", memory_id))))
-        .bind((
-            "to",
-            surrealdb::sql::Thing::from(("raw_message", raw_message_id)),
-        ))
+        .bind(("from", RecordId::new("memory", memory_id)))
+        .bind(("to", RecordId::new("raw_message", raw_message_id)))
         .await?
         .check()?;
     Ok(())
@@ -1504,7 +1487,7 @@ pub async fn create_consolidated_edge(
 
 /// Get a meta value by key.
 pub async fn get_meta(db: &Surreal<Db>, key: &str) -> Result<Option<String>> {
-    #[derive(Deserialize)]
+    #[derive(Deserialize, SurrealValue)]
     struct MetaRow {
         val: String,
     }
@@ -1531,7 +1514,7 @@ pub async fn set_meta(db: &Surreal<Db>, key: &str, val: &str) -> Result<()> {
 
 /// Count unconsolidated raw messages.
 pub async fn count_unconsolidated_messages(db: &Surreal<Db>) -> Result<usize> {
-    #[derive(Deserialize)]
+    #[derive(Deserialize, SurrealValue)]
     struct CountRow {
         count: usize,
     }
@@ -1554,7 +1537,7 @@ pub async fn create_session(
 ) -> Result<String> {
     let now = chrono::Utc::now().to_rfc3339();
 
-    #[derive(Serialize)]
+    #[derive(Serialize, SurrealValue)]
     struct NewSession {
         session_id: String,
         tier: String,

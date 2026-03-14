@@ -360,7 +360,7 @@
           onselect={(entry) => openAgent(entry.raw)}
           emptyText="No agents configured yet. Add one below."
         >
-          <svelte:fragment slot="actions" let:entry>
+          {#snippet actions(entry)}
             <button
               onclick={(e) => { e.stopPropagation(); removeAgent(entry.raw.npub); }}
               class="w-9 h-9 flex items-center justify-center rounded-lg text-gray-600 hover:text-red-400 hover:bg-red-900/20 transition-colors duration-150"
@@ -371,7 +371,7 @@
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
               </svg>
             </button>
-          </svelte:fragment>
+          {/snippet}
         </ProfileList>
       {/if}
     </section>

@@ -144,7 +144,7 @@ export const groups = writable<Group[]>([]);
 export const entities = writable<Entity[]>([]);
 
 // ── Filters ──────────────────────────────────────────────────────
-export const tierFilter = writable<string>('');
+export const visibilityFilter = writable<string>('');
 export const sourceFilter = writable<string>('');
 export const channelFilter = writable<string>('');
 

@@ -16,10 +16,12 @@ Nostr Relay (source of truth)
 SurrealDB (embedded, local cache)
     │ search / store / ingest
     ▼
-┌────────┬──────────┬──────────┬──────────┐
-│  CLI   │  MCP     │  HTTP    │ ContextVM│
-│ nomen  │  stdio   │  server  │  Nostr   │
-└────────┴──────────┴──────────┴──────────┘
+Canonical dispatch (src/api/dispatch.rs)
+    │
+┌────────┬──────────┬──────────┬──────────┬──────────┐
+│  CLI   │  MCP     │  HTTP    │ ContextVM│  Socket  │
+│ nomen  │  stdio   │ dispatch │  Nostr   │  TCP/Unix│
+└────────┴──────────┴──────────┴──────────┴──────────┘
 ```
 
 ## Module Map
@@ -258,7 +260,7 @@ See `docs/zeroclaw-integration-spec.md` for the full adapter contract.
 
 ### Canonical API (v2)
 
-All external operations are defined in the **canonical API layer** (`src/api/`). Both ContextVM and MCP route through the same `api::dispatch()` function.
+All external operations are defined in the **canonical API layer** (`src/api/dispatch.rs`). The canonical operation model is transport-independent. ContextVM, MCP, HTTP, and socket are transport adapters. All transports (HTTP, MCP, ContextVM, socket) route through the same `api::dispatch()` function.
 
 **21 operations** across 5 domains:
 
@@ -276,9 +278,9 @@ Responses use structured envelopes: `{ "ok": true, "result": { ... } }` or `{ "o
 
 See `docs/api-v2-spec.md` for full specification.
 
-### ContextVM — Canonical External Interface
+### ContextVM — Nostr-Native Transport
 
-ContextVM is the **authoritative remote interface** for external agents connecting over Nostr.
+ContextVM is the Nostr-native transport adapter, carrying canonical operations over encrypted Nostr events.
 
 - Encrypted transport (NIP-44 / NIP-59)
 - Identity via Nostr keypairs
@@ -298,6 +300,30 @@ MCP is a **wrapper over the canonical API** for agent frameworks that speak MCP 
 
 Implementation: `src/mcp.rs`.
 
+### Socket — Local Event-Capable Transport
+
+Socket is a **local-only transport** for efficient shared access to the Nomen runtime by local AI agents and trusted processes. It is not the preferred remote transport (use HTTP for that).
+
+- Canonical operations use the same `action + params → ApiResponse` flow as other transports
+- Transport-specific capabilities: `subscribe` and `unsubscribe` for push event management
+- These are **not** canonical API actions — they are connection-scoped transport features
+- Push events (e.g. `memory.updated`, `agent.connected`) are delivered via a separate event frame type
+
+Implementation: `src/socket.rs`. Wire protocol types: `nomen-wire/src/types.rs`.
+
+### Transport Comparison
+
+| | HTTP | MCP | ContextVM | Socket |
+|---|---|---|---|---|
+| **Primary use** | Remote generic | Local agent compat | Nostr-native remote | Local shared access |
+| **Canonical dispatch** | Yes | Yes (via tool mapping) | Yes (direct + tools/call) | Yes |
+| **Framing** | HTTP POST | JSON-RPC stdio | Nostr events (NIP-44/59) | Length-prefixed JSON frames |
+| **Transport-specific features** | Health, stats, config endpoints | Tool listing, initialize | Encryption, allowlist, rate limit | Subscribe/unsubscribe, push events |
+| **Auth** | None (planned) | N/A (local) | Nostr keypairs + ACL | Unix permissions |
+| **Implementation** | `http.rs` | `mcp.rs` | `cvm.rs` | `socket.rs` |
+
+All transports share the same canonical operation semantics. Transport-specific features are clearly separated from the canonical API.
+
 ### CLI
 
 ```
@@ -316,8 +342,9 @@ The `nomen serve` command supports running multiple interfaces concurrently:
 | Mode | Command | Description |
 |------|---------|-------------|
 | stdio MCP only | `nomen serve` | Default. MCP JSON-RPC over stdin/stdout. |
-| HTTP only | `nomen serve --http :3000` | REST API + web UI. |
+| HTTP only | `nomen serve --http :3000` | HTTP dispatch + web UI. |
 | CVM only | `nomen serve --context-vm` | ContextVM listener only. |
+| Socket only | `nomen serve --socket /tmp/nomen.sock` | Unix/TCP socket transport (canonical dispatch + transport-specific subscriptions). |
 | CVM + stdio MCP | `nomen serve --context-vm --stdio` | ContextVM + stdio MCP (both run). |
 | HTTP + CVM | `nomen serve --http :3000 --context-vm` | Both HTTP and ContextVM run concurrently. |
 
@@ -325,7 +352,7 @@ CVM requires nsec keys (via config or `--nsec`). The `[contextvm]` config sectio
 
 ### HTTP Server (`nomen serve --http :3000`)
 
-REST API for remote agents and web UIs.
+First-class remote transport for agents and web UIs. Exposes the canonical dispatch endpoint at `POST /memory/api/dispatch` accepting `{ action, params }` envelopes. Additional utility endpoints for health, stats, and config are served alongside.
 
 ### CVM Transport Notes
 
