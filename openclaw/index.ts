@@ -277,6 +277,108 @@ const memoryNomenPlugin = {
       { names: ["memory_get"] },
     );
 
+    // ── memory_consolidate_prepare ───────────────────────────────
+
+    api.registerTool(
+      {
+        name: "memory_consolidate_prepare",
+        label: "Memory Consolidate Prepare",
+        description:
+          "Prepare consolidation batches for two-phase agent mode. Returns grouped message batches for external LLM processing.",
+        parameters: {
+          type: "object",
+          properties: {
+            batch_size: { type: "number", description: "Max messages per batch (default 50)" },
+            min_messages: { type: "number", description: "Min messages to trigger (default 3)" },
+            ttl_minutes: { type: "number", description: "Session TTL in minutes (default 60)" },
+          },
+        },
+        async execute(_toolCallId: string, params: any) {
+          const resp = await nomenRequest(
+            cfg.apiUrl,
+            "memory.consolidate_prepare",
+            {
+              batch_size: params?.batch_size ?? 50,
+              min_messages: params?.min_messages ?? 3,
+              ttl_minutes: params?.ttl_minutes ?? 60,
+            },
+            cfg.timeoutMs,
+          );
+
+          if (!resp.ok) {
+            return jsonResult({ error: resp.error?.message ?? "prepare failed" });
+          }
+
+          return jsonResult(resp.result as Record<string, unknown>);
+        },
+      },
+      { names: ["memory_consolidate_prepare"] },
+    );
+
+    // ── memory_consolidate_commit ─────────────────────────────────
+
+    api.registerTool(
+      {
+        name: "memory_consolidate_commit",
+        label: "Memory Consolidate Commit",
+        description:
+          "Commit agent-provided extractions for a prepared consolidation session. Runs storage, graph edges, and cleanup.",
+        parameters: {
+          type: "object",
+          properties: {
+            session_id: { type: "string", description: "Session ID from consolidate_prepare" },
+            extractions: {
+              type: "array",
+              description: "Array of batch extractions",
+              items: {
+                type: "object",
+                properties: {
+                  batch_id: { type: "string" },
+                  memories: {
+                    type: "array",
+                    items: {
+                      type: "object",
+                      properties: {
+                        topic: { type: "string" },
+                        summary: { type: "string" },
+                        detail: { type: "string" },
+                        importance: { type: "number" },
+                      },
+                      required: ["topic", "summary", "importance"],
+                    },
+                  },
+                },
+                required: ["batch_id", "memories"],
+              },
+            },
+          },
+          required: ["session_id", "extractions"],
+        },
+        async execute(_toolCallId: string, params: any) {
+          if (!params?.session_id || !params?.extractions) {
+            return jsonResult({ error: "session_id and extractions are required" });
+          }
+
+          const resp = await nomenRequest(
+            cfg.apiUrl,
+            "memory.consolidate_commit",
+            {
+              session_id: params.session_id,
+              extractions: params.extractions,
+            },
+            cfg.timeoutMs,
+          );
+
+          if (!resp.ok) {
+            return jsonResult({ error: resp.error?.message ?? "commit failed" });
+          }
+
+          return jsonResult(resp.result as Record<string, unknown>);
+        },
+      },
+      { names: ["memory_consolidate_commit"] },
+    );
+
     // ── Message ingestion hooks ─────────────────────────────────
 
     // Inbound messages
