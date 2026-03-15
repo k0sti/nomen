@@ -53,6 +53,12 @@ async fn dispatch_inner(
         "memory.consolidate" => {
             operations::maintenance::consolidate(nomen, default_channel, params).await
         }
+        "memory.consolidate_prepare" => {
+            operations::maintenance::consolidate_prepare(nomen, default_channel, params).await
+        }
+        "memory.consolidate_commit" => {
+            operations::maintenance::consolidate_commit(nomen, default_channel, params).await
+        }
         "memory.cluster" => operations::maintenance::cluster(nomen, default_channel, params).await,
         "memory.sync" => operations::maintenance::sync(nomen, default_channel, params).await,
         "memory.embed" => operations::maintenance::embed(nomen, default_channel, params).await,
@@ -91,6 +97,8 @@ pub fn mcp_tool_to_action(tool_name: &str) -> Option<String> {
             | "message.context"
             | "message.send"
             | "memory.consolidate"
+            | "memory.consolidate_prepare"
+            | "memory.consolidate_commit"
             | "memory.cluster"
             | "memory.sync"
             | "memory.embed"

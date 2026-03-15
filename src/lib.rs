@@ -1,3 +1,4 @@
+#![recursion_limit = "256"]
 //! Nomen — Nostr-native agent memory library.
 //!
 //! Provides hybrid search (vector + BM25), group-scoped access control,
@@ -491,6 +492,51 @@ impl Nomen {
         }));
 
         Ok(report)
+    }
+
+    /// Two-phase consolidation: prepare (stages 1-2).
+    pub async fn consolidate_prepare(&self, opts: ConsolidateOptions, ttl_minutes: u32) -> Result<consolidate::PrepareResult> {
+        let author_pubkey = self.signer.as_ref().map(|s| s.public_key().to_hex());
+        let config = ConsolidationConfig {
+            batch_size: opts.batch_size,
+            min_messages: opts.min_messages,
+            llm_provider: Box::new(NoopLlmProvider), // not used in prepare
+            entity_extractor: Box::new(entities::HeuristicExtractor),
+            author_pubkey,
+            ..Default::default()
+        };
+        consolidate::prepare(&self.db, &config, ttl_minutes).await
+    }
+
+    /// Two-phase consolidation: commit (stages 4-6).
+    pub async fn consolidate_commit(
+        &self,
+        session_id: &str,
+        extractions: &[consolidate::BatchExtraction],
+    ) -> Result<consolidate::CommitResult> {
+        let author_pubkey = self.signer.as_ref().map(|s| s.public_key().to_hex());
+        let config = ConsolidationConfig {
+            author_pubkey,
+            entity_extractor: Box::new(entities::HeuristicExtractor),
+            ..Default::default()
+        };
+        let result = consolidate::commit(
+            &self.db,
+            self.embedder.as_ref(),
+            &config,
+            self.relay.as_ref(),
+            session_id,
+            extractions,
+        )
+        .await?;
+
+        self.emit_event("consolidation.complete", serde_json::json!({
+            "memories_created": result.memories_created,
+            "messages_consolidated": result.messages_consolidated,
+            "session_id": result.session_id,
+        }));
+
+        Ok(result)
     }
 
     /// Run the cluster fusion pipeline on named memories.

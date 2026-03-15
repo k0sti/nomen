@@ -63,7 +63,7 @@ Single embedded database. Multi-model: documents, vectors (HNSW), full-text (BM2
 ### Core Tables
 
 - `memory` — memories with content, tier, scope, topic, embedding, confidence
-- `raw_message` — ingested messages before consolidation
+- `raw_message` — ingested messages before consolidation (local only, never published to relay)
 - `entity` — extracted entities (person, project, concept)
 - `session` — active session tracking
 - `group` — group definitions and membership
@@ -376,6 +376,19 @@ This sends `tools/list` and `memory.list` requests and verifies responses.
 - **Sync:** `nomen sync` fetches events, upserts into SurrealDB by d-tag
 - **Publish:** `nomen store` creates local record + publishes to relay
 - **Dedup:** d-tag uniqueness, latest timestamp wins
+
+### What Gets Published to Relay
+
+Only **named memories** are published to the Nostr relay as kind 31234 replaceable events. These are created by `memory.put` (direct API) or `memory.consolidate` (LLM extraction from raw messages).
+
+**Raw messages** (`message.ingest`) are stored **locally in SurrealDB only** — they are never published to the relay. They are ephemeral input to the consolidation pipeline, consumed and marked `consolidated = true` once processed. This is intentional: raw messages are high-volume conversation noise; only the distilled knowledge (named memories) is durable and worth syncing across relays.
+
+| Data | SurrealDB | Nostr Relay |
+|---|---|---|
+| Named memories (`memory.put`, consolidation output) | ✅ `memory` table | ✅ kind 31234 |
+| Raw messages (`message.ingest`) | ✅ `raw_message` table | ❌ local only |
+| Entities (extracted) | ✅ `entity` table | ❌ local only |
+| Sessions | ✅ `session` table | ❌ local only |
 
 ## Dependencies
 

@@ -273,6 +273,53 @@ fn v2_tools_list() -> Value {
                 }
             },
             {
+                "name": "memory_consolidate_prepare",
+                "description": "Prepare consolidation batches for two-phase agent mode. Returns grouped message batches for external LLM processing.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "batch_size": { "type": "integer", "description": "Max messages per batch (default 50)" },
+                        "min_messages": { "type": "integer", "description": "Min messages to trigger (default 3)" },
+                        "ttl_minutes": { "type": "integer", "description": "Session TTL in minutes (default 60)" }
+                    }
+                }
+            },
+            {
+                "name": "memory_consolidate_commit",
+                "description": "Commit agent-provided extractions for a prepared consolidation session. Runs storage, graph edges, and cleanup.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "session_id": { "type": "string", "description": "Session ID from consolidate_prepare" },
+                        "extractions": {
+                            "type": "array",
+                            "description": "Array of batch extractions",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "batch_id": { "type": "string" },
+                                    "memories": {
+                                        "type": "array",
+                                        "items": {
+                                            "type": "object",
+                                            "properties": {
+                                                "topic": { "type": "string" },
+                                                "summary": { "type": "string" },
+                                                "detail": { "type": "string" },
+                                                "importance": { "type": "integer" }
+                                            },
+                                            "required": ["topic", "summary", "importance"]
+                                        }
+                                    }
+                                },
+                                "required": ["batch_id", "memories"]
+                            }
+                        }
+                    },
+                    "required": ["session_id", "extractions"]
+                }
+            },
+            {
                 "name": "memory_cluster",
                 "description": "Synthesize related memories by namespace prefix",
                 "inputSchema": {

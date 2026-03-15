@@ -1,0 +1,26 @@
+{
+  "id": "memory-nomen",
+  "kind": "memory",
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "apiUrl": {
+        "type": "string",
+        "description": "Nomen HTTP API URL",
+        "default": "http://127.0.0.1:3849/memory/api/dispatch"
+      },
+      "visibility": {
+        "type": "string",
+        "description": "Default visibility tier for search/store",
+        "enum": ["public", "group", "personal", "internal"],
+        "default": "internal"
+      },
+      "timeoutMs": {
+        "type": "number",
+        "description": "Request timeout in milliseconds",
+        "default": 10000
+      }
+    }
+  }
+}

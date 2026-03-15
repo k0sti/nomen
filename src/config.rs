@@ -112,6 +112,9 @@ pub struct MemoryConsolidationConfig {
     /// Whether consolidation is enabled
     #[serde(default = "default_true")]
     pub enabled: bool,
+    /// Consolidation mode: "internal" (nomen LLM), "agent" (two-phase), "noop" (concat)
+    #[serde(default = "default_consolidation_mode")]
+    pub mode: String,
     /// Run consolidation every N hours
     #[serde(default = "default_interval_hours")]
     pub interval_hours: u32,
@@ -124,6 +127,18 @@ pub struct MemoryConsolidationConfig {
     /// Dry run mode
     #[serde(default)]
     pub dry_run: bool,
+    /// Agent callback type: "socket", "webhook", "contextvm"
+    #[serde(default)]
+    pub callback: Option<String>,
+    /// Webhook callback URL (for callback = "webhook")
+    #[serde(default)]
+    pub callback_url: Option<String>,
+    /// ContextVM callback npub (for callback = "contextvm")
+    #[serde(default)]
+    pub callback_npub: Option<String>,
+    /// Session TTL in minutes for two-phase mode (default: 60)
+    #[serde(default = "default_session_ttl_minutes")]
+    pub session_ttl_minutes: u32,
     /// LLM provider (inlined, or fall back to top-level [consolidation])
     #[serde(default)]
     pub provider: Option<String>,
@@ -133,6 +148,14 @@ pub struct MemoryConsolidationConfig {
     pub api_key_env: Option<String>,
     #[serde(default)]
     pub base_url: Option<String>,
+}
+
+fn default_consolidation_mode() -> String {
+    "internal".to_string()
+}
+
+fn default_session_ttl_minutes() -> u32 {
+    60
 }
 
 fn default_true() -> bool {

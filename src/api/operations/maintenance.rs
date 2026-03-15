@@ -38,6 +38,66 @@ pub async fn consolidate(
     }))
 }
 
+pub async fn consolidate_prepare(
+    nomen: &Nomen,
+    _default_channel: &str,
+    params: &Value,
+) -> Result<Value, ApiError> {
+    let batch_size = params
+        .get("batch_size")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(50) as usize;
+    let min_messages = params
+        .get("min_messages")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(3) as usize;
+    let ttl_minutes = params
+        .get("ttl_minutes")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(60) as u32;
+
+    let opts = crate::ConsolidateOptions {
+        batch_size,
+        min_messages,
+        ..Default::default()
+    };
+
+    let result = nomen
+        .consolidate_prepare(opts, ttl_minutes)
+        .await
+        .map_err(ApiError::from_anyhow)?;
+
+    Ok(serde_json::to_value(&result).map_err(|e| ApiError::internal(&e.to_string()))?)
+}
+
+pub async fn consolidate_commit(
+    nomen: &Nomen,
+    _default_channel: &str,
+    params: &Value,
+) -> Result<Value, ApiError> {
+    let session_id = params
+        .get("session_id")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| ApiError::invalid_params("session_id is required"))?;
+
+    let extractions: Vec<crate::consolidate::BatchExtraction> = params
+        .get("extractions")
+        .ok_or_else(|| ApiError::invalid_params("extractions is required"))?
+        .as_array()
+        .ok_or_else(|| ApiError::invalid_params("extractions must be an array"))?
+        .iter()
+        .map(|v| serde_json::from_value(v.clone()))
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| ApiError::invalid_params(&format!("invalid extraction format: {e}")))?;
+
+    let result = nomen
+        .consolidate_commit(session_id, &extractions)
+        .await
+        .map_err(ApiError::from_anyhow)?;
+
+    Ok(serde_json::to_value(&result).map_err(|e| ApiError::internal(&e.to_string()))?)
+}
+
 pub async fn cluster(
     nomen: &Nomen,
     _default_channel: &str,
