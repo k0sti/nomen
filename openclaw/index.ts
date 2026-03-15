@@ -122,6 +122,31 @@ const memoryNomenPlugin = {
       `memory-nomen: registered (api: ${cfg.apiUrl}, visibility: ${cfg.visibility})`,
     );
 
+    // ── Startup health check (non-blocking) ───────────────────────
+    (async () => {
+      const healthUrl = cfg.apiUrl.replace(/\/dispatch$/, "/health");
+      try {
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), 5000);
+        const res = await fetch(healthUrl, { signal: controller.signal });
+        clearTimeout(timer);
+        if (res.ok) {
+          const data = await res.json() as any;
+          api.logger.info(
+            `memory-nomen: ✅ Nomen healthy (v${data.version ?? "?"}, ${data.memory_count ?? "?"} memories)`,
+          );
+        } else {
+          api.logger.error(
+            `memory-nomen: ⚠️ Nomen health check failed (HTTP ${res.status}) — memory will be unavailable`,
+          );
+        }
+      } catch (err) {
+        api.logger.error(
+          `memory-nomen: ❌ Nomen unreachable at ${healthUrl} — memory will be unavailable. Is nomen.service running?`,
+        );
+      }
+    })();
+
     // ── memory_search ─────────────────────────────────────────────
 
     api.registerTool(
@@ -381,24 +406,26 @@ const memoryNomenPlugin = {
 
     // ── Message ingestion hooks ─────────────────────────────────
 
-    // Inbound messages
-    api.registerHook(
-      "message:received",
-      async (event: any) => {
-        const ctx = event?.context;
-        if (!ctx?.content) return;
+    // Inbound messages — use api.on() for typed hooks (not api.registerHook which is the old HOOK.md system)
+    // Signature: (event: PluginHookMessageReceivedEvent, ctx: PluginHookMessageContext)
+    // event = { from, content, timestamp?, metadata? }
+    // ctx = { channelId, accountId?, conversationId? }
+    api.on(
+      "message_received",
+      async (event: any, ctx: any) => {
+        if (!event?.content) return;
 
         try {
           await nomenRequest(
             cfg.apiUrl,
             "message.ingest",
             {
-              source: ctx.messageId || `${ctx.channelId}:${Date.now()}`,
-              sender: ctx.from || "unknown",
-              content: ctx.content,
-              channel: ctx.conversationId
+              source: `${ctx?.channelId || "unknown"}:${event.timestamp || Date.now()}`,
+              sender: event.from || "unknown",
+              content: event.content,
+              channel: ctx?.conversationId
                 ? `${ctx.channelId}:${ctx.conversationId}`
-                : ctx.channelId || "unknown",
+                : ctx?.channelId || "unknown",
             },
             cfg.timeoutMs,
           );
@@ -408,27 +435,28 @@ const memoryNomenPlugin = {
           );
         }
       },
-      { name: "nomen-ingest-received" },
     );
 
     // Outbound messages
-    api.registerHook(
-      "message:sent",
-      async (event: any) => {
-        const ctx = event?.context;
-        if (!ctx?.content) return;
+    // Signature: (event: PluginHookMessageSentEvent, ctx: PluginHookMessageContext)
+    // event = { to, content, success, error? }
+    // ctx = { channelId, accountId?, conversationId? }
+    api.on(
+      "message_sent",
+      async (event: any, ctx: any) => {
+        if (!event?.content || !event.success) return;
 
         try {
           await nomenRequest(
             cfg.apiUrl,
             "message.ingest",
             {
-              source: ctx.messageId || `${ctx.channelId}:sent:${Date.now()}`,
+              source: `${ctx?.channelId || "unknown"}:sent:${Date.now()}`,
               sender: "clarity",
-              content: ctx.content,
-              channel: ctx.conversationId
+              content: event.content,
+              channel: ctx?.conversationId
                 ? `${ctx.channelId}:${ctx.conversationId}`
-                : ctx.channelId || "unknown",
+                : ctx?.channelId || "unknown",
             },
             cfg.timeoutMs,
           );
@@ -438,7 +466,6 @@ const memoryNomenPlugin = {
           );
         }
       },
-      { name: "nomen-ingest-sent" },
     );
 
     // ── CLI ───────────────────────────────────────────────────────
