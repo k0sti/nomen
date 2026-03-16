@@ -161,8 +161,8 @@ Each extracted memory becomes a kind 31234 replaceable event:
     ["confidence", "0.88"],
     ["source", "<agent-pubkey>"],
     ["version", "1"],
-    ["snow:consolidated_from", "7"],
-    ["snow:consolidated_at", "1753000000"],
+    ["consolidated_from", "7"],
+    ["consolidated_at", "1753000000"],
     ["t", "user"],
     ["t", "preferences"]
   ]
