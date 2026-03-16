@@ -394,18 +394,105 @@ async fn build_nomen(config: &Config) -> Result<Nomen> {
     Nomen::open(config).await
 }
 
+// ── Backend detection ────────────────────────────────────────────────
+
+enum Backend {
+    Http(String), // dispatch base URL
+    Direct,
+}
+
+/// Build the base URL from server config (e.g. "http://127.0.0.1:3849/memory/api").
+fn resolve_http_url(config: &Config) -> Option<String> {
+    let sc = config.server.as_ref()?;
+    if !sc.enabled {
+        return None;
+    }
+    let listen = &sc.listen;
+    // Normalise: port-only ("3849"), colon-prefixed (":3849"), or full ("127.0.0.1:3849")
+    let addr = if listen.starts_with(':') {
+        format!("127.0.0.1{listen}")
+    } else if !listen.contains(':') {
+        format!("127.0.0.1:{listen}")
+    } else {
+        listen.clone()
+    };
+    Some(format!("http://{addr}/memory/api"))
+}
+
+/// Async health check — returns true if the service is reachable.
+async fn check_service(base_url: &str) -> bool {
+    let url = format!("{base_url}/health");
+    reqwest::Client::new()
+        .get(&url)
+        .timeout(std::time::Duration::from_secs(2))
+        .send()
+        .await
+        .map(|r| r.status().is_success())
+        .unwrap_or(false)
+}
+
+/// Detect whether to use the running HTTP service or open the DB directly.
+async fn detect_backend(config: &Config) -> Backend {
+    if let Some(base_url) = resolve_http_url(config) {
+        if check_service(&base_url).await {
+            debug!("Service detected at {base_url}, using HTTP backend");
+            return Backend::Http(base_url);
+        }
+    }
+    Backend::Direct
+}
+
+/// POST an action to the HTTP dispatch endpoint.
+async fn dispatch_http(
+    base_url: &str,
+    action: &str,
+    params: &serde_json::Value,
+) -> Result<serde_json::Value> {
+    let url = format!("{base_url}/dispatch");
+    let body = json!({ "action": action, "params": params });
+    let resp = reqwest::Client::new()
+        .post(&url)
+        .json(&body)
+        .send()
+        .await
+        .context("HTTP dispatch request failed")?;
+    let status = resp.status();
+    let payload: serde_json::Value = resp.json().await.context("Failed to parse dispatch response")?;
+    if !status.is_success() || payload.get("ok").and_then(|v| v.as_bool()) != Some(true) {
+        let err = payload["error"]
+            .as_str()
+            .unwrap_or("unknown error");
+        bail!("{action}: {err}");
+    }
+    Ok(payload.get("result").cloned().unwrap_or(serde_json::Value::Null))
+}
+
 // ── CLI dispatch helper ──────────────────────────────────────────────
 
 const CLI_CHANNEL: &str = "cli";
 
-/// Call api::dispatch and extract the result or bail on error.
-async fn cli_dispatch(nomen: &Nomen, action: &str, params: &serde_json::Value) -> Result<serde_json::Value> {
-    let resp = nomen::api::dispatch(nomen, CLI_CHANNEL, action, params).await;
-    if resp.ok {
-        Ok(resp.result.unwrap_or(serde_json::Value::Null))
-    } else {
-        let err = resp.error.map(|e| e.message).unwrap_or_else(|| "unknown error".to_string());
-        bail!("{action}: {err}")
+/// Call api::dispatch (direct) or HTTP dispatch, and extract the result or bail on error.
+async fn cli_dispatch(
+    backend: &Backend,
+    nomen: Option<&Nomen>,
+    action: &str,
+    params: &serde_json::Value,
+) -> Result<serde_json::Value> {
+    match backend {
+        Backend::Http(base_url) => dispatch_http(base_url, action, params).await,
+        Backend::Direct => {
+            let nomen = nomen.expect("Direct backend requires a Nomen instance");
+            let resp = nomen::api::dispatch(nomen, CLI_CHANNEL, action, params).await;
+            if resp.ok {
+                Ok(resp.result.unwrap_or(serde_json::Value::Null))
+            } else {
+                let err = resp
+                    .error
+                    .map(|e| e.message)
+                    .unwrap_or_else(|| "unknown error".to_string());
+                bail!("{action}: {err}")
+            }
+        }
     }
 }
 
@@ -442,6 +529,7 @@ async fn main() -> Result<()> {
     // Load config and resolve once before match (avoids borrow-after-move issues)
     let config = load_config(&cli)?;
     let resolved = resolve_config(&cli)?;
+    let backend = detect_backend(&config).await;
 
     match cli.command {
         Command::List {
@@ -450,8 +538,12 @@ async fn main() -> Result<()> {
             stats,
         } => {
             if stats || ephemeral {
-                let nomen = build_nomen(&config).await?;
-                cmd_list_local(&nomen, ephemeral, stats).await?;
+                let nomen = if matches!(backend, Backend::Direct) {
+                    Some(build_nomen(&config).await?)
+                } else {
+                    None
+                };
+                cmd_list_local(&backend, nomen.as_ref(), ephemeral, stats).await?;
             } else {
                 if resolved.nsecs.is_empty() {
                     bail!(
@@ -466,8 +558,12 @@ async fn main() -> Result<()> {
             cmd_config(&resolved.relay, &resolved.nsecs);
         }
         Command::Sync => {
-            let nomen = build_nomen_with_relay(&config, &resolved).await?;
-            cmd_sync(&nomen).await?;
+            let nomen = if matches!(backend, Backend::Direct) {
+                Some(build_nomen_with_relay(&config, &resolved).await?)
+            } else {
+                None
+            };
+            cmd_sync(&backend, nomen.as_ref()).await?;
         }
         Command::Store {
             topic,
@@ -476,8 +572,12 @@ async fn main() -> Result<()> {
             tier,
             confidence,
         } => {
-            let nomen = build_nomen_with_relay(&config, &resolved).await?;
-            cmd_store(&nomen, &topic, &summary, &detail, &tier, confidence).await?;
+            let nomen = if matches!(backend, Backend::Direct) {
+                Some(build_nomen_with_relay(&config, &resolved).await?)
+            } else {
+                None
+            };
+            cmd_store(&backend, nomen.as_ref(), &topic, &summary, &detail, &tier, confidence).await?;
         }
         Command::Delete {
             topic,
@@ -486,11 +586,19 @@ async fn main() -> Result<()> {
             older_than,
         } => {
             if ephemeral {
-                let nomen = build_nomen(&config).await?;
-                cmd_delete_ephemeral(&nomen, older_than.as_deref()).await?;
+                let nomen = if matches!(backend, Backend::Direct) {
+                    Some(build_nomen(&config).await?)
+                } else {
+                    None
+                };
+                cmd_delete_ephemeral(&backend, nomen.as_ref(), older_than.as_deref()).await?;
             } else {
-                let nomen = build_nomen_with_relay(&config, &resolved).await?;
-                cmd_delete(&nomen, topic.as_deref(), id.as_deref()).await?;
+                let nomen = if matches!(backend, Backend::Direct) {
+                    Some(build_nomen_with_relay(&config, &resolved).await?)
+                } else {
+                    None
+                };
+                cmd_delete(&backend, nomen.as_ref(), topic.as_deref(), id.as_deref()).await?;
             }
         }
         Command::Search {
@@ -503,9 +611,14 @@ async fn main() -> Result<()> {
             graph,
             hops,
         } => {
-            let nomen = build_nomen(&config).await?;
+            let nomen = if matches!(backend, Backend::Direct) {
+                Some(build_nomen(&config).await?)
+            } else {
+                None
+            };
             cmd_search(
-                &nomen,
+                &backend,
+                nomen.as_ref(),
                 &query,
                 tier.as_deref(),
                 limit,
@@ -518,12 +631,20 @@ async fn main() -> Result<()> {
             .await?;
         }
         Command::Embed { limit } => {
-            let nomen = build_nomen(&config).await?;
-            cmd_embed(&nomen, limit).await?;
+            let nomen = if matches!(backend, Backend::Direct) {
+                Some(build_nomen(&config).await?)
+            } else {
+                None
+            };
+            cmd_embed(&backend, nomen.as_ref(), limit).await?;
         }
         Command::Group { action } => {
-            let nomen = build_nomen(&config).await?;
-            cmd_group(&nomen, action).await?;
+            let nomen = if matches!(backend, Backend::Direct) {
+                Some(build_nomen(&config).await?)
+            } else {
+                None
+            };
+            cmd_group(&backend, nomen.as_ref(), action).await?;
         }
         Command::Ingest {
             content,
@@ -531,8 +652,12 @@ async fn main() -> Result<()> {
             sender,
             channel,
         } => {
-            let nomen = build_nomen(&config).await?;
-            cmd_ingest(&nomen, &content, &source, &sender, channel.as_deref()).await?;
+            let nomen = if matches!(backend, Backend::Direct) {
+                Some(build_nomen(&config).await?)
+            } else {
+                None
+            };
+            cmd_ingest(&backend, nomen.as_ref(), &content, &source, &sender, channel.as_deref()).await?;
         }
         Command::Messages {
             source,
@@ -543,9 +668,14 @@ async fn main() -> Result<()> {
             around,
             context,
         } => {
-            let nomen = build_nomen(&config).await?;
+            let nomen = if matches!(backend, Backend::Direct) {
+                Some(build_nomen(&config).await?)
+            } else {
+                None
+            };
             cmd_messages(
-                &nomen,
+                &backend,
+                nomen.as_ref(),
                 source.as_deref(),
                 channel.as_deref(),
                 sender.as_deref(),
@@ -563,9 +693,14 @@ async fn main() -> Result<()> {
             older_than,
             tier,
         } => {
-            let nomen = build_nomen_with_relay(&config, &resolved).await?;
+            let nomen = if matches!(backend, Backend::Direct) {
+                Some(build_nomen_with_relay(&config, &resolved).await?)
+            } else {
+                None
+            };
             cmd_consolidate(
-                &nomen,
+                &backend,
+                nomen.as_ref(),
                 min_messages,
                 batch_size,
                 dry_run,
@@ -575,8 +710,12 @@ async fn main() -> Result<()> {
             .await?;
         }
         Command::Entities { kind, relations } => {
-            let nomen = build_nomen(&config).await?;
-            cmd_entities(&nomen, kind.as_deref(), relations).await?;
+            let nomen = if matches!(backend, Backend::Direct) {
+                Some(build_nomen(&config).await?)
+            } else {
+                None
+            };
+            cmd_entities(&backend, nomen.as_ref(), kind.as_deref(), relations).await?;
         }
         Command::Cluster {
             dry_run,
@@ -584,20 +723,32 @@ async fn main() -> Result<()> {
             min_members,
             namespace_depth,
         } => {
-            let nomen = build_nomen(&config).await?;
-            cmd_cluster(&nomen, dry_run, prefix, min_members, namespace_depth).await?;
+            let nomen = if matches!(backend, Backend::Direct) {
+                Some(build_nomen(&config).await?)
+            } else {
+                None
+            };
+            cmd_cluster(&backend, nomen.as_ref(), dry_run, prefix, min_members, namespace_depth).await?;
         }
         Command::Prune { days, dry_run } => {
-            let nomen = build_nomen(&config).await?;
-            cmd_prune(&nomen, days, dry_run).await?;
+            let nomen = if matches!(backend, Backend::Direct) {
+                Some(build_nomen(&config).await?)
+            } else {
+                None
+            };
+            cmd_prune(&backend, nomen.as_ref(), days, dry_run).await?;
         }
         Command::Send {
             content,
             to,
             channel,
         } => {
-            let nomen = build_nomen_with_relay(&config, &resolved).await?;
-            cmd_send(&nomen, &to, &content, channel.as_deref()).await?;
+            let nomen = if matches!(backend, Backend::Direct) {
+                Some(build_nomen_with_relay(&config, &resolved).await?)
+            } else {
+                None
+            };
+            cmd_send(&backend, nomen.as_ref(), &to, &content, channel.as_deref()).await?;
         }
         Command::Serve {
             stdio,
@@ -674,9 +825,9 @@ async fn cmd_list_relay(relay_url: &str, nsecs: &[String], named: bool) -> Resul
 
 // ── Command: list (local DB) ────────────────────────────────────────
 
-async fn cmd_list_local(nomen: &Nomen, ephemeral: bool, stats: bool) -> Result<()> {
+async fn cmd_list_local(backend: &Backend, nomen: Option<&Nomen>, ephemeral: bool, stats: bool) -> Result<()> {
     if stats {
-        let result = cli_dispatch(nomen, "memory.list", &json!({"stats": true, "limit": 0})).await?;
+        let result = cli_dispatch(backend, nomen, "memory.list", &json!({"stats": true, "limit": 0})).await?;
         if let Some(s) = result.get("stats") {
             let total = s["total"].as_u64().unwrap_or(0);
             let pending = s["pending"].as_u64().unwrap_or(0);
@@ -689,6 +840,9 @@ async fn cmd_list_local(nomen: &Nomen, ephemeral: bool, stats: bool) -> Result<(
     }
 
     if ephemeral {
+        if matches!(backend, Backend::Http(_)) {
+            bail!("This command requires direct DB access. Stop the nomen service first.");
+        }
         // Ephemeral listing still uses raw DB query (no Nomen method for this specific view)
         let db_handle = db::init_db().await?;
         let messages = db::get_unconsolidated_messages(&db_handle, 200).await?;
@@ -747,9 +901,9 @@ fn cmd_config(relay: &str, nsecs: &[String]) {
 
 // ── Command: sync ───────────────────────────────────────────────────
 
-async fn cmd_sync(nomen: &Nomen) -> Result<()> {
+async fn cmd_sync(backend: &Backend, nomen: Option<&Nomen>) -> Result<()> {
     println!("Connecting to relay...");
-    let result = cli_dispatch(nomen, "memory.sync", &json!({})).await?;
+    let result = cli_dispatch(backend, nomen, "memory.sync", &json!({})).await?;
     let stored = result["stored"].as_u64().unwrap_or(0);
     let skipped = result["skipped"].as_u64().unwrap_or(0);
     let errors = result["errors"].as_u64().unwrap_or(0);
@@ -767,7 +921,8 @@ async fn cmd_sync(nomen: &Nomen) -> Result<()> {
 // ── Command: store ──────────────────────────────────────────────────
 
 async fn cmd_store(
-    nomen: &Nomen,
+    backend: &Backend,
+    nomen: Option<&Nomen>,
     topic: &str,
     summary: &str,
     detail: &str,
@@ -784,7 +939,7 @@ async fn cmd_store(
         "confidence": confidence,
     });
 
-    let result = cli_dispatch(nomen, "memory.put", &params).await?;
+    let result = cli_dispatch(backend, nomen, "memory.put", &params).await?;
     let d_tag = result["d_tag"].as_str().unwrap_or("");
 
     println!(
@@ -800,7 +955,7 @@ async fn cmd_store(
 
 // ── Command: delete ─────────────────────────────────────────────────
 
-async fn cmd_delete(nomen: &Nomen, topic: Option<&str>, event_id: Option<&str>) -> Result<()> {
+async fn cmd_delete(backend: &Backend, nomen: Option<&Nomen>, topic: Option<&str>, event_id: Option<&str>) -> Result<()> {
     if topic.is_none() && event_id.is_none() {
         bail!("Provide either a topic or --id <event-id>");
     }
@@ -813,7 +968,7 @@ async fn cmd_delete(nomen: &Nomen, topic: Option<&str>, event_id: Option<&str>) 
         params["id"] = json!(id);
     }
 
-    cli_dispatch(nomen, "memory.delete", &params).await?;
+    cli_dispatch(backend, nomen, "memory.delete", &params).await?;
 
     if let Some(topic) = topic {
         println!("{} Memory with topic: {}", "Deleted.".red().bold(), topic);
@@ -826,11 +981,15 @@ async fn cmd_delete(nomen: &Nomen, topic: Option<&str>, event_id: Option<&str>) 
 
 // ── Command: delete ephemeral ───────────────────────────────────────
 
-async fn cmd_delete_ephemeral(nomen: &Nomen, older_than: Option<&str>) -> Result<()> {
+async fn cmd_delete_ephemeral(backend: &Backend, nomen: Option<&Nomen>, older_than: Option<&str>) -> Result<()> {
+    if matches!(backend, Backend::Http(_)) {
+        bail!("This command requires direct DB access. Stop the nomen service first.");
+    }
     let older_than = older_than.ok_or_else(|| {
         anyhow::anyhow!("--older-than is required with --ephemeral (e.g. --older-than 7d)")
     })?;
 
+    let nomen = nomen.expect("Direct backend requires a Nomen instance");
     let count = nomen.delete_ephemeral(older_than).await?;
 
     if count == 0 {
@@ -849,7 +1008,8 @@ async fn cmd_delete_ephemeral(nomen: &Nomen, older_than: Option<&str>) -> Result
 // ── Command: search ─────────────────────────────────────────────────
 
 async fn cmd_search(
-    nomen: &Nomen,
+    backend: &Backend,
+    nomen: Option<&Nomen>,
     query: &str,
     tier: Option<&str>,
     limit: usize,
@@ -874,7 +1034,7 @@ async fn cmd_search(
         params["visibility"] = json!(tier);
     }
 
-    let result = cli_dispatch(nomen, "memory.search", &params).await?;
+    let result = cli_dispatch(backend, nomen, "memory.search", &params).await?;
     let results = result["results"].as_array();
 
     if results.map(|r| r.is_empty()).unwrap_or(true) {
@@ -948,8 +1108,8 @@ async fn cmd_search(
 
 // ── Command: embed ─────────────────────────────────────────────────
 
-async fn cmd_embed(nomen: &Nomen, limit: usize) -> Result<()> {
-    let result = cli_dispatch(nomen, "memory.embed", &json!({"limit": limit})).await?;
+async fn cmd_embed(backend: &Backend, nomen: Option<&Nomen>, limit: usize) -> Result<()> {
+    let result = cli_dispatch(backend, nomen, "memory.embed", &json!({"limit": limit})).await?;
     let total = result["total"].as_u64().unwrap_or(0);
     let embedded = result["embedded"].as_u64().unwrap_or(0);
 
@@ -968,7 +1128,7 @@ async fn cmd_embed(nomen: &Nomen, limit: usize) -> Result<()> {
 
 // ── Command: group ─────────────────────────────────────────────────
 
-async fn cmd_group(nomen: &Nomen, action: GroupAction) -> Result<()> {
+async fn cmd_group(backend: &Backend, nomen: Option<&Nomen>, action: GroupAction) -> Result<()> {
     match action {
         GroupAction::Create {
             id,
@@ -984,7 +1144,7 @@ async fn cmd_group(nomen: &Nomen, action: GroupAction) -> Result<()> {
                 "nostr_group": nostr_group,
                 "relay": relay,
             });
-            cli_dispatch(nomen, "group.create", &params).await?;
+            cli_dispatch(backend, nomen, "group.create", &params).await?;
             println!(
                 "{} group: {} ({})",
                 "Created".green().bold(),
@@ -996,7 +1156,7 @@ async fn cmd_group(nomen: &Nomen, action: GroupAction) -> Result<()> {
             }
         }
         GroupAction::List => {
-            let result = cli_dispatch(nomen, "group.list", &json!({})).await?;
+            let result = cli_dispatch(backend, nomen, "group.list", &json!({})).await?;
             let groups = result["groups"].as_array();
 
             if groups.map(|g| g.is_empty()).unwrap_or(true) {
@@ -1044,7 +1204,7 @@ async fn cmd_group(nomen: &Nomen, action: GroupAction) -> Result<()> {
             println!();
         }
         GroupAction::Members { id } => {
-            let result = cli_dispatch(nomen, "group.members", &json!({"id": id})).await?;
+            let result = cli_dispatch(backend, nomen, "group.members", &json!({"id": id})).await?;
             let members = result["members"].as_array();
             println!("\n{} members of {}:\n", "Showing".bold(), id.bold());
             if let Some(members) = members {
@@ -1061,11 +1221,11 @@ async fn cmd_group(nomen: &Nomen, action: GroupAction) -> Result<()> {
             println!();
         }
         GroupAction::AddMember { id, npub } => {
-            cli_dispatch(nomen, "group.add_member", &json!({"id": id, "npub": npub})).await?;
+            cli_dispatch(backend, nomen, "group.add_member", &json!({"id": id, "npub": npub})).await?;
             println!("{} {} to group {}", "Added".green().bold(), npub, id.bold());
         }
         GroupAction::RemoveMember { id, npub } => {
-            cli_dispatch(nomen, "group.remove_member", &json!({"id": id, "npub": npub})).await?;
+            cli_dispatch(backend, nomen, "group.remove_member", &json!({"id": id, "npub": npub})).await?;
             println!(
                 "{} {} from group {}",
                 "Removed".red().bold(),
@@ -1081,7 +1241,8 @@ async fn cmd_group(nomen: &Nomen, action: GroupAction) -> Result<()> {
 // ── Command: ingest ─────────────────────────────────────────────────
 
 async fn cmd_ingest(
-    nomen: &Nomen,
+    backend: &Backend,
+    nomen: Option<&Nomen>,
     content: &str,
     source: &str,
     sender: &str,
@@ -1094,7 +1255,7 @@ async fn cmd_ingest(
         "channel": channel,
     });
 
-    let result = cli_dispatch(nomen, "message.ingest", &params).await?;
+    let result = cli_dispatch(backend, nomen, "message.ingest", &params).await?;
     let id = result["id"].as_str().unwrap_or("");
     println!(
         "{} message from {} [{}]{}",
@@ -1110,7 +1271,8 @@ async fn cmd_ingest(
 // ── Command: messages ───────────────────────────────────────────────
 
 async fn cmd_messages(
-    nomen: &Nomen,
+    backend: &Backend,
+    nomen: Option<&Nomen>,
     source: Option<&str>,
     channel: Option<&str>,
     sender: Option<&str>,
@@ -1125,7 +1287,7 @@ async fn cmd_messages(
             "before": context_count,
             "after": context_count,
         });
-        cli_dispatch(nomen, "message.context", &params).await?
+        cli_dispatch(backend, nomen, "message.context", &params).await?
     } else {
         let params = json!({
             "source": source,
@@ -1134,7 +1296,7 @@ async fn cmd_messages(
             "since": since,
             "limit": limit,
         });
-        cli_dispatch(nomen, "message.list", &params).await?
+        cli_dispatch(backend, nomen, "message.list", &params).await?
     };
 
     let messages = result["messages"].as_array();
@@ -1183,7 +1345,8 @@ async fn cmd_messages(
 // ── Command: consolidate ────────────────────────────────────────────
 
 async fn cmd_consolidate(
-    nomen: &Nomen,
+    backend: &Backend,
+    nomen: Option<&Nomen>,
     min_messages: usize,
     batch_size: usize,
     dry_run: bool,
@@ -1207,7 +1370,7 @@ async fn cmd_consolidate(
         "tier": tier,
     });
 
-    let result = cli_dispatch(nomen, "memory.consolidate", &params).await?;
+    let result = cli_dispatch(backend, nomen, "memory.consolidate", &params).await?;
 
     let memories_created = result["memories_created"].as_u64().unwrap_or(0);
     let messages_processed = result["messages_processed"].as_u64().unwrap_or(0);
@@ -1252,12 +1415,13 @@ async fn cmd_consolidate(
 // ── Command: entities ───────────────────────────────────────────────
 
 async fn cmd_entities(
-    nomen: &Nomen,
+    backend: &Backend,
+    nomen: Option<&Nomen>,
     kind_filter: Option<&str>,
     show_relations: bool,
 ) -> Result<()> {
     let params = json!({ "kind": kind_filter });
-    let result = cli_dispatch(nomen, "entity.list", &params).await?;
+    let result = cli_dispatch(backend, nomen, "entity.list", &params).await?;
     let entities = result["entities"].as_array();
 
     if entities.map(|e| e.is_empty()).unwrap_or(true) {
@@ -1279,7 +1443,7 @@ async fn cmd_entities(
     println!("\n{}: {} entities", "Total".bold(), entities.len());
 
     if show_relations {
-        let rel_result = cli_dispatch(nomen, "entity.relationships", &json!({})).await?;
+        let rel_result = cli_dispatch(backend, nomen, "entity.relationships", &json!({})).await?;
         let relationships = rel_result["relationships"].as_array();
 
         if relationships.map(|r| r.is_empty()).unwrap_or(true) {
@@ -1321,7 +1485,8 @@ async fn cmd_entities(
 // ── Command: cluster ────────────────────────────────────────────────
 
 async fn cmd_cluster(
-    nomen: &Nomen,
+    backend: &Backend,
+    nomen: Option<&Nomen>,
     dry_run: bool,
     prefix: Option<String>,
     min_members: usize,
@@ -1340,7 +1505,7 @@ async fn cmd_cluster(
         "dry_run": dry_run,
     });
 
-    let result = cli_dispatch(nomen, "memory.cluster", &params).await?;
+    let result = cli_dispatch(backend, nomen, "memory.cluster", &params).await?;
 
     let clusters_found = result["clusters_found"].as_u64().unwrap_or(0);
     let clusters_synthesized = result["clusters_synthesized"].as_u64().unwrap_or(0);
@@ -1396,7 +1561,7 @@ async fn cmd_cluster(
 
 // ── Command: prune ──────────────────────────────────────────────────
 
-async fn cmd_prune(nomen: &Nomen, days: u64, dry_run: bool) -> Result<()> {
+async fn cmd_prune(backend: &Backend, nomen: Option<&Nomen>, days: u64, dry_run: bool) -> Result<()> {
     if dry_run {
         println!(
             "{} Pruning memories (older than {} days)...",
@@ -1407,7 +1572,7 @@ async fn cmd_prune(nomen: &Nomen, days: u64, dry_run: bool) -> Result<()> {
         println!("Pruning memories (older than {} days)...", days);
     }
 
-    let result = cli_dispatch(nomen, "memory.prune", &json!({"days": days, "dry_run": dry_run})).await?;
+    let result = cli_dispatch(backend, nomen, "memory.prune", &json!({"days": days, "dry_run": dry_run})).await?;
 
     let memories_pruned = result["memories_pruned"].as_u64().unwrap_or(0);
     let raw_messages_pruned = result["raw_messages_pruned"].as_u64().unwrap_or(0);
@@ -1472,7 +1637,8 @@ async fn cmd_prune(nomen: &Nomen, days: u64, dry_run: bool) -> Result<()> {
 // ── Command: send ───────────────────────────────────────────────────
 
 async fn cmd_send(
-    nomen: &Nomen,
+    backend: &Backend,
+    nomen: Option<&Nomen>,
     recipient: &str,
     content: &str,
     channel: Option<&str>,
@@ -1483,7 +1649,7 @@ async fn cmd_send(
         "channel": channel,
     });
 
-    let result = cli_dispatch(nomen, "message.send", &params).await?;
+    let result = cli_dispatch(backend, nomen, "message.send", &params).await?;
     let event_id = result["event_id"].as_str().unwrap_or("");
     let summary = result["summary"].as_str().unwrap_or("");
 
