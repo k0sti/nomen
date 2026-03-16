@@ -2310,13 +2310,23 @@ async fn cmd_doctor() -> Result<()> {
         println!("  Embedding: {}", "⚠ not configured".yellow());
     }
 
-    // 5. Local DB writable
+    // 5. Local DB writable (or HTTP service running)
     print!("  Local DB: ");
     match db::init_db().await {
         Ok(_) => println!("{}", "✓ writable".green()),
-        Err(e) => {
-            println!("{} {e}", "✗ failed".red());
-            all_ok = false;
+        Err(_) => {
+            // DB locked — check if the service is running instead
+            if let Some(base_url) = resolve_http_url(&config) {
+                if check_service(&base_url).await {
+                    println!("{}", "✓ service running (HTTP mode)".green());
+                } else {
+                    println!("{}", "✗ DB locked and service not reachable".red());
+                    all_ok = false;
+                }
+            } else {
+                println!("{}", "✗ DB locked (no server configured)".red());
+                all_ok = false;
+            }
         }
     }
 
