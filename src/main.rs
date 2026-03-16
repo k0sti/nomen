@@ -503,14 +503,20 @@ async fn main() -> Result<()> {
     // SurrealDB 3.x requires a rustls CryptoProvider
     let _ = rustls::crypto::ring::default_provider().install_default();
 
+    let cli = Cli::parse();
+
+    // Use warn level for CLI commands (avoid noisy relay logs), info for serve
+    let default_level = if matches!(cli.command, Command::Serve { .. }) {
+        "nomen=info"
+    } else {
+        "nomen=warn"
+    };
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::from_default_env()
-                .add_directive("nomen=info".parse().unwrap()),
+                .add_directive(default_level.parse().unwrap()),
         )
         .init();
-
-    let cli = Cli::parse();
 
     // Handle init and doctor before resolve_config (config may not exist yet)
     match &cli.command {
