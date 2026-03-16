@@ -100,14 +100,19 @@ Messages are grouped by **scope/channel identity + time window** before LLM proc
 
 - **Scope:** Nostr-native durable boundary used for resulting memory visibility
 - **Channel:** concrete conversation container the messages came from
+- **Sub-channel:** forum topic or thread ID extracted from sender metadata (e.g. `topic:9225`)
 - **Time window:** 4-hour blocks (configurable via `TIME_WINDOW_SECS`)
 - Groups smaller than `min_messages` are skipped (will be picked up in a later run when more messages accumulate)
 
 ```
-Messages from k0, 14:00-18:00  → Group A (7 messages)
-Messages from k0, 18:00-22:00  → Group B (4 messages)
-Messages in #techteam, 15:00-19:00 → Group C (12 messages)
+Messages from k0, 14:00-18:00       → Group A (7 messages)
+Messages from k0, 18:00-22:00       → Group B (4 messages)
+Messages in #techteam/topic:9225     → Group C (5 messages)
+Messages in #techteam/topic:8485     → Group D (8 messages)
+Messages in #techteam/topic:8399     → Group E (3 messages)
 ```
+
+**Forum topic partitioning:** Platforms like Telegram forums have multiple topics within a single chat. All topics share the same `channel` but the sender field encodes the topic (e.g. `telegram:group:-1003821690204:topic:9225`). The grouping logic extracts the topic suffix and appends it to the identity key, ensuring each forum topic is consolidated independently. This prevents unrelated conversations from being merged into the same memory batch.
 
 ### Stage 3: Extraction (LLM)
 

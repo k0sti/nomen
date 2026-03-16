@@ -548,6 +548,24 @@ pub fn parse_duration_str(s: &str) -> Result<i64> {
     }
 }
 
+/// Extract a forum topic suffix from a sender string.
+///
+/// Telegram forum senders look like `telegram:group:-1003821690204:topic:9225`.
+/// This returns `Some("topic:9225")` for such senders, `None` otherwise.
+fn extract_topic_suffix(sender: &str) -> Option<String> {
+    // Match ":topic:<id>" anywhere in the sender string
+    if let Some(idx) = sender.find(":topic:") {
+        let suffix = &sender[idx + 1..]; // skip the leading ':'
+        // Validate it looks like "topic:<digits>"
+        if let Some(id) = suffix.strip_prefix("topic:") {
+            if !id.is_empty() && id.chars().all(|c| c.is_ascii_digit()) {
+                return Some(suffix.to_string());
+            }
+        }
+    }
+    None
+}
+
 /// Resolve the scope for a single raw message.
 ///
 /// Scope determines the privacy/group boundary:
@@ -593,11 +611,18 @@ fn group_messages(messages: Vec<RawMessageRecord>) -> HashMap<GroupKey, Vec<RawM
 
         let window = timestamp / TIME_WINDOW_SECS;
 
-        // Group by sender for DMs, by channel for group messages
+        // Group by sender for DMs, by channel for group messages.
+        // For forum-style chats (Telegram topics), extract the topic suffix
+        // from the sender field and append it to the channel identity so each
+        // topic is consolidated independently.
         let identity = if msg.channel.is_empty() || msg.channel == "general" {
             msg.sender.clone()
         } else {
-            msg.channel.clone()
+            let mut id = msg.channel.clone();
+            if let Some(topic_suffix) = extract_topic_suffix(&msg.sender) {
+                id.push_str(&format!("/{topic_suffix}"));
+            }
+            id
         };
 
         // Resolve scope to prevent cross-group consolidation
@@ -1781,4 +1806,32 @@ fn hours_since(timestamp: &str) -> Option<f64> {
             let duration = chrono::Utc::now() - dt.with_timezone(&chrono::Utc);
             duration.num_minutes() as f64 / 60.0
         })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_extract_topic_suffix() {
+        // Telegram forum topic
+        assert_eq!(
+            extract_topic_suffix("telegram:group:-1003821690204:topic:9225"),
+            Some("topic:9225".to_string())
+        );
+        // Different topic
+        assert_eq!(
+            extract_topic_suffix("telegram:group:-1003821690204:topic:8485"),
+            Some("topic:8485".to_string())
+        );
+        // No topic — regular group sender
+        assert_eq!(
+            extract_topic_suffix("telegram:group:-1003821690204"),
+            None
+        );
+        // No topic — DM sender
+        assert_eq!(extract_topic_suffix("telegram:60996061"), None);
+        // Empty
+        assert_eq!(extract_topic_suffix(""), None);
+    }
 }
