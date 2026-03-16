@@ -1085,7 +1085,9 @@ async fn cmd_search(
         };
 
         let topic = r["topic"].as_str().unwrap_or("");
-        let confidence = r["confidence"].as_f64().unwrap_or(0.0);
+        let confidence = r["confidence"].as_f64()
+            .or_else(|| r["confidence"].as_str().and_then(|s| s.parse::<f64>().ok()))
+            .unwrap_or(0.0);
         let summary = r["summary"].as_str().unwrap_or("");
         let created_at = r["created_at"].as_str().unwrap_or("");
 
