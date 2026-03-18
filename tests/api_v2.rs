@@ -239,6 +239,7 @@ mod dispatch_tests {
             ("memory_search", "memory.search"),
             ("memory_put", "memory.put"),
             ("memory_get", "memory.get"),
+            ("memory_get_batch", "memory.get_batch"),
             ("memory_list", "memory.list"),
             ("memory_delete", "memory.delete"),
             ("message_ingest", "message.ingest"),
@@ -594,6 +595,75 @@ mod operations_tests {
         let (nomen, _tmp) = super::test_nomen().await.unwrap();
 
         let resp = nomen::api::dispatch(&nomen, "test", "memory.search", &json!({})).await;
+        assert!(!resp.ok);
+        assert_eq!(resp.error.unwrap().code, "invalid_params");
+    }
+
+    #[tokio::test]
+    async fn memory_get_batch_returns_multiple() {
+        let (nomen, _tmp) = super::test_nomen().await.unwrap();
+
+        // Store two room context memories
+        nomen::api::dispatch(
+            &nomen, "test",
+            "memory.put",
+            &json!({"topic": "room", "summary": "Engineering group room", "detail": "Main coordination channel", "visibility": "group", "scope": "techteam"}),
+        ).await;
+        nomen::api::dispatch(
+            &nomen, "test",
+            "memory.put",
+            &json!({"topic": "room/deploys", "summary": "Deployment topic room", "detail": "Deployment discussions", "visibility": "group", "scope": "techteam"}),
+        ).await;
+
+        // Batch fetch both
+        let resp = nomen::api::dispatch(
+            &nomen, "test",
+            "memory.get_batch",
+            &json!({"d_tags": ["group:techteam:room", "group:techteam:room/deploys"]}),
+        ).await;
+        assert!(resp.ok, "get_batch failed: {:?}", resp.error);
+        let result = resp.result.unwrap();
+        assert_eq!(result["count"], 2);
+
+        // Check by_d_tag map
+        let by_dtag = &result["by_d_tag"];
+        assert_eq!(by_dtag["group:techteam:room"]["summary"], "Engineering group room");
+        assert_eq!(by_dtag["group:techteam:room/deploys"]["summary"], "Deployment topic room");
+    }
+
+    #[tokio::test]
+    async fn memory_get_batch_partial_results() {
+        let (nomen, _tmp) = super::test_nomen().await.unwrap();
+
+        // Store only one memory
+        nomen::api::dispatch(
+            &nomen, "test",
+            "memory.put",
+            &json!({"topic": "room", "summary": "Existing room", "visibility": "group", "scope": "mygroup"}),
+        ).await;
+
+        // Batch fetch including a missing d-tag
+        let resp = nomen::api::dispatch(
+            &nomen, "test",
+            "memory.get_batch",
+            &json!({"d_tags": ["group:mygroup:room", "group:mygroup:room/nonexistent"]}),
+        ).await;
+        assert!(resp.ok);
+        let result = resp.result.unwrap();
+        assert_eq!(result["count"], 1);
+        assert!(result["by_d_tag"]["group:mygroup:room"].is_object());
+        assert!(result["by_d_tag"].get("group:mygroup:room/nonexistent").is_none());
+    }
+
+    #[tokio::test]
+    async fn memory_get_batch_empty_returns_error() {
+        let (nomen, _tmp) = super::test_nomen().await.unwrap();
+
+        let resp = nomen::api::dispatch(
+            &nomen, "test",
+            "memory.get_batch",
+            &json!({"d_tags": []}),
+        ).await;
         assert!(!resp.ok);
         assert_eq!(resp.error.unwrap().code, "invalid_params");
     }

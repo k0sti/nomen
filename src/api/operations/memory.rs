@@ -188,7 +188,9 @@ pub async fn get(nomen: &Nomen, default_channel: &str, params: &Value) -> Result
             .map(|s| s.public_key().to_hex())
             .unwrap_or_default();
         let context = match vis {
-            Visibility::Personal | Visibility::Internal => author_pubkey.clone(),
+            Visibility::Personal | Visibility::Internal => {
+                if scope_str.is_empty() { author_pubkey.clone() } else { scope_str.to_string() }
+            }
             Visibility::Group => scope_str.to_string(),
             Visibility::Circle => scope_str.to_string(),
             Visibility::Public => String::new(),
@@ -226,6 +228,48 @@ fn record_to_value(record: Option<crate::db::MemoryRecord>) -> Value {
         }),
         None => Value::Null,
     }
+}
+
+pub async fn get_batch(
+    nomen: &Nomen,
+    _default_channel: &str,
+    params: &Value,
+) -> Result<Value, ApiError> {
+    let d_tags: Vec<String> = params
+        .get("d_tags")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect()
+        })
+        .unwrap_or_default();
+
+    if d_tags.is_empty() {
+        return Err(ApiError::invalid_params("d_tags array is required"));
+    }
+
+    let records = nomen
+        .get_batch(&d_tags)
+        .await
+        .map_err(ApiError::from_anyhow)?;
+
+    // Build a map keyed by d_tag for ordered, keyed access
+    let results: Vec<Value> = records.iter().map(|m| record_to_value(Some(m.clone()))).collect();
+
+    // Also build a lookup map so callers can access by d_tag directly
+    let mut by_dtag = serde_json::Map::new();
+    for m in &records {
+        if let Some(ref dt) = m.d_tag {
+            by_dtag.insert(dt.clone(), record_to_value(Some(m.clone())));
+        }
+    }
+
+    Ok(json!({
+        "count": results.len(),
+        "results": results,
+        "by_d_tag": Value::Object(by_dtag),
+    }))
 }
 
 pub async fn list(nomen: &Nomen, default_channel: &str, params: &Value) -> Result<Value, ApiError> {
@@ -303,8 +347,10 @@ pub async fn delete(
                 .map(|s| s.public_key().to_hex())
                 .unwrap_or_default();
             let context = match vis {
-                Visibility::Personal | Visibility::Internal => author_pubkey,
-                Visibility::Group => scope_str.to_string(),
+                Visibility::Personal | Visibility::Internal => {
+                    if scope_str.is_empty() { author_pubkey } else { scope_str.to_string() }
+                }
+                Visibility::Group | Visibility::Circle => scope_str.to_string(),
                 _ => String::new(),
             };
             Some(crate::memory::build_v2_dtag(vis.as_str(), &context, topic))

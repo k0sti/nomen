@@ -262,7 +262,19 @@ DEFINE TABLE IF NOT EXISTS consolidated_from SCHEMALESS;
 DEFINE TABLE IF NOT EXISTS references SCHEMALESS;
 DEFINE TABLE IF NOT EXISTS related_to SCHEMALESS;
 
-DEFINE INDEX IF NOT EXISTS raw_msg_source ON raw_message FIELDS source, source_id UNIQUE;
+DEFINE FIELD IF NOT EXISTS nostr_event_id   ON raw_message TYPE option<string>;
+DEFINE FIELD IF NOT EXISTS provider_id      ON raw_message TYPE option<string>;
+DEFINE FIELD IF NOT EXISTS sender_id        ON raw_message TYPE option<string>;
+DEFINE FIELD IF NOT EXISTS room             ON raw_message TYPE option<string>;
+DEFINE FIELD IF NOT EXISTS topic            ON raw_message TYPE option<string>;
+DEFINE FIELD IF NOT EXISTS thread           ON raw_message TYPE option<string>;
+DEFINE FIELD IF NOT EXISTS scope            ON raw_message TYPE option<string>;
+DEFINE FIELD IF NOT EXISTS source_created_at ON raw_message TYPE option<string>;
+DEFINE FIELD IF NOT EXISTS publish_status   ON raw_message TYPE option<string>;
+
+DEFINE INDEX IF NOT EXISTS raw_msg_nostr_id    ON raw_message FIELDS nostr_event_id;
+DEFINE INDEX IF NOT EXISTS raw_msg_provider_id ON raw_message FIELDS provider_id, channel;
+DEFINE INDEX IF NOT EXISTS raw_msg_source ON raw_message FIELDS source, source_id;
 DEFINE INDEX IF NOT EXISTS raw_msg_sender ON raw_message FIELDS sender;
 
 DEFINE TABLE IF NOT EXISTS meta SCHEMAFULL;
@@ -286,6 +298,16 @@ DEFINE INDEX IF NOT EXISTS session_sid   ON session FIELDS session_id UNIQUE;
 -- Consolidation sessions (two-phase agent mode)
 DEFINE TABLE IF NOT EXISTS consolidation_session SCHEMALESS;
 DEFINE INDEX IF NOT EXISTS cons_session_sid ON consolidation_session FIELDS session_id UNIQUE;
+
+-- Provider bindings: maps provider chat IDs to memory d-tags (for room.resolve)
+DEFINE TABLE IF NOT EXISTS provider_binding SCHEMAFULL;
+DEFINE FIELD IF NOT EXISTS provider_id ON provider_binding TYPE string;
+DEFINE FIELD IF NOT EXISTS d_tag       ON provider_binding TYPE string;
+DEFINE FIELD IF NOT EXISTS created_at  ON provider_binding TYPE string;
+DEFINE FIELD IF NOT EXISTS updated_at  ON provider_binding TYPE string;
+DEFINE INDEX IF NOT EXISTS pb_provider  ON provider_binding FIELDS provider_id;
+DEFINE INDEX IF NOT EXISTS pb_dtag      ON provider_binding FIELDS d_tag;
+DEFINE INDEX IF NOT EXISTS pb_unique    ON provider_binding FIELDS provider_id, d_tag UNIQUE;
 "#;
 
 /// Initialize (or open) the SurrealDB database and apply schema.
@@ -619,6 +641,20 @@ pub async fn get_memory_by_dtag(db: &Surreal<Db>, d_tag: &str) -> Result<Option<
     Ok(results.pop())
 }
 
+/// Get multiple memories by d-tags in a single query.
+pub async fn get_memories_by_dtags(db: &Surreal<Db>, d_tags: &[String]) -> Result<Vec<MemoryRecord>> {
+    if d_tags.is_empty() {
+        return Ok(vec![]);
+    }
+    let results: Vec<MemoryRecord> = db
+        .query("SELECT content, summary, tier, scope, topic, confidence, source, model, version, nostr_id, d_tag, created_at, updated_at, ephemeral, consolidated_from, consolidated_at, last_accessed, access_count, importance FROM memory WHERE d_tag IN $d_tags")
+        .bind(("d_tags", d_tags.to_vec()))
+        .await?
+        .check()?
+        .take(0)?;
+    Ok(results)
+}
+
 /// Get a single memory by topic field (raw topic, not d-tag).
 pub async fn get_memory_by_topic(db: &Surreal<Db>, topic: &str) -> Result<Option<MemoryRecord>> {
     let mut results: Vec<MemoryRecord> = db
@@ -708,19 +744,133 @@ pub async fn store_raw_message(db: &Surreal<Db>, msg: &RawMessage) -> Result<Str
         metadata: String,
         created_at: String,
         consolidated: bool,
+        nostr_event_id: String,
+        provider_id: String,
+        sender_id: String,
+        room: String,
+        topic: String,
+        thread: String,
+        scope: String,
+        source_created_at: String,
+        publish_status: String,
     }
 
     let metadata = msg.metadata.clone().unwrap_or_default();
 
     let record = NewRawMessage {
         source: msg.source.clone(),
-        source_id: source_id,
-        sender: msg.sender.clone(),
+        source_id,
+        sender: msg.sender_name.clone().unwrap_or_else(|| msg.sender.clone()),
         channel,
         content: msg.content.clone(),
         metadata,
         created_at: created.to_string(),
         consolidated: false,
+        nostr_event_id: String::new(),
+        provider_id: msg.provider_id.clone().unwrap_or_default(),
+        sender_id: msg.sender.clone(),
+        room: msg.room.clone().unwrap_or_default(),
+        topic: msg.topic.clone().unwrap_or_default(),
+        thread: msg.thread.clone().unwrap_or_default(),
+        scope: msg.scope.clone().unwrap_or_default(),
+        source_created_at: msg.source_ts.clone().unwrap_or_default(),
+        publish_status: String::new(),
+    };
+
+    db.query("CREATE raw_message CONTENT $record")
+        .bind(("record", record))
+        .await?
+        .check()?;
+
+    Ok("ok".to_string())
+}
+
+/// Check for duplicate raw message by provider_id + channel.
+pub async fn check_duplicate_raw_message(
+    db: &Surreal<Db>,
+    provider_id: &str,
+    channel: &str,
+) -> Result<bool> {
+    #[derive(Deserialize, SurrealValue)]
+    struct CountRow {
+        count: usize,
+    }
+    let result: Option<CountRow> = db
+        .query("SELECT count() AS count FROM raw_message WHERE provider_id = $pid AND channel = $ch GROUP ALL")
+        .bind(("pid", provider_id.to_string()))
+        .bind(("ch", channel.to_string()))
+        .await?
+        .check()?
+        .take(0)?;
+    Ok(result.map(|r| r.count > 0).unwrap_or(false))
+}
+
+/// Check for duplicate raw message by nostr_event_id (for sync/import).
+pub async fn check_duplicate_by_nostr_id(
+    db: &Surreal<Db>,
+    nostr_event_id: &str,
+) -> Result<bool> {
+    #[derive(Deserialize, SurrealValue)]
+    struct CountRow {
+        count: usize,
+    }
+    let result: Option<CountRow> = db
+        .query("SELECT count() AS count FROM raw_message WHERE nostr_event_id = $nid GROUP ALL")
+        .bind(("nid", nostr_event_id.to_string()))
+        .await?
+        .check()?
+        .take(0)?;
+    Ok(result.map(|r| r.count > 0).unwrap_or(false))
+}
+
+/// Store a raw message imported from relay (with nostr_event_id already known).
+pub async fn store_raw_message_from_relay(
+    db: &Surreal<Db>,
+    msg: &RawMessage,
+    nostr_event_id: &str,
+) -> Result<String> {
+    let now = chrono::Utc::now().to_rfc3339();
+    let created = msg.created_at.as_deref().unwrap_or(&now);
+
+    #[derive(Serialize, SurrealValue)]
+    struct NewRawMessage {
+        source: String,
+        source_id: String,
+        sender: String,
+        channel: String,
+        content: String,
+        metadata: String,
+        created_at: String,
+        consolidated: bool,
+        nostr_event_id: String,
+        provider_id: String,
+        sender_id: String,
+        room: String,
+        topic: String,
+        thread: String,
+        scope: String,
+        source_created_at: String,
+        publish_status: String,
+    }
+
+    let record = NewRawMessage {
+        source: msg.source.clone(),
+        source_id: msg.source_id.clone().unwrap_or_default(),
+        sender: msg.sender_name.clone().unwrap_or_else(|| msg.sender.clone()),
+        channel: msg.channel.clone().unwrap_or_default(),
+        content: msg.content.clone(),
+        metadata: msg.metadata.clone().unwrap_or_default(),
+        created_at: created.to_string(),
+        consolidated: false,
+        nostr_event_id: nostr_event_id.to_string(),
+        provider_id: msg.provider_id.clone().unwrap_or_default(),
+        sender_id: msg.sender.clone(),
+        room: msg.room.clone().unwrap_or_default(),
+        topic: msg.topic.clone().unwrap_or_default(),
+        thread: msg.thread.clone().unwrap_or_default(),
+        scope: msg.scope.clone().unwrap_or_default(),
+        source_created_at: msg.source_ts.clone().unwrap_or_default(),
+        publish_status: "published".to_string(),
     };
 
     db.query("CREATE raw_message CONTENT $record")
@@ -763,7 +913,7 @@ pub async fn query_raw_messages(
 
     let limit = opts.limit.unwrap_or(100);
     let sql = format!(
-        "SELECT meta::id(id) AS id, source, source_id ?? '' AS source_id, sender, channel ?? '' AS channel, content, created_at, consolidated FROM raw_message {where_clause} ORDER BY created_at ASC LIMIT {limit}"
+        "SELECT meta::id(id) AS id, source, source_id ?? '' AS source_id, sender, channel ?? '' AS channel, content, created_at, consolidated, nostr_event_id ?? '' AS nostr_event_id, provider_id ?? '' AS provider_id, sender_id ?? '' AS sender_id, room ?? '' AS room, topic ?? '' AS topic, thread ?? '' AS thread, scope ?? '' AS scope, source_created_at ?? '' AS source_created_at, publish_status ?? '' AS publish_status, metadata ?? '' AS metadata FROM raw_message {where_clause} ORDER BY created_at ASC LIMIT {limit}"
     );
 
     let mut q = db.query(&sql);
@@ -823,7 +973,7 @@ pub async fn get_unconsolidated_messages_filtered(
 
     let where_clause = conditions.join(" AND ");
     let sql = format!(
-        "SELECT meta::id(id) AS id, source, source_id ?? '' AS source_id, sender, channel ?? '' AS channel, content, created_at, consolidated FROM raw_message WHERE {where_clause} ORDER BY created_at ASC LIMIT {limit}"
+        "SELECT meta::id(id) AS id, source, source_id ?? '' AS source_id, sender, channel ?? '' AS channel, content, created_at, consolidated, nostr_event_id ?? '' AS nostr_event_id, provider_id ?? '' AS provider_id, sender_id ?? '' AS sender_id, room ?? '' AS room, topic ?? '' AS topic, thread ?? '' AS thread, scope ?? '' AS scope, source_created_at ?? '' AS source_created_at, publish_status ?? '' AS publish_status, metadata ?? '' AS metadata FROM raw_message WHERE {where_clause} ORDER BY created_at ASC LIMIT {limit}"
     );
 
     let mut q = db.query(&sql);
@@ -1092,7 +1242,7 @@ pub async fn get_ephemeral_messages_before(
     limit: usize,
 ) -> Result<Vec<RawMessageRecord>> {
     let sql = format!(
-        "SELECT meta::id(id) AS id, source, source_id ?? '' AS source_id, sender, channel ?? '' AS channel, content, created_at, consolidated FROM raw_message WHERE created_at < $before ORDER BY created_at ASC LIMIT {limit}"
+        "SELECT meta::id(id) AS id, source, source_id ?? '' AS source_id, sender, channel ?? '' AS channel, content, created_at, consolidated, nostr_event_id ?? '' AS nostr_event_id, provider_id ?? '' AS provider_id, sender_id ?? '' AS sender_id, room ?? '' AS room, topic ?? '' AS topic, thread ?? '' AS thread, scope ?? '' AS scope, source_created_at ?? '' AS source_created_at, publish_status ?? '' AS publish_status, metadata ?? '' AS metadata FROM raw_message WHERE created_at < $before ORDER BY created_at ASC LIMIT {limit}"
     );
     let results: Vec<RawMessageRecord> = db
         .query(&sql)
@@ -1185,13 +1335,14 @@ pub async fn query_messages_around(
     };
 
     // Fetch N messages before (inclusive of target) + N messages after
+    let fields = "meta::id(id) AS id, source, source_id ?? '' AS source_id, sender, channel ?? '' AS channel, content, created_at, consolidated, nostr_event_id ?? '' AS nostr_event_id, provider_id ?? '' AS provider_id, sender_id ?? '' AS sender_id, room ?? '' AS room, topic ?? '' AS topic, thread ?? '' AS thread, scope ?? '' AS scope, source_created_at ?? '' AS source_created_at, publish_status ?? '' AS publish_status, metadata ?? '' AS metadata";
     let before_sql = format!(
-        "SELECT meta::id(id) AS id, source, source_id ?? '' AS source_id, sender, channel ?? '' AS channel, content, created_at, consolidated \
+        "SELECT {fields} \
          FROM raw_message WHERE created_at <= $pivot ORDER BY created_at DESC LIMIT {}",
         context_count + 1
     );
     let after_sql = format!(
-        "SELECT meta::id(id) AS id, source, source_id ?? '' AS source_id, sender, channel ?? '' AS channel, content, created_at, consolidated \
+        "SELECT {fields} \
          FROM raw_message WHERE created_at > $pivot ORDER BY created_at ASC LIMIT {context_count}"
     );
 
@@ -1706,4 +1857,92 @@ pub async fn cleanup_expired_consolidation_sessions(db: &Surreal<Db>) -> Result<
             .check()?;
     }
     Ok(count)
+}
+
+// ── Provider bindings ─────────────────────────────────────────────
+
+/// Bind a provider ID to a memory d-tag (upsert).
+pub async fn bind_provider(
+    db: &Surreal<Db>,
+    provider_id: &str,
+    d_tag: &str,
+) -> Result<()> {
+    let now = chrono::Utc::now().to_rfc3339();
+    db.query(
+        "IF (SELECT count() FROM provider_binding WHERE provider_id = $pid AND d_tag = $dtag GROUP ALL)[0].count > 0 {
+            UPDATE provider_binding SET updated_at = $now WHERE provider_id = $pid AND d_tag = $dtag;
+        } ELSE {
+            CREATE provider_binding SET provider_id = $pid, d_tag = $dtag, created_at = $now, updated_at = $now;
+        };"
+    )
+    .bind(("pid", provider_id.to_string()))
+    .bind(("dtag", d_tag.to_string()))
+    .bind(("now", now))
+    .await?
+    .check()?;
+    Ok(())
+}
+
+/// Resolve all d-tags bound to a provider ID.
+pub async fn resolve_provider(
+    db: &Surreal<Db>,
+    provider_id: &str,
+) -> Result<Vec<String>> {
+    #[derive(Debug, Deserialize, SurrealValue)]
+    struct Row {
+        d_tag: String,
+        #[allow(dead_code)]
+        created_at: String,
+    }
+    let results: Vec<Row> = db
+        .query("SELECT d_tag, created_at FROM provider_binding WHERE provider_id = $pid ORDER BY created_at ASC")
+        .bind(("pid", provider_id.to_string()))
+        .await?
+        .check()?
+        .take(0)?;
+    Ok(results.into_iter().map(|r| r.d_tag).collect())
+}
+
+/// Unbind a provider ID from a d-tag.
+pub async fn unbind_provider(
+    db: &Surreal<Db>,
+    provider_id: &str,
+    d_tag: &str,
+) -> Result<bool> {
+    let before: Vec<serde_json::Value> = db
+        .query("SELECT meta::id(id) AS id FROM provider_binding WHERE provider_id = $pid AND d_tag = $dtag")
+        .bind(("pid", provider_id.to_string()))
+        .bind(("dtag", d_tag.to_string()))
+        .await?
+        .check()?
+        .take(0)?;
+    if before.is_empty() {
+        return Ok(false);
+    }
+    db.query("DELETE FROM provider_binding WHERE provider_id = $pid AND d_tag = $dtag")
+        .bind(("pid", provider_id.to_string()))
+        .bind(("dtag", d_tag.to_string()))
+        .await?
+        .check()?;
+    Ok(true)
+}
+
+/// List all bindings for a given d-tag (reverse lookup).
+pub async fn list_providers_for_dtag(
+    db: &Surreal<Db>,
+    d_tag: &str,
+) -> Result<Vec<String>> {
+    #[derive(Debug, Deserialize, SurrealValue)]
+    struct Row {
+        provider_id: String,
+        #[allow(dead_code)]
+        created_at: String,
+    }
+    let results: Vec<Row> = db
+        .query("SELECT provider_id, created_at FROM provider_binding WHERE d_tag = $dtag ORDER BY created_at ASC")
+        .bind(("dtag", d_tag.to_string()))
+        .await?
+        .check()?
+        .take(0)?;
+    Ok(results.into_iter().map(|r| r.provider_id).collect())
 }

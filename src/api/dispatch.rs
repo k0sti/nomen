@@ -34,6 +34,7 @@ async fn dispatch_inner(
         "memory.search" => operations::memory::search(nomen, default_channel, params).await,
         "memory.put" => operations::memory::put(nomen, default_channel, params).await,
         "memory.get" => operations::memory::get(nomen, default_channel, params).await,
+        "memory.get_batch" => operations::memory::get_batch(nomen, default_channel, params).await,
         "memory.list" => operations::memory::list(nomen, default_channel, params).await,
         "memory.delete" => operations::memory::delete(nomen, default_channel, params).await,
 
@@ -64,6 +65,11 @@ async fn dispatch_inner(
         "memory.embed" => operations::maintenance::embed(nomen, default_channel, params).await,
         "memory.prune" => operations::maintenance::prune(nomen, default_channel, params).await,
 
+        // Room domain
+        "room.resolve" => operations::room::resolve(nomen, default_channel, params).await,
+        "room.bind" => operations::room::bind(nomen, default_channel, params).await,
+        "room.unbind" => operations::room::unbind(nomen, default_channel, params).await,
+
         // Group domain
         "group.list" => operations::group::list(nomen, default_channel, params).await,
         "group.members" => operations::group::members(nomen, default_channel, params).await,
@@ -90,6 +96,7 @@ pub fn mcp_tool_to_action(tool_name: &str) -> Option<String> {
             "memory.search"
             | "memory.put"
             | "memory.get"
+            | "memory.get_batch"
             | "memory.list"
             | "memory.delete"
             | "message.ingest"
@@ -105,6 +112,9 @@ pub fn mcp_tool_to_action(tool_name: &str) -> Option<String> {
             | "memory.prune"
             | "entity.list"
             | "entity.relationships"
+            | "room.resolve"
+            | "room.bind"
+            | "room.unbind"
             | "group.list"
             | "group.members"
             | "group.create"

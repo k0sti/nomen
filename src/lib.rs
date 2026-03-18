@@ -244,10 +244,16 @@ impl Nomen {
             .unwrap_or_default();
 
         let base_tier = memory::base_tier(&mem.tier);
-        let context = if base_tier == "personal" || base_tier == "internal" {
+        let context = if let Some(scope) = mem.tier.strip_prefix("personal:") {
+            scope.to_string()
+        } else if let Some(scope) = mem.tier.strip_prefix("internal:") {
+            scope.to_string()
+        } else if base_tier == "personal" || base_tier == "internal" {
             author_pubkey_hex.clone()
         } else if let Some(group_id) = mem.tier.strip_prefix("group:") {
             group_id.to_string()
+        } else if let Some(circle_id) = mem.tier.strip_prefix("circle:") {
+            circle_id.to_string()
         } else {
             String::new()
         };
@@ -667,6 +673,11 @@ impl Nomen {
         db::get_memory_by_dtag(&self.db, d_tag).await
     }
 
+    /// Get multiple memories by d-tags in a single query.
+    pub async fn get_batch(&self, d_tags: &[String]) -> Result<Vec<db::MemoryRecord>> {
+        db::get_memories_by_dtags(&self.db, d_tags).await
+    }
+
     /// Get a memory by raw topic string (queries the `topic` field, not `d_tag`).
     pub async fn get_by_raw_topic(&self, topic: &str) -> Result<Option<db::MemoryRecord>> {
         db::get_memory_by_topic(&self.db, topic).await
@@ -710,6 +721,39 @@ impl Nomen {
         let mut errors = 0usize;
 
         for event in events.into_iter() {
+            // Handle raw source events (kind 1235)
+            if event.kind == nostr_sdk::Kind::Custom(crate::kinds::RAW_SOURCE_KIND) {
+                let nostr_event_id = event.id.to_hex();
+                match db::check_duplicate_by_nostr_id(&self.db, &nostr_event_id).await {
+                    Ok(true) => {
+                        skipped += 1;
+                        continue;
+                    }
+                    Ok(false) => {}
+                    Err(e) => {
+                        tracing::warn!("Failed to check raw source event dedup: {e}");
+                        errors += 1;
+                        continue;
+                    }
+                }
+                match crate::ingest::parse_raw_source_event(&event) {
+                    Ok(raw_msg) => {
+                        match db::store_raw_message_from_relay(&self.db, &raw_msg, &nostr_event_id).await {
+                            Ok(_) => stored += 1,
+                            Err(e) => {
+                                tracing::warn!("Failed to store raw source event {nostr_event_id}: {e}");
+                                errors += 1;
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        tracing::warn!("Failed to parse raw source event {nostr_event_id}: {e}");
+                        errors += 1;
+                    }
+                }
+                continue;
+            }
+
             if event.kind == nostr_sdk::Kind::Custom(crate::kinds::LESSON_KIND)
                 || event.kind == nostr_sdk::Kind::Custom(crate::kinds::LEGACY_LESSON_KIND)
             {
@@ -886,4 +930,24 @@ pub struct ListStats {
     pub total: usize,
     pub named: usize,
     pub pending: usize,
+}
+
+// ── Provider binding pass-through ─────────────────────────────────
+
+impl Nomen {
+    pub async fn bind_provider(&self, provider_id: &str, d_tag: &str) -> Result<()> {
+        db::bind_provider(self.db(), provider_id, d_tag).await
+    }
+
+    pub async fn resolve_provider(&self, provider_id: &str) -> Result<Vec<String>> {
+        db::resolve_provider(self.db(), provider_id).await
+    }
+
+    pub async fn unbind_provider(&self, provider_id: &str, d_tag: &str) -> Result<bool> {
+        db::unbind_provider(self.db(), provider_id, d_tag).await
+    }
+
+    pub async fn list_providers_for_dtag(&self, d_tag: &str) -> Result<Vec<String>> {
+        db::list_providers_for_dtag(self.db(), d_tag).await
+    }
 }

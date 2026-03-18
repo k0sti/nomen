@@ -75,6 +75,18 @@ type NomenSearchResult = {
   created_at: string;
 };
 
+type NomenMemoryRecord = {
+  topic?: string;
+  summary?: string;
+  detail?: string;
+  visibility?: string;
+  scope?: string;
+  confidence?: string | number;
+  version?: number;
+  created_at?: string;
+  d_tag?: string;
+};
+
 function formatSearchResults(results: NomenSearchResult[]) {
   return {
     results: results.map((r) => ({
@@ -95,6 +107,87 @@ function jsonResult(data: Record<string, unknown>) {
   };
 }
 
+async function getMemoryByDTag(
+  apiUrl: string,
+  dTag: string,
+  timeoutMs: number,
+): Promise<NomenMemoryRecord | null> {
+  const resp = await nomenRequest(apiUrl, "memory.get", { d_tag: dTag }, timeoutMs);
+  if (!resp.ok || !resp.result) return null;
+  const result = resp.result as any;
+  if (!result || result.topic == null) return null;
+  return result as NomenMemoryRecord;
+}
+
+async function resolveRoomsByProvider(
+  apiUrl: string,
+  providerId: string,
+  timeoutMs: number,
+): Promise<NomenMemoryRecord[]> {
+  const resp = await nomenRequest(apiUrl, "room.resolve", { provider_id: providerId }, timeoutMs);
+  if (!resp.ok || !resp.result) return [];
+  const result = resp.result as any;
+  return ((result?.results ?? []) as NomenMemoryRecord[]);
+}
+
+function formatRoomSection(title: string, record: NomenMemoryRecord): string {
+  const body = record.detail || record.summary || "";
+  return `# ${title}${record.summary ? ` (${record.summary})` : ""}\n\n${body}`;
+}
+
+// ── Session key → provider ID extraction ─────────────────────────────
+
+/**
+ * Extract a provider chat identifier from an OpenClaw session key.
+ *
+ * Session keys look like:
+ *   agent:main:telegram:-1003821690204:group
+ *   agent:main:nostr-nip29:techteam:group
+ *   agent:main:telegram:60996061:direct
+ *
+ * We extract the channel:chatId portion (e.g. "telegram:-1003821690204").
+ * Returns null for session keys we can't parse.
+ */
+function extractProviderIdFromSessionKey(sessionKey: string): string | null {
+  if (!sessionKey) return null;
+
+  const lower = sessionKey.toLowerCase();
+  const parts = lower.split(":").filter(Boolean);
+
+  // Expected examples:
+  //   agent:main:telegram:group:-1003821690204:topic:8485
+  //   agent:main:telegram:60996061:direct
+  if (parts.length < 5 || parts[0] !== "agent") return null;
+
+  const channel = parts[2];
+
+  const topicIdx = parts.indexOf("topic");
+  if (topicIdx > 4) {
+    const chatIdParts = parts.slice(3, topicIdx);
+    if (chatIdParts.length === 0) return null;
+    return `${channel}:${chatIdParts.join(":")}`;
+  }
+
+  const chatType = parts[parts.length - 1];
+  if (!["group", "direct", "dm", "channel"].includes(chatType)) return null;
+
+  const chatIdParts = parts.slice(3, parts.length - 1);
+  if (chatIdParts.length === 0) return null;
+
+  return `${channel}:${chatIdParts.join(":")}`;
+}
+
+function extractTopicIdFromSessionKey(sessionKey: string): string | null {
+  if (!sessionKey) return null;
+  const parts = sessionKey.split(":").filter(Boolean);
+  const topicIdx = parts.indexOf("topic");
+  if (topicIdx >= 0 && topicIdx + 1 < parts.length) {
+    const topicId = parts[topicIdx + 1];
+    if (topicId && /^\d+$/.test(topicId)) return topicId;
+  }
+  return null;
+}
+
 // ── Plugin ───────────────────────────────────────────────────────────
 
 const memoryNomenPlugin = {
@@ -105,8 +198,12 @@ const memoryNomenPlugin = {
   kind: "memory" as const,
   configSchema: {
     type: "object" as const,
-    additionalProperties: false,
-    properties: {},
+    additionalProperties: true,
+    properties: {
+      apiUrl: { type: "string" as const },
+      visibility: { type: "string" as const },
+      timeoutMs: { type: "number" as const },
+    },
     parse: (v: unknown) => v,
   },
 
@@ -402,6 +499,76 @@ const memoryNomenPlugin = {
         },
       },
       { names: ["memory_consolidate_commit"] },
+    );
+
+    // ── Room context injection (before_prompt_build hook) ───────
+
+    api.on(
+      "before_prompt_build",
+      async (_event: any, ctx: any) => {
+        const sessionKey: string = ctx?.sessionKey ?? "";
+        const inbound: any = ctx?.inboundContext ?? {};
+
+        // chatId already includes channel prefix (e.g. "telegram:-1003821690204")
+        const chatId = inbound?.chatId ?? inbound?.chat_id ?? extractProviderIdFromSessionKey(sessionKey) ?? "";
+        const threadId = inbound?.threadId ?? inbound?.thread_id ?? extractTopicIdFromSessionKey(sessionKey) ?? "";
+        if (!chatId) return {};
+
+        try {
+          const sections: string[] = [];
+
+          // Group/chat layer:
+          // - Prefer direct d-tag from spec
+          // - Fallback to provider binding lookup for backward compatibility with existing data
+          const groupDTag = `group:${chatId}:room`;
+          const groupRecord = await getMemoryByDTag(cfg.apiUrl, groupDTag, cfg.timeoutMs);
+          let groupInjected = false;
+
+          if (groupRecord) {
+            sections.push(formatRoomSection("Room Context", groupRecord));
+            groupInjected = true;
+          } else {
+            const boundRooms = await resolveRoomsByProvider(cfg.apiUrl, chatId, cfg.timeoutMs);
+            if (boundRooms.length > 0) {
+              sections.push(...boundRooms.map((r) => formatRoomSection("Room Context", r)));
+              groupInjected = true;
+            }
+          }
+
+          // Topic/thread layer
+          let topicInjected = false;
+          if (threadId) {
+            const topicDTag = `group:${chatId}:room/${threadId}`;
+            const topicRecord = await getMemoryByDTag(cfg.apiUrl, topicDTag, cfg.timeoutMs);
+            if (topicRecord) {
+              sections.push(formatRoomSection("Topic Context", topicRecord));
+              topicInjected = true;
+            } else {
+              const topicProviderId = `${chatId}:topic:${threadId}`;
+              const topicRooms = await resolveRoomsByProvider(cfg.apiUrl, topicProviderId, cfg.timeoutMs);
+              if (topicRooms.length > 0) {
+                sections.push(...topicRooms.map((r) => formatRoomSection("Topic Context", r)));
+                topicInjected = true;
+              }
+            }
+          }
+
+          if (sections.length === 0) return {};
+
+          api.logger.info(
+            `memory-nomen: injected room context for provider "${chatId}" (${sections.length} sections, group=${groupInjected}, topic=${topicInjected})`,
+          );
+
+          return {
+            appendSystemContext: sections.join("\n\n"),
+          };
+        } catch (err) {
+          api.logger.warn(
+            `memory-nomen: room context injection failed: ${err instanceof Error ? err.message : err}`,
+          );
+          return {};
+        }
+      },
     );
 
     // ── Message ingestion hooks ─────────────────────────────────
