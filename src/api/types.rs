@@ -175,8 +175,12 @@ impl Visibility {
         match self {
             Self::Public => "public".to_string(),
             Self::Group => format!("group:{scope}"),
-            Self::Personal => "personal".to_string(),
-            Self::Internal => "internal".to_string(),
+            Self::Personal => {
+                if scope.is_empty() { "personal".to_string() } else { format!("personal:{scope}") }
+            }
+            Self::Internal => {
+                if scope.is_empty() { "internal".to_string() } else { format!("internal:{scope}") }
+            }
             Self::Circle => format!("circle:{scope}"),
         }
     }

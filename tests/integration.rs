@@ -70,6 +70,7 @@ async fn test_ingest_and_consolidate() -> Result<()> {
             content: format!("Test message number {i} about Rust programming"),
             metadata: None,
             created_at: None,
+            ..Default::default()
         };
         nomen::ingest::ingest_message(&db, &msg).await?;
     }
@@ -207,6 +208,7 @@ async fn test_prune() -> Result<()> {
             content: format!("Old message {i}"),
             metadata: None,
             created_at: Some(old_date.to_string()),
+            ..Default::default()
         };
         nomen::ingest::ingest_message(&db, &msg).await?;
     }

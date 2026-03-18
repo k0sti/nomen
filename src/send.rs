@@ -130,6 +130,7 @@ pub async fn send_message(
         content: opts.content,
         metadata: Some(metadata.to_string()),
         created_at: None,
+        ..Default::default()
     };
 
     let _ = db::store_raw_message(db, &msg).await;

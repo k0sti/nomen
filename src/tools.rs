@@ -382,6 +382,7 @@ pub async fn tool_ingest(nomen: &Nomen, _default_channel: &str, args: &Value) ->
         content,
         metadata,
         created_at: None,
+        ..Default::default()
     };
 
     let id = nomen.ingest_message(msg).await?;

@@ -17,3 +17,7 @@ pub const LEGACY_APP_DATA_KIND: u16 = 30078;
 
 /// Legacy lesson kind (read-only, for backward compatibility).
 pub const LEGACY_LESSON_KIND: u16 = 4129;
+
+/// Raw source event (regular, non-replaceable).
+/// Append-only ground-truth layer for ingested messages from any provider.
+pub const RAW_SOURCE_KIND: u16 = 1235;

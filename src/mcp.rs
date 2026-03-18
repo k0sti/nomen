@@ -153,6 +153,21 @@ fn v2_tools_list() -> Value {
                 }
             },
             {
+                "name": "memory_get_batch",
+                "description": "Retrieve multiple memories by d_tag in a single call. Returns results keyed by d_tag for efficient multi-lookup (e.g. room context injection).",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "d_tags": {
+                            "type": "array",
+                            "items": { "type": "string" },
+                            "description": "Array of d_tags to fetch"
+                        }
+                    },
+                    "required": ["d_tags"]
+                }
+            },
+            {
                 "name": "memory_list",
                 "description": "List memories from local database with optional filters",
                 "inputSchema": {

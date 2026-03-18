@@ -10,9 +10,13 @@ Defines how Nomen converts raw ingested messages into structured, high-quality n
 
 ## 1. Overview
 
-Raw messages flood in from conversations — Telegram DMs, NIP-29 groups, CLI input. Most are noise. Consolidation is the process of extracting signal: facts, preferences, decisions, lessons. It runs periodically as a background operation, transforming ephemeral traces into durable knowledge.
+Raw messages flood in from conversations — Telegram DMs, NIP-29 groups, CLI input. Consolidation is the process of extracting signal: facts, preferences, decisions, lessons. It runs periodically as a background operation, transforming message streams into durable semantic knowledge.
 
-The analogy is sleep: the hippocampus (raw message store) replays experiences to the neocortex (named memory store), which integrates them into general knowledge.
+**Design update (2026-03-17): raw messages are no longer treated as disposable local ephemera.** They should be published as Nostr events and treated as the definitive event-level source material. The local `raw_message` table remains as an index/cache for batching, search, provenance, and recovery, but the long-term architecture assumes the relay stores both:
+- **raw conversational events** (ground truth, append-only)
+- **named memories** (derived semantic index, replaceable)
+
+The analogy is sleep: the hippocampus (raw message/event store) replays experiences to the neocortex (named memory store), which integrates them into general knowledge. But replay does **not** erase the original experience trace.
 
 ```
 Raw Messages (high volume, low individual value)
@@ -24,14 +28,16 @@ Named Memories (low volume, high value, topic-keyed)
 
 ## 2. Memory Types
 
-### Ephemeral Memories (raw messages)
+### Raw Message Events
 
-Stored in the `raw_message` table. Created by `nomen ingest` or auto-save from agent frameworks.
+Stored locally in the `raw_message` table **and** published to Nostr as append-only source events.
+Created by `nomen ingest` / `message.ingest` or auto-save from agent frameworks and channel bridges.
 
-- **Canonical identity:** underlying Nostr event id + timestamp
+- **Canonical identity:** raw Nostr event id
 - **Grouping fields:** `channel` (provider/container identity) and resolved `scope`
-- **Lifecycle:** Short — consumed by consolidation, then deleted or marked superseded
-- **Source:** Auto-save, ingest command, webhook
+- **Lifecycle:** Long-lived source material; may be marked `consolidated = true` locally after processing, but should remain queryable and recoverable
+- **Source:** Auto-save, ingest command, webhook, bridge adapters
+- **Role:** Ground truth for provenance, replay, re-consolidation, and historical search
 
 ### Named Memories (consolidated)
 
@@ -114,9 +120,14 @@ Messages in #techteam/topic:8399     → Group E (3 messages)
 
 **Forum topic partitioning:** Platforms like Telegram forums have multiple topics within a single chat. All topics share the same `channel` but the sender field encodes the topic (e.g. `telegram:group:-1003821690204:topic:9225`). The grouping logic extracts the topic suffix and appends it to the identity key, ensuring each forum topic is consolidated independently. This prevents unrelated conversations from being merged into the same memory batch.
 
-### Stage 3: Extraction (LLM)
+### Stage 3: Context Enrichment + Extraction (LLM)
 
-Each group is sent to the configured LLM provider for structured extraction.
+Each group is enriched with lightweight prior context before extraction:
+1. **rolling conversation summary** for the same conversation scope (if available)
+2. **top-K semantically related existing memories** retrieved from the memory store
+3. the current raw message batch
+
+The configured LLM then performs structured extraction using all three inputs.
 
 **System prompt:**
 ```
@@ -146,9 +157,17 @@ Return empty array if nothing significant.
 
 **Model selection:** Consolidation is background work. Use a capable but cost-effective model (e.g., `claude-sonnet-4-6`, `gpt-4o-mini`). Configured in `[memory.consolidation]`.
 
-### Stage 4: Storage
+### Stage 4: Reconciliation + Storage
 
-Each extracted memory becomes a kind 31234 replaceable event:
+Extraction and write are separate concerns.
+
+Before writing each extracted candidate memory:
+1. look up existing memories by exact d-tag/topic match
+2. optionally check semantic near-duplicates
+3. classify the candidate as **new**, **update existing**, **duplicate/ignore**, or **contradiction/supersedes**
+4. only then persist the final semantic memory
+
+Each persisted semantic memory becomes a kind 31234 replaceable event:
 
 ```json
 {
@@ -196,21 +215,14 @@ Preserves provenance — trace any named memory back to the raw conversation tha
 
 **Entity edges:** During consolidation, the entity extractor (heuristic or LLM-powered `CompositeExtractor`) produces both entities and typed relationships. Entities get `mentions` edges to the memory. Relationships between entities create `related_to` edges with typed relations (e.g. `works_on`, `collaborates_with`, `manages`, `contradicts`). These typed edges are used by graph-aware retrieval to surface related context.
 
-### Stage 6: Cleanup
+### Stage 6: Post-processing
 
-1. **Mark consolidated:** Set `consolidated = true` on all source `raw_message` records
-2. **NIP-09 deletion:** Publish kind 5 events to delete consumed ephemeral events from the relay
-3. **Batch deletions:** Max 50 event IDs per deletion event
+1. **Mark consolidated locally:** Set `consolidated = true` on all source `raw_message` records used in this pass
+2. **Keep raw events:** Do **not** delete source raw message events from the relay as part of normal consolidation
+3. **Preserve replayability:** Consolidation should remain re-runnable against preserved source material
+4. **Optional retention policy:** local cache pruning may remove old indexed copies later, but only if the relay copy remains authoritative and recoverable
 
-```json
-{
-  "kind": 5,
-  "tags": [["e", "<id1>"], ["e", "<id2>"], ...],
-  "content": "consolidated"
-}
-```
-
-Note: Not all relays honor NIP-09. The `consolidated_from` edges on named memories serve as a secondary indicator that sources are superseded.
+**Important:** NIP-09 deletion of consumed source messages is no longer the default design. Consolidation creates a semantic index over the source stream; it does not replace the source stream.
 
 ## 5. Update & Merge Strategy
 
@@ -284,7 +296,13 @@ score = semantic_similarity × 0.4
       + importance × 0.15
 ```
 
-Named memories naturally score higher than unconsolidated raw messages due to higher confidence and focused content.
+**Recency should be based primarily on source-event time, not consolidation time.** Semantic memories should carry structured source time metadata:
+- `source_time_start` — earliest source message timestamp
+- `source_time_end` — latest source message timestamp
+
+This prevents an old conversation consolidated today from ranking as if the events themselves happened today.
+
+Named memories should generally rank above raw messages for semantic recall, but raw messages must remain searchable as deeper context and provenance.
 
 ## 8. Configuration
 
@@ -352,10 +370,9 @@ Output: { "messages_processed": 47, "memories_created": 5 }
 
 ### Done ✅
 
-- `consolidate.rs` — Core pipeline (collection → grouping → extraction → storage → cleanup)
+- `consolidate.rs` — Core pipeline (collection → grouping → extraction → storage → cleanup/post-processing)
 - `OpenAiLlmProvider` — Real LLM extraction via OpenAI-compatible API
 - `NoopLlmProvider` — Fallback pass-through for testing
-- NIP-09 deletion of consumed ephemerals
 - `consolidated_from` graph edges for provenance
 - CLI: `nomen consolidate [--dry-run] [--older-than] [--tier] [--batch-size]`
 - HTTP: `POST /memory/api/consolidate`
@@ -363,6 +380,15 @@ Output: { "messages_processed": 47, "memories_created": 5 }
 - Config: `[memory.consolidation]` section in TOML
 
 ### TODO 📋
+- [ ] **Publish raw messages as Nostr events** — `message.ingest` / bridge ingestion should emit append-only raw-message events, not just local DB rows.
+- [ ] **Treat relay raw events as authoritative source** — local `raw_message` table becomes cache/index, not sole store.
+- [ ] **Rolling conversation summaries** — maintain one summary per conversation scope for extraction context.
+- [ ] **Context-enriched extraction** — retrieve related memories before extraction and include them in the prompt.
+- [ ] **Explicit reconciliation phase** — classify extracted candidates as new/update/ignore/supersede before write.
+- [ ] **Structured source-time fields** — store `source_time_start` / `source_time_end` on semantic memories.
+- [ ] **Keep source events after consolidation** — remove default NIP-09 cleanup behavior for normal consolidation.
+
+### Older completed items
 
 - [x] **Tier derivation from source context** — `private` for DM sources, `group` for group sources.
 - [x] **Merge into existing memories** — When topic d-tag already exists, merge instead of creating duplicate.

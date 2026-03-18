@@ -50,6 +50,7 @@ pub async fn ingest(
         content,
         metadata,
         created_at: None,
+        ..Default::default()
     };
 
     let id = nomen
