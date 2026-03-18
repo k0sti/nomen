@@ -699,11 +699,11 @@ pub async fn delete_memory_by_nostr_id(db: &Surreal<Db>, nostr_id: &str) -> Resu
 /// Returns the context segment as scope (e.g., pubkey hex for personal, group id for group).
 fn extract_scope(d_tag: &str) -> String {
     // v0.2 format: {visibility}:{context}:{topic}
+    // Context/scope may itself contain colons (e.g. telegram:-1003821690204),
+    // so parse as first colon + last colon, not splitn(3).
     if crate::memory::is_v2_dtag(d_tag) {
-        let mut parts = d_tag.splitn(3, ':');
-        let _visibility = parts.next();
-        let context = parts.next().unwrap_or("");
-        return context.to_string();
+        let (_visibility, scope) = crate::memory::extract_visibility_scope(d_tag);
+        return scope;
     }
 
     // v0.1 legacy formats
