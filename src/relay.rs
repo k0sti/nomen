@@ -5,7 +5,7 @@ use anyhow::{Context, Result};
 use nostr_sdk::prelude::*;
 use tracing::{debug, info, warn};
 
-use crate::kinds::{LEGACY_APP_DATA_KIND, LEGACY_LESSON_KIND, LESSON_KIND, MEMORY_KIND, RAW_SOURCE_KIND};
+use crate::kinds::{LEGACY_APP_DATA_KIND, MEMORY_KIND, RAW_SOURCE_KIND};
 use crate::signer::NomenSigner;
 
 /// Result of publishing an event to relays.
@@ -95,15 +95,12 @@ impl RelayManager {
         Ok(())
     }
 
-    /// Fetch memory events (kind 31234 + legacy 30078), agent lessons (kind 31235 + legacy 4129),
-    /// and raw source events (kind 1235).
+    /// Fetch memory events (kind 31234 + legacy 30078) and raw source events (kind 1235).
     pub async fn fetch_memories(&self, pubkeys: &[PublicKey]) -> Result<Events> {
         let filter = Filter::new()
             .kinds(vec![
                 Kind::Custom(MEMORY_KIND),
-                Kind::Custom(LESSON_KIND),
                 Kind::Custom(LEGACY_APP_DATA_KIND),
-                Kind::Custom(LEGACY_LESSON_KIND),
                 Kind::Custom(RAW_SOURCE_KIND),
             ])
             .authors(pubkeys.to_vec());
@@ -116,6 +113,26 @@ impl RelayManager {
             .context("Failed to fetch events from relay")?;
 
         info!(count = events.len(), "Fetched memory events");
+        Ok(events)
+    }
+
+    /// Fetch legacy lesson events (kind 31235 + 4129) for migration purposes.
+    pub async fn fetch_lessons(&self, pubkeys: &[PublicKey]) -> Result<Events> {
+        let filter = Filter::new()
+            .kinds(vec![
+                Kind::Custom(31235), // LESSON_KIND
+                Kind::Custom(4129),  // LEGACY_LESSON_KIND
+            ])
+            .authors(pubkeys.to_vec());
+
+        debug!("Fetching lesson events for {} pubkeys", pubkeys.len());
+        let events = self
+            .client
+            .fetch_events(filter, self.config.timeout)
+            .await
+            .context("Failed to fetch lesson events from relay")?;
+
+        info!(count = events.len(), "Fetched lesson events");
         Ok(events)
     }
 
@@ -188,9 +205,7 @@ impl RelayManager {
         let filter = Filter::new()
             .kinds(vec![
                 Kind::Custom(MEMORY_KIND),
-                Kind::Custom(LESSON_KIND),
                 Kind::Custom(LEGACY_APP_DATA_KIND),
-                Kind::Custom(LEGACY_LESSON_KIND),
                 Kind::Custom(RAW_SOURCE_KIND),
             ])
             .authors(pubkeys.to_vec());

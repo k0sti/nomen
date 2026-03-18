@@ -792,11 +792,6 @@ impl Nomen {
                 continue;
             }
 
-            if event.kind == nostr_sdk::Kind::Custom(crate::kinds::LESSON_KIND)
-                || event.kind == nostr_sdk::Kind::Custom(crate::kinds::LEGACY_LESSON_KIND)
-            {
-                continue;
-            }
             let d_tag = memory::get_tag_value(&event.tags, "d").unwrap_or_default();
             if d_tag.starts_with("snowclaw:config:") {
                 continue;

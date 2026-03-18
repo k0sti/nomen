@@ -16,7 +16,6 @@ use nomen::config::{
 use nomen::cvm;
 use nomen::db;
 use nomen::display::display_memories;
-use nomen::kinds::{LEGACY_LESSON_KIND, LESSON_KIND};
 use nomen::mcp;
 use nomen::memory::{get_tag_value, parse_event};
 use nomen::relay::{RelayConfig, RelayManager};
@@ -239,6 +238,8 @@ enum Command {
         #[arg(long)]
         non_interactive: bool,
     },
+    /// Migrate legacy lesson events (kind 31235/4129) to memory events (kind 31234)
+    MigrateLessons,
     /// Validate config and check connectivity
     Doctor,
     /// Start MCP server (JSON-RPC over stdio) or HTTP server
@@ -778,6 +779,10 @@ async fn main() -> Result<()> {
             )
             .await?;
         }
+        Command::MigrateLessons => {
+            let nomen = build_nomen_with_relay(&config, &resolved).await?;
+            cmd_migrate_lessons(&nomen, &resolved).await?;
+        }
         Command::Init { .. } | Command::Doctor => unreachable!("handled above"),
     }
 
@@ -796,14 +801,8 @@ async fn cmd_list_relay(relay_url: &str, nsecs: &[String], named: bool) -> Resul
     let events = mgr.fetch_memories(&pubkeys).await?;
 
     let mut memories = Vec::new();
-    let mut lesson_count = 0usize;
 
     for event in events.into_iter() {
-        if event.kind == Kind::Custom(LESSON_KIND) || event.kind == Kind::Custom(LEGACY_LESSON_KIND)
-        {
-            lesson_count += 1;
-            continue;
-        }
         let d_tag = get_tag_value(&event.tags, "d").unwrap_or_default();
         if d_tag.starts_with("snowclaw:config:") {
             continue;
@@ -824,7 +823,7 @@ async fn cmd_list_relay(relay_url: &str, nsecs: &[String], named: bool) -> Resul
         .filter_map(|k| k.public_key().to_bech32().ok())
         .collect();
 
-    display_memories(&npubs, &memories, lesson_count);
+    display_memories(&npubs, &memories);
     mgr.disconnect().await;
     Ok(())
 }
@@ -1897,6 +1896,95 @@ async fn cmd_serve(
             mcp::serve_stdio(nomen_instance, default_channel).await
         }
     }
+}
+
+// ── Command: migrate-lessons ─────────────────────────────────────────
+
+async fn cmd_migrate_lessons(nomen: &Nomen, resolved: &ResolvedConfig) -> Result<()> {
+    let relay = nomen
+        .relay()
+        .ok_or_else(|| anyhow::anyhow!("No relay configured"))?;
+    let _ = nomen
+        .signer()
+        .ok_or_else(|| anyhow::anyhow!("No signer configured"))?;
+
+    let (_, pubkeys) = parse_keys(&resolved.nsecs)?;
+
+    println!("Fetching lesson events from relay...");
+    let events = relay.fetch_lessons(&pubkeys).await?;
+
+    if events.is_empty() {
+        println!("No lesson events found. Nothing to migrate.");
+        return Ok(());
+    }
+
+    println!("Found {} lesson event(s). Migrating...", events.len());
+
+    let mut migrated = 0usize;
+    let mut deleted = 0usize;
+    let mut errors = 0usize;
+
+    for event in events.into_iter() {
+        let event_id = event.id;
+
+        // Extract existing tags, replacing the kind implicitly by re-publishing as 31234
+        let tags: Vec<nostr_sdk::Tag> = event.tags.iter().cloned().collect();
+        let content = event.content.clone();
+
+        // Re-publish as memory event (kind 31234)
+        let memory_builder = nostr_sdk::EventBuilder::new(
+            nostr_sdk::Kind::Custom(nomen::kinds::MEMORY_KIND),
+            content,
+        )
+        .tags(tags);
+
+        match relay.publish(memory_builder).await {
+            Ok(result) => {
+                if result.accepted.is_empty() {
+                    println!(
+                        "  Warning: memory event for {} rejected by all relays",
+                        event_id
+                    );
+                    errors += 1;
+                    continue;
+                }
+                migrated += 1;
+            }
+            Err(e) => {
+                println!("  Error publishing memory for {}: {e}", event_id);
+                errors += 1;
+                continue;
+            }
+        }
+
+        // Publish kind 5 deletion event for the original lesson
+        let delete_builder = nostr_sdk::EventBuilder::new(nostr_sdk::Kind::Custom(5), "")
+            .tags(vec![nostr_sdk::Tag::event(event_id)]);
+
+        match relay.publish(delete_builder).await {
+            Ok(_) => {
+                deleted += 1;
+            }
+            Err(e) => {
+                println!(
+                    "  Warning: failed to delete original lesson {}: {e}",
+                    event_id
+                );
+            }
+        }
+    }
+
+    println!(
+        "\n{}: {} lessons migrated to memory events, {} deletion events published",
+        "Done".green().bold(),
+        migrated,
+        deleted
+    );
+    if errors > 0 {
+        println!("  {} errors occurred", errors.to_string().red());
+    }
+
+    Ok(())
 }
 
 // ── Command: init ───────────────────────────────────────────────────

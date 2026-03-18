@@ -12,7 +12,7 @@ pub fn format_timestamp(ts: Timestamp) -> String {
     }
 }
 
-pub fn display_memories(npubs: &[String], memories: &[ParsedMemory], lesson_count: usize) {
+pub fn display_memories(npubs: &[String], memories: &[ParsedMemory]) {
     for npub in npubs {
         println!(
             "\n{}\n{}",
@@ -21,7 +21,7 @@ pub fn display_memories(npubs: &[String], memories: &[ParsedMemory], lesson_coun
         );
     }
 
-    if memories.is_empty() && lesson_count == 0 {
+    if memories.is_empty() {
         println!("\n  No memory events found.\n");
         return;
     }
@@ -57,13 +57,6 @@ pub fn display_memories(npubs: &[String], memories: &[ParsedMemory], lesson_coun
         println!("  Model: {}", mem.model);
         println!("  Summary: {}", mem.summary);
         println!("  Created: {}", format_timestamp(mem.created_at));
-    }
-
-    if lesson_count > 0 {
-        println!(
-            "\n  {} agent lessons (kind 4129) found",
-            lesson_count.to_string().bold()
-        );
     }
 
     println!(
