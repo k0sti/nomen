@@ -218,6 +218,8 @@ DEFINE FIELD IF NOT EXISTS consolidated_at   ON memory TYPE option<string>;
 DEFINE FIELD IF NOT EXISTS last_accessed     ON memory TYPE option<string>;
 DEFINE FIELD IF NOT EXISTS access_count      ON memory TYPE int DEFAULT 0;
 DEFINE FIELD IF NOT EXISTS importance        ON memory TYPE option<int>;
+DEFINE FIELD IF NOT EXISTS source_time_start ON memory TYPE option<string>;
+DEFINE FIELD IF NOT EXISTS source_time_end   ON memory TYPE option<string>;
 -- Note: created_at/updated_at remain TYPE string (not datetime) because SurrealDB
 -- datetime serialization requires special handling in Rust serde. RFC3339 strings
 -- still support lexicographic ordering which is sufficient for our queries.
@@ -777,12 +779,20 @@ pub async fn store_raw_message(db: &Surreal<Db>, msg: &RawMessage) -> Result<Str
         publish_status: String::new(),
     };
 
-    db.query("CREATE raw_message CONTENT $record")
+    #[derive(Deserialize, SurrealValue)]
+    struct CreatedRow {
+        #[serde(deserialize_with = "deserialize_thing_as_string")]
+        id: String,
+    }
+    let rows: Vec<CreatedRow> = db
+        .query("CREATE raw_message CONTENT $record RETURN meta::id(id) AS id")
         .bind(("record", record))
         .await?
-        .check()?;
+        .check()?
+        .take(0)?;
 
-    Ok("ok".to_string())
+    let id = rows.into_iter().next().map(|r| r.id).unwrap_or_default();
+    Ok(id)
 }
 
 /// Check for duplicate raw message by provider_id + channel.
@@ -934,6 +944,22 @@ pub async fn query_raw_messages(
     Ok(results)
 }
 
+/// Update a raw message's nostr_event_id and publish_status after relay publish.
+pub async fn update_raw_message_publish(
+    db: &Surreal<Db>,
+    id: &str,
+    nostr_event_id: &str,
+    publish_status: &str,
+) -> Result<()> {
+    db.query("UPDATE $id SET nostr_event_id = $neid, publish_status = $status")
+        .bind(("id", RecordId::new("raw_message", id)))
+        .bind(("neid", nostr_event_id.to_string()))
+        .bind(("status", publish_status.to_string()))
+        .await?
+        .check()?;
+    Ok(())
+}
+
 /// Mark raw messages as consolidated by their IDs.
 pub async fn mark_messages_consolidated(db: &Surreal<Db>, ids: &[String]) -> Result<()> {
     for id in ids {
@@ -1000,6 +1026,22 @@ pub async fn set_consolidation_tags(
     .bind(("at", consolidated_at.to_string()))
     .await?
     .check()?;
+    Ok(())
+}
+
+/// Set source time range on a memory record.
+pub async fn set_source_time_range(
+    db: &Surreal<Db>,
+    d_tag: &str,
+    start: &str,
+    end: &str,
+) -> Result<()> {
+    db.query("UPDATE memory SET source_time_start = $start, source_time_end = $end WHERE d_tag = $d_tag")
+        .bind(("d_tag", d_tag.to_string()))
+        .bind(("start", start.to_string()))
+        .bind(("end", end.to_string()))
+        .await?
+        .check()?;
     Ok(())
 }
 

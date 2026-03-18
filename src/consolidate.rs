@@ -936,6 +936,16 @@ pub async fn commit(
             .await
             .ok();
 
+            // Source time range from batch
+            crate::db::set_source_time_range(
+                db,
+                &stored_dtag,
+                &batch.time_range.start,
+                &batch.time_range.end,
+            )
+            .await
+            .ok();
+
             // Importance
             crate::db::set_importance(db, &stored_dtag, memory.importance as i32).await.ok();
 
@@ -1285,6 +1295,14 @@ pub async fn consolidate(
             .await
             .ok();
 
+            // Source time range from group messages
+            {
+                let timestamps: Vec<&str> = group_msgs.iter().map(|m| m.created_at.as_str()).collect();
+                let start = timestamps.iter().min().unwrap_or(&"").to_string();
+                let end = timestamps.iter().max().unwrap_or(&"").to_string();
+                crate::db::set_source_time_range(db, &d_tag, &start, &end).await.ok();
+            }
+
             // Store importance score
             if let Some(imp) = final_importance {
                 crate::db::set_importance(db, &d_tag, imp).await.ok();
@@ -1529,11 +1547,10 @@ pub async fn consolidate(
         crate::db::mark_messages_consolidated(db, &all_consumed_msg_ids).await?;
     }
 
-    // Publish NIP-09 deletion events for consumed ephemerals
-    if let Some(relay) = relay {
-        let deleted = publish_deletion_events(relay, &messages).await?;
-        report.events_deleted = deleted;
-    }
+    // Source events are preserved per consolidation spec (2026-03-17).
+    // NIP-09 deletion is no longer performed during consolidation.
+    // The two-phase commit() path also correctly skips deletion.
+    report.events_deleted = 0;
 
     // Record consolidation run timestamp for auto-trigger
     if report.memories_created > 0 || report.memories_updated > 0 {
@@ -1553,6 +1570,9 @@ pub async fn consolidate(
 /// Publish NIP-09 kind 5 deletion events for consumed ephemeral messages.
 ///
 /// Groups deletions by batch to avoid excessively large events.
+/// Currently unused — consolidation no longer deletes source events per spec.
+/// Retained for potential future opt-in deletion support.
+#[allow(dead_code)]
 async fn publish_deletion_events(
     relay: &RelayManager,
     messages: &[RawMessageRecord],

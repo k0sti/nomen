@@ -465,8 +465,46 @@ impl Nomen {
     }
 
     /// Ingest a raw message for later consolidation.
+    ///
+    /// Stores locally first, then publishes a kind 1235 raw source event to relay
+    /// if available. Relay publish failure is non-fatal (logged, status set to "pending").
     pub async fn ingest_message(&self, msg: RawMessage) -> Result<String> {
-        ingest::ingest_message(&self.db, &msg).await
+        let id = ingest::ingest_message(&self.db, &msg).await?;
+
+        // Publish kind 1235 raw source event to relay if available
+        if id != "duplicate" {
+            if let Some(ref relay) = self.relay {
+                let (tags, content) = ingest::build_raw_source_event(&msg);
+                let builder = nostr_sdk::EventBuilder::new(
+                    nostr_sdk::Kind::Custom(crate::kinds::RAW_SOURCE_KIND),
+                    content,
+                )
+                .tags(tags);
+
+                match relay.publish(builder).await {
+                    Ok(result) => {
+                        let event_id_hex = result.event_id.to_hex();
+                        db::update_raw_message_publish(
+                            &self.db, &id, &event_id_hex, "published",
+                        )
+                        .await
+                        .ok();
+                        tracing::debug!(
+                            event_id = %event_id_hex,
+                            "Published kind 1235 raw source event to relay"
+                        );
+                    }
+                    Err(e) => {
+                        db::update_raw_message_publish(&self.db, &id, "", "pending")
+                            .await
+                            .ok();
+                        tracing::warn!("Failed to publish kind 1235 to relay: {e}");
+                    }
+                }
+            }
+        }
+
+        Ok(id)
     }
 
     /// Run the consolidation pipeline on unconsolidated messages.
