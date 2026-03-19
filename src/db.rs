@@ -110,6 +110,9 @@ where
 pub struct MemoryRecord {
     pub content: String,
     pub summary: Option<String>,
+    /// The actual detail text, without topic/summary prepended.
+    #[serde(default)]
+    pub detail: Option<String>,
     pub embedding: Option<Vec<f32>>,
     pub tier: String,
     pub scope: String,
@@ -162,6 +165,8 @@ pub struct TextSearchResult {
 pub struct HybridSearchRow {
     pub content: String,
     pub summary: Option<String>,
+    #[serde(default)]
+    pub detail: Option<String>,
     pub tier: String,
     pub scope: String,
     pub topic: String,
@@ -212,6 +217,7 @@ const SCHEMA_BASE: &str = r#"
 DEFINE TABLE IF NOT EXISTS memory SCHEMAFULL;
 DEFINE FIELD IF NOT EXISTS content    ON memory TYPE string;
 DEFINE FIELD IF NOT EXISTS summary    ON memory TYPE option<string>;
+DEFINE FIELD IF NOT EXISTS detail     ON memory TYPE option<string>;
 DEFINE FIELD IF NOT EXISTS embedding  ON memory TYPE option<array<float>>;
 DEFINE FIELD IF NOT EXISTS tier       ON memory TYPE string;
 DEFINE FIELD IF NOT EXISTS scope      ON memory TYPE string;
@@ -323,15 +329,6 @@ DEFINE INDEX IF NOT EXISTS session_sid   ON session FIELDS session_id UNIQUE;
 DEFINE TABLE IF NOT EXISTS consolidation_session SCHEMALESS;
 DEFINE INDEX IF NOT EXISTS cons_session_sid ON consolidation_session FIELDS session_id UNIQUE;
 
--- Provider bindings: maps provider chat IDs to memory d-tags (for room.resolve)
-DEFINE TABLE IF NOT EXISTS provider_binding SCHEMAFULL;
-DEFINE FIELD IF NOT EXISTS provider_id ON provider_binding TYPE string;
-DEFINE FIELD IF NOT EXISTS d_tag       ON provider_binding TYPE string;
-DEFINE FIELD IF NOT EXISTS created_at  ON provider_binding TYPE string;
-DEFINE FIELD IF NOT EXISTS updated_at  ON provider_binding TYPE string;
-DEFINE INDEX IF NOT EXISTS pb_provider  ON provider_binding FIELDS provider_id;
-DEFINE INDEX IF NOT EXISTS pb_dtag      ON provider_binding FIELDS d_tag;
-DEFINE INDEX IF NOT EXISTS pb_unique    ON provider_binding FIELDS provider_id, d_tag UNIQUE;
 "#;
 
 /// Initialize (or open) the SurrealDB database and apply schema.
@@ -392,9 +389,17 @@ fn build_record(parsed: &ParsedMemory, nostr_id: &str) -> MemoryRecord {
     };
     let searchable_content = format!("{} {}", parsed.topic, body);
 
+    // Store actual detail text separately from FTS content.
+    let detail_text = if parsed.detail.is_empty() {
+        None
+    } else {
+        Some(parsed.detail.clone())
+    };
+
     MemoryRecord {
         content: searchable_content,
         summary: Some(parsed.summary.clone()),
+        detail: detail_text,
         embedding: None,
         tier: crate::memory::base_tier(&parsed.tier).to_string(),
         scope,
@@ -466,13 +471,14 @@ pub async fn store_memory_direct(
 
     db.query(
         "CREATE memory SET \
-         content = $content, summary = $summary, tier = $tier, scope = $scope, \
+         content = $content, summary = $summary, detail = $detail, tier = $tier, scope = $scope, \
          topic = $topic, confidence = $confidence, source = $source, model = $model, \
          version = $version, nostr_id = $nostr_id, d_tag = $d_tag, \
          created_at = $created_at, updated_at = $updated_at, ephemeral = $ephemeral"
     )
     .bind(("content", record.content))
     .bind(("summary", record.summary))
+    .bind(("detail", record.detail))
     .bind(("tier", record.tier))
     .bind(("scope", record.scope))
     .bind(("topic", record.topic))
@@ -568,7 +574,7 @@ pub async fn list_memories(
     pinned: Option<bool>,
 ) -> Result<Vec<MemoryRecord>> {
     // Exclude embedding from SELECT to avoid SurrealDB HNSW index deserialization issues
-    let fields = "content, summary, tier, scope, topic, confidence, source, model, version, nostr_id, d_tag, created_at, updated_at, ephemeral, consolidated_from, consolidated_at, last_accessed, access_count, importance, pinned, embedding IS NOT NONE AS embedded";
+    let fields = "content, summary, detail, tier, scope, topic, confidence, source, model, version, nostr_id, d_tag, created_at, updated_at, ephemeral, consolidated_from, consolidated_at, last_accessed, access_count, importance, pinned, embedding IS NOT NONE AS embedded";
     let mut conditions = Vec::new();
     if tier.is_some() {
         conditions.push("tier = $tier".to_string());
@@ -668,7 +674,7 @@ pub async fn hybrid_search(
 /// Get a single memory by d-tag (topic).
 pub async fn get_memory_by_dtag(db: &Surreal<Db>, d_tag: &str) -> Result<Option<MemoryRecord>> {
     let mut results: Vec<MemoryRecord> = db
-        .query("SELECT content, summary, tier, scope, topic, confidence, source, model, version, nostr_id, d_tag, created_at, updated_at, ephemeral, consolidated_from, consolidated_at, last_accessed, access_count, importance, pinned, embedding IS NOT NONE AS embedded FROM memory WHERE d_tag = $d_tag LIMIT 1")
+        .query("SELECT content, summary, detail, tier, scope, topic, confidence, source, model, version, nostr_id, d_tag, created_at, updated_at, ephemeral, consolidated_from, consolidated_at, last_accessed, access_count, importance, pinned, embedding IS NOT NONE AS embedded FROM memory WHERE d_tag = $d_tag LIMIT 1")
         .bind(("d_tag", d_tag.to_string()))
         .await?
         .check()?
@@ -682,7 +688,7 @@ pub async fn get_memories_by_dtags(db: &Surreal<Db>, d_tags: &[String]) -> Resul
         return Ok(vec![]);
     }
     let results: Vec<MemoryRecord> = db
-        .query("SELECT content, summary, tier, scope, topic, confidence, source, model, version, nostr_id, d_tag, created_at, updated_at, ephemeral, consolidated_from, consolidated_at, last_accessed, access_count, importance, pinned, embedding IS NOT NONE AS embedded FROM memory WHERE d_tag IN $d_tags")
+        .query("SELECT content, summary, detail, tier, scope, topic, confidence, source, model, version, nostr_id, d_tag, created_at, updated_at, ephemeral, consolidated_from, consolidated_at, last_accessed, access_count, importance, pinned, embedding IS NOT NONE AS embedded FROM memory WHERE d_tag IN $d_tags")
         .bind(("d_tags", d_tags.to_vec()))
         .await?
         .check()?
@@ -693,7 +699,7 @@ pub async fn get_memories_by_dtags(db: &Surreal<Db>, d_tags: &[String]) -> Resul
 /// Get a single memory by topic field (raw topic, not d-tag).
 pub async fn get_memory_by_topic(db: &Surreal<Db>, topic: &str) -> Result<Option<MemoryRecord>> {
     let mut results: Vec<MemoryRecord> = db
-        .query("SELECT content, summary, tier, scope, topic, confidence, source, model, version, nostr_id, d_tag, created_at, updated_at, ephemeral, consolidated_from, consolidated_at, last_accessed, access_count, importance, pinned, embedding IS NOT NONE AS embedded FROM memory WHERE topic = $topic LIMIT 1")
+        .query("SELECT content, summary, detail, tier, scope, topic, confidence, source, model, version, nostr_id, d_tag, created_at, updated_at, ephemeral, consolidated_from, consolidated_at, last_accessed, access_count, importance, pinned, embedding IS NOT NONE AS embedded FROM memory WHERE topic = $topic LIMIT 1")
         .bind(("topic", topic.to_string()))
         .await?
         .check()?
@@ -1292,6 +1298,8 @@ pub struct GraphNeighbor {
     pub confidence: Option<f64>,
     pub content: String,
     pub summary: Option<String>,
+    #[serde(default)]
+    pub detail: Option<String>,
     pub created_at: String,
     pub d_tag: Option<String>,
     pub importance: Option<i64>,
@@ -1533,6 +1541,123 @@ pub async fn count_memories_by_type(db: &Surreal<Db>) -> Result<(usize, usize, u
     Ok((total_count, named_count, pending_count))
 }
 
+/// Per-channel message statistics for detailed stats output.
+pub struct ChannelStats {
+    pub channel: String,
+    pub unconsolidated: usize,
+    pub consolidated: usize,
+    pub oldest_unconsolidated: Option<String>,
+    pub newest_unconsolidated: Option<String>,
+}
+
+/// Detailed memory/message statistics.
+pub struct DetailedStats {
+    pub memories_by_tier: Vec<(String, usize)>,
+    pub channels: Vec<ChannelStats>,
+    pub last_consolidation: Option<String>,
+}
+
+/// Get detailed stats: memories by tier, messages by channel, last consolidation time.
+pub async fn get_detailed_stats(db: &Surreal<Db>) -> Result<DetailedStats> {
+    // ── Memories by tier ────────────────────────────────────────
+    #[derive(Deserialize, SurrealValue)]
+    struct TierRow {
+        tier: String,
+        count: usize,
+    }
+
+    let tier_rows: Vec<TierRow> = db
+        .query("SELECT tier, count() AS count FROM memory GROUP BY tier ORDER BY count DESC")
+        .await?
+        .check()?
+        .take(0)?;
+
+    let memories_by_tier: Vec<(String, usize)> = tier_rows
+        .into_iter()
+        .map(|r| (r.tier, r.count))
+        .collect();
+
+    // ── Messages by channel (consolidated vs not) ───────────────
+    #[derive(Deserialize, SurrealValue)]
+    struct ChannelRow {
+        channel: Option<String>,
+        consolidated: bool,
+        count: usize,
+    }
+
+    let channel_rows: Vec<ChannelRow> = db
+        .query("SELECT channel, consolidated, count() AS count FROM raw_message GROUP BY channel, consolidated ORDER BY channel")
+        .await?
+        .check()?
+        .take(0)?;
+
+    // ── Oldest/newest unconsolidated per channel ────────────────
+    #[derive(Deserialize, SurrealValue)]
+    struct ChannelTimeRow {
+        channel: Option<String>,
+        oldest: Option<String>,
+        newest: Option<String>,
+    }
+
+    let time_rows: Vec<ChannelTimeRow> = db
+        .query("SELECT channel, math::min(created_at) AS oldest, math::max(created_at) AS newest FROM raw_message WHERE consolidated = false GROUP BY channel")
+        .await?
+        .check()?
+        .take(0)?;
+
+    // Merge channel rows into ChannelStats
+    let mut channel_map: std::collections::BTreeMap<String, ChannelStats> =
+        std::collections::BTreeMap::new();
+
+    for row in channel_rows {
+        let ch = row.channel.unwrap_or_default();
+        let entry = channel_map.entry(ch.clone()).or_insert(ChannelStats {
+            channel: ch,
+            unconsolidated: 0,
+            consolidated: 0,
+            oldest_unconsolidated: None,
+            newest_unconsolidated: None,
+        });
+        if row.consolidated {
+            entry.consolidated = row.count;
+        } else {
+            entry.unconsolidated = row.count;
+        }
+    }
+
+    for row in time_rows {
+        let ch = row.channel.unwrap_or_default();
+        if let Some(entry) = channel_map.get_mut(&ch) {
+            entry.oldest_unconsolidated = row.oldest;
+            entry.newest_unconsolidated = row.newest;
+        }
+    }
+
+    // Sort by unconsolidated count descending
+    let mut channels: Vec<ChannelStats> = channel_map.into_values().collect();
+    channels.sort_by(|a, b| b.unconsolidated.cmp(&a.unconsolidated));
+
+    // ── Last consolidation time ─────────────────────────────────
+    #[derive(Deserialize, SurrealValue)]
+    struct TimeRow {
+        latest: Option<String>,
+    }
+
+    let last_row: Option<TimeRow> = db
+        .query("SELECT math::max(consolidated_at) AS latest FROM memory WHERE consolidated_at != NONE GROUP ALL")
+        .await?
+        .check()?
+        .take(0)?;
+
+    let last_consolidation = last_row.and_then(|r| r.latest);
+
+    Ok(DetailedStats {
+        memories_by_tier,
+        channels,
+        last_consolidation,
+    })
+}
+
 /// Query messages around a specific source_id: N messages before and after.
 pub async fn query_messages_around(
     db: &Surreal<Db>,
@@ -1751,7 +1876,7 @@ pub async fn get_unpublished_memories(
     db: &Surreal<Db>,
     limit: usize,
 ) -> Result<Vec<MemoryRecord>> {
-    let fields = "content, summary, tier, scope, topic, confidence, source, model, version, nostr_id, d_tag, created_at, updated_at, ephemeral, consolidated_from, consolidated_at, last_accessed, access_count, importance, pinned, embedding IS NOT NONE AS embedded";
+    let fields = "content, summary, detail, tier, scope, topic, confidence, source, model, version, nostr_id, d_tag, created_at, updated_at, ephemeral, consolidated_from, consolidated_at, last_accessed, access_count, importance, pinned, embedding IS NOT NONE AS embedded";
     let sql = format!(
         "SELECT {fields} FROM memory \
          WHERE nostr_id IS NONE OR nostr_id = '' OR string::len(nostr_id) != 64 \
@@ -2131,90 +2256,39 @@ pub async fn cleanup_expired_consolidation_sessions(db: &Surreal<Db>) -> Result<
     Ok(count)
 }
 
-// ── Provider bindings ─────────────────────────────────────────────
-
-/// Bind a provider ID to a memory d-tag (upsert).
-pub async fn bind_provider(
+/// Update a memory's d-tag (and derived scope/topic) in-place.
+/// Used by d-tag migration (colon → slash format).
+pub async fn update_memory_dtag(
     db: &Surreal<Db>,
-    provider_id: &str,
-    d_tag: &str,
-) -> Result<()> {
-    let now = chrono::Utc::now().to_rfc3339();
-    db.query(
-        "IF (SELECT count() FROM provider_binding WHERE provider_id = $pid AND d_tag = $dtag GROUP ALL)[0].count > 0 {
-            UPDATE provider_binding SET updated_at = $now WHERE provider_id = $pid AND d_tag = $dtag;
-        } ELSE {
-            CREATE provider_binding SET provider_id = $pid, d_tag = $dtag, created_at = $now, updated_at = $now;
-        };"
-    )
-    .bind(("pid", provider_id.to_string()))
-    .bind(("dtag", d_tag.to_string()))
-    .bind(("now", now))
-    .await?
-    .check()?;
-    Ok(())
-}
-
-/// Resolve all d-tags bound to a provider ID.
-pub async fn resolve_provider(
-    db: &Surreal<Db>,
-    provider_id: &str,
-) -> Result<Vec<String>> {
-    #[derive(Debug, Deserialize, SurrealValue)]
-    struct Row {
-        d_tag: String,
-        #[allow(dead_code)]
-        created_at: String,
-    }
-    let results: Vec<Row> = db
-        .query("SELECT d_tag, created_at FROM provider_binding WHERE provider_id = $pid ORDER BY created_at ASC")
-        .bind(("pid", provider_id.to_string()))
-        .await?
-        .check()?
-        .take(0)?;
-    Ok(results.into_iter().map(|r| r.d_tag).collect())
-}
-
-/// Unbind a provider ID from a d-tag.
-pub async fn unbind_provider(
-    db: &Surreal<Db>,
-    provider_id: &str,
-    d_tag: &str,
+    old_dtag: &str,
+    new_dtag: &str,
+    new_scope: &str,
+    new_topic: &str,
 ) -> Result<bool> {
-    let before: Vec<serde_json::Value> = db
-        .query("SELECT meta::id(id) AS id FROM provider_binding WHERE provider_id = $pid AND d_tag = $dtag")
-        .bind(("pid", provider_id.to_string()))
-        .bind(("dtag", d_tag.to_string()))
+    let result: Option<MemoryRecord> = db
+        .query("SELECT * FROM memory WHERE d_tag = $old LIMIT 1")
+        .bind(("old", old_dtag.to_string()))
         .await?
         .check()?
         .take(0)?;
-    if before.is_empty() {
+
+    if result.is_none() {
         return Ok(false);
     }
-    db.query("DELETE FROM provider_binding WHERE provider_id = $pid AND d_tag = $dtag")
-        .bind(("pid", provider_id.to_string()))
-        .bind(("dtag", d_tag.to_string()))
-        .await?
-        .check()?;
+
+    let now = chrono::Utc::now().to_rfc3339();
+    db.query(
+        "UPDATE memory SET d_tag = $new_dtag, scope = $scope, topic = $topic, updated_at = $now \
+         WHERE d_tag = $old_dtag",
+    )
+    .bind(("new_dtag", new_dtag.to_string()))
+    .bind(("scope", new_scope.to_string()))
+    .bind(("topic", new_topic.to_string()))
+    .bind(("now", now))
+    .bind(("old_dtag", old_dtag.to_string()))
+    .await?
+    .check()?;
+
     Ok(true)
 }
 
-/// List all bindings for a given d-tag (reverse lookup).
-pub async fn list_providers_for_dtag(
-    db: &Surreal<Db>,
-    d_tag: &str,
-) -> Result<Vec<String>> {
-    #[derive(Debug, Deserialize, SurrealValue)]
-    struct Row {
-        provider_id: String,
-        #[allow(dead_code)]
-        created_at: String,
-    }
-    let results: Vec<Row> = db
-        .query("SELECT provider_id, created_at FROM provider_binding WHERE d_tag = $dtag ORDER BY created_at ASC")
-        .bind(("dtag", d_tag.to_string()))
-        .await?
-        .check()?
-        .take(0)?;
-    Ok(results.into_iter().map(|r| r.provider_id).collect())
-}

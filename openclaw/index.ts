@@ -520,10 +520,15 @@ const memoryNomenPlugin = {
           const topic = params?.topic;
           if (!topic) return jsonResult({ error: "topic is required" });
 
+          // Resolve topic to d_tag
+          const mem = await nomenRequest(cfg.apiUrl, "memory.get", { topic }, cfg.timeoutMs);
+          const dTag = mem.ok && mem.result ? (mem.result as any).d_tag : null;
+          if (!dTag) return jsonResult({ error: `memory not found for topic: ${topic}` });
+
           const resp = await nomenRequest(
             cfg.apiUrl,
             "memory.pin",
-            { topic },
+            { d_tag: dTag },
             cfg.timeoutMs,
           );
 
@@ -531,7 +536,7 @@ const memoryNomenPlugin = {
             return jsonResult({ error: resp.error?.message ?? "pin failed" });
           }
 
-          return jsonResult({ pinned: true, topic });
+          return jsonResult({ pinned: true, topic, d_tag: dTag });
         },
       },
       { names: ["memory_pin"] },
@@ -559,10 +564,15 @@ const memoryNomenPlugin = {
           const topic = params?.topic;
           if (!topic) return jsonResult({ error: "topic is required" });
 
+          // Resolve topic to d_tag
+          const mem = await nomenRequest(cfg.apiUrl, "memory.get", { topic }, cfg.timeoutMs);
+          const dTag = mem.ok && mem.result ? (mem.result as any).d_tag : null;
+          if (!dTag) return jsonResult({ error: `memory not found for topic: ${topic}` });
+
           const resp = await nomenRequest(
             cfg.apiUrl,
             "memory.unpin",
-            { topic },
+            { d_tag: dTag },
             cfg.timeoutMs,
           );
 
@@ -570,7 +580,7 @@ const memoryNomenPlugin = {
             return jsonResult({ error: resp.error?.message ?? "unpin failed" });
           }
 
-          return jsonResult({ pinned: false, topic });
+          return jsonResult({ pinned: false, topic, d_tag: dTag });
         },
       },
       { names: ["memory_unpin"] },
@@ -725,7 +735,7 @@ const memoryNomenPlugin = {
         if (chatId) {
           try {
             // Group/chat layer
-            const groupDTag = `group:${chatId}:room`;
+            const groupDTag = `group/${chatId}/room`;
             const groupRecord = await getMemoryByDTag(cfg.apiUrl, groupDTag, cfg.timeoutMs);
             let groupInjected = false;
 
@@ -737,7 +747,7 @@ const memoryNomenPlugin = {
             // Topic/thread layer
             let topicInjected = false;
             if (threadId) {
-              const topicDTag = `group:${chatId}:room/${threadId}`;
+              const topicDTag = `group/${chatId}/room/${threadId}`;
               const topicRecord = await getMemoryByDTag(cfg.apiUrl, topicDTag, cfg.timeoutMs);
               if (topicRecord) {
                 sections.push(formatRoomSection("Topic Context", topicRecord));
@@ -776,17 +786,26 @@ const memoryNomenPlugin = {
       async (event: any, ctx: any) => {
         if (!event?.content) return;
 
+        const meta = event.metadata || {};
+        const provider = meta.provider || ctx?.channelId || "unknown";
+        const threadId = meta.threadId != null ? String(meta.threadId) : undefined;
+        const conversationId = ctx?.conversationId;
+
         try {
           await nomenRequest(
             cfg.apiUrl,
             "message.ingest",
             {
-              source: `${ctx?.channelId || "unknown"}:${event.timestamp || Date.now()}`,
-              sender: event.from || "unknown",
+              source: provider,
+              sender: meta.senderName || meta.senderUsername || event.from || "unknown",
+              sender_id: meta.senderId || event.from || undefined,
               content: event.content,
-              channel: ctx?.conversationId
-                ? `${ctx.channelId}:${ctx.conversationId}`
-                : ctx?.channelId || "unknown",
+              channel: conversationId || provider,
+              room: conversationId || undefined,
+              topic: threadId || undefined,
+              provider_id: meta.messageId || undefined,
+              sender_name: meta.senderName || undefined,
+              source_ts: event.timestamp ? String(Math.floor(event.timestamp / 1000)) : undefined,
             },
             cfg.timeoutMs,
           );
@@ -807,17 +826,20 @@ const memoryNomenPlugin = {
       async (event: any, ctx: any) => {
         if (!event?.content || !event.success) return;
 
+        const provider = ctx?.channelId || "unknown";
+        const conversationId = ctx?.conversationId;
+
         try {
           await nomenRequest(
             cfg.apiUrl,
             "message.ingest",
             {
-              source: `${ctx?.channelId || "unknown"}:sent:${Date.now()}`,
+              source: provider,
               sender: "clarity",
               content: event.content,
-              channel: ctx?.conversationId
-                ? `${ctx.channelId}:${ctx.conversationId}`
-                : ctx?.channelId || "unknown",
+              channel: conversationId || provider,
+              room: conversationId || undefined,
+              source_ts: String(Math.floor(Date.now() / 1000)),
             },
             cfg.timeoutMs,
           );

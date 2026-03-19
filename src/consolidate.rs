@@ -512,6 +512,9 @@ pub struct GroupSummary {
     pub key: String,
     pub message_count: usize,
     pub topic: String,
+    pub scope: String,
+    pub time_start: String,
+    pub time_end: String,
 }
 
 /// A group key for time-window grouping.
@@ -1106,11 +1109,31 @@ pub async fn consolidate(
         };
         let tier = enforce_tier_guard(&derived_tier, most_restrictive_source);
 
+        // Compute time range from message timestamps
+        let (time_start, time_end) = {
+            let mut min_ts: Option<&str> = None;
+            let mut max_ts: Option<&str> = None;
+            for m in group_msgs.iter() {
+                let ts = m.created_at.as_str();
+                if !ts.is_empty() {
+                    min_ts = Some(min_ts.map_or(ts, |cur| if ts < cur { ts } else { cur }));
+                    max_ts = Some(max_ts.map_or(ts, |cur| if ts > cur { ts } else { cur }));
+                }
+            }
+            (
+                min_ts.unwrap_or("?").to_string(),
+                max_ts.unwrap_or("?").to_string(),
+            )
+        };
+
         for memory in &extracted {
             let group_summary = GroupSummary {
                 key: format!("{}:{}", key.identity, key.window),
                 message_count: group_msgs.len(),
                 topic: memory.topic.clone(),
+                scope: key.scope.clone(),
+                time_start: time_start.clone(),
+                time_end: time_end.clone(),
             };
             report.groups.push(group_summary);
 

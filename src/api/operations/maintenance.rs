@@ -45,11 +45,21 @@ pub async fn consolidate(
         .await
         .map_err(ApiError::from_anyhow)?;
 
+    let groups: Vec<Value> = report.groups.iter().map(|g| json!({
+        "key": g.key,
+        "message_count": g.message_count,
+        "topic": g.topic,
+        "scope": g.scope,
+        "time_start": g.time_start,
+        "time_end": g.time_end,
+    })).collect();
+
     Ok(json!({
         "messages_processed": report.messages_processed,
         "memories_created": report.memories_created,
         "events_published": report.events_published,
         "channels": report.channels,
+        "groups": groups,
         "dry_run": report.dry_run,
     }))
 }

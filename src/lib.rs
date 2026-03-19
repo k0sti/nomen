@@ -12,6 +12,7 @@ pub mod consolidate;
 pub mod db;
 pub mod embed;
 pub mod entities;
+pub mod fs;
 pub mod groups;
 pub mod ingest;
 pub mod kinds;
@@ -654,24 +655,9 @@ impl Nomen {
         .await
     }
 
-    /// Resolve all d-tags bound to a provider ID.
-    pub async fn resolve_provider(&self, provider_id: &str) -> Result<Vec<String>> {
-        db::resolve_provider(&self.db, provider_id).await
-    }
-
     /// Get multiple memories by d-tags in a single query.
     pub async fn get_batch(&self, d_tags: &[String]) -> Result<Vec<db::MemoryRecord>> {
         db::get_memories_by_dtags(&self.db, d_tags).await
-    }
-
-    /// Bind a provider ID to a memory d-tag.
-    pub async fn bind_provider(&self, provider_id: &str, d_tag: &str) -> Result<()> {
-        db::bind_provider(&self.db, provider_id, d_tag).await
-    }
-
-    /// Unbind a provider ID from a d-tag.
-    pub async fn unbind_provider(&self, provider_id: &str, d_tag: &str) -> Result<bool> {
-        db::unbind_provider(&self.db, provider_id, d_tag).await
     }
 
     /// List extracted entities, optionally filtered by kind.
@@ -926,10 +912,12 @@ impl Nomen {
         let memories = db::list_memories(&self.db, opts.tier.as_deref(), opts.limit, opts.pinned).await?;
         let stats = if opts.include_stats {
             let (total, named, pending) = db::count_memories_by_type(&self.db).await?;
+            let detailed = db::get_detailed_stats(&self.db).await.ok();
             Some(ListStats {
                 total,
                 named,
                 pending,
+                detailed,
             })
         } else {
             None
@@ -944,6 +932,64 @@ impl Nomen {
         let cutoff = chrono::Utc::now() - chrono::Duration::seconds(secs);
         let cutoff_str = cutoff.to_rfc3339();
         db::delete_ephemeral_before(&self.db, &cutoff_str).await
+    }
+
+    // ── D-tag migration ────────────────────────────────────────
+
+    /// Migrate all memory d-tags from colon format to slash format.
+    /// Returns (migrated_count, skipped_count).
+    pub async fn migrate_dtags(&self, dry_run: bool) -> Result<(usize, usize)> {
+        let memories = db::list_memories(&self.db, None, 10000, None).await?;
+        let mut migrated = 0;
+        let mut skipped = 0;
+
+        for mem in &memories {
+            let old_dtag = match &mem.d_tag {
+                Some(d) if !d.is_empty() => d.clone(),
+                _ => {
+                    skipped += 1;
+                    continue;
+                }
+            };
+
+            if !memory::is_colon_format(&old_dtag) {
+                skipped += 1;
+                continue;
+            }
+
+            let new_dtag = memory::migrate_dtag_to_slash(&old_dtag);
+            if new_dtag == old_dtag {
+                skipped += 1;
+                continue;
+            }
+
+            let (_, new_scope) = memory::extract_visibility_scope(&new_dtag);
+            let new_topic = memory::v2_dtag_topic(&new_dtag)
+                .unwrap_or(&new_dtag)
+                .to_string();
+
+            if dry_run {
+                tracing::info!("{old_dtag} → {new_dtag}");
+                migrated += 1;
+                continue;
+            }
+
+            match db::update_memory_dtag(&self.db, &old_dtag, &new_dtag, &new_scope, &new_topic)
+                .await
+            {
+                Ok(true) => {
+                    tracing::info!("{old_dtag} → {new_dtag}");
+                    migrated += 1;
+                }
+                Ok(false) => skipped += 1,
+                Err(e) => {
+                    tracing::warn!("Failed to migrate {old_dtag}: {e}");
+                    skipped += 1;
+                }
+            }
+        }
+
+        Ok((migrated, skipped))
     }
 
     // ── Group management ────────────────────────────────────────
@@ -1280,4 +1326,5 @@ pub struct ListStats {
     pub total: usize,
     pub named: usize,
     pub pending: usize,
+    pub detailed: Option<db::DetailedStats>,
 }

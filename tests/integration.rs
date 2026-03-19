@@ -100,7 +100,7 @@ async fn test_ingest_and_consolidate() -> Result<()> {
     // Verify messages are marked consolidated
     let query_consolidated = nomen::ingest::MessageQuery {
         source: Some("test".to_string()),
-        consolidated_only: true,
+        include_consolidated: true,
         ..Default::default()
     };
     let consolidated = nomen::ingest::get_messages(&db, &query_consolidated).await?;

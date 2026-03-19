@@ -256,6 +256,17 @@ enum Command {
     },
     /// Migrate legacy lesson events (kind 31235/4129) to memory events (kind 31234)
     MigrateLessons,
+    /// Migrate d-tags from colon format to slash format (v0.2 → v0.3)
+    MigrateDtags {
+        /// Preview what would be migrated without changing anything
+        #[arg(long)]
+        dry_run: bool,
+    },
+    /// Filesystem sync — bidirectional sync between Nomen memories and local markdown files
+    Fs {
+        #[command(subcommand)]
+        action: FsAction,
+    },
     /// Validate config and check connectivity
     Doctor,
     /// Start MCP server (JSON-RPC over stdio) or HTTP server
@@ -323,6 +334,34 @@ enum GroupAction {
         id: String,
         /// Member npub to remove
         npub: String,
+    },
+}
+
+#[derive(Subcommand)]
+enum FsAction {
+    /// Initialize a new filesystem sync directory
+    Init {
+        /// Directory path (default: ./nomen-fs)
+        #[arg(long, default_value = "./nomen-fs")]
+        dir: PathBuf,
+    },
+    /// Pull all memories from DB to filesystem as markdown files
+    Pull {
+        /// Directory path (default: ./nomen-fs)
+        #[arg(long, default_value = "./nomen-fs")]
+        dir: PathBuf,
+    },
+    /// Push changed files back to Nomen as memory events
+    Push {
+        /// Directory path (default: ./nomen-fs)
+        #[arg(long, default_value = "./nomen-fs")]
+        dir: PathBuf,
+    },
+    /// Show sync status
+    Status {
+        /// Directory path (default: ./nomen-fs)
+        #[arg(long, default_value = "./nomen-fs")]
+        dir: PathBuf,
     },
 }
 
@@ -815,6 +854,39 @@ async fn main() -> Result<()> {
             let nomen = build_nomen_with_relay(&config, &resolved).await?;
             cmd_migrate_lessons(&nomen, &resolved).await?;
         }
+        Command::MigrateDtags { dry_run } => {
+            let nomen = build_nomen(&config).await?;
+            let prefix = if dry_run { "[dry-run] " } else { "" };
+            println!("{prefix}Migrating d-tags from colon to slash format...");
+            let (migrated, skipped) = nomen.migrate_dtags(dry_run).await?;
+            println!("{prefix}Done: {migrated} migrated, {skipped} skipped");
+        }
+        Command::Fs { action } => {
+            match action {
+                FsAction::Init { dir } => {
+                    // Init doesn't need DB — just creates directories
+                    nomen::fs::init_sync_dir(&dir)?;
+                    println!("Initialized sync directory: {}", dir.display());
+                }
+                FsAction::Pull { dir } => {
+                    let nomen = build_nomen(&config).await?;
+                    if !dir.join(".nomen-fs").exists() {
+                        nomen::fs::init_sync_dir(&dir)?;
+                    }
+                    let count = nomen::fs::pull(&nomen, &dir).await?;
+                    println!("Pulled {count} memories to {}", dir.display());
+                }
+                FsAction::Push { dir } => {
+                    let nomen = build_nomen(&config).await?;
+                    let count = nomen::fs::push(&nomen, &dir).await?;
+                    println!("Pushed {count} changed files from {}", dir.display());
+                }
+                FsAction::Status { dir } => {
+                    let nomen = build_nomen(&config).await?;
+                    nomen::fs::status(&nomen, &dir).await?;
+                }
+            }
+        }
         Command::Init { .. } | Command::Doctor => unreachable!("handled above"),
     }
 
@@ -873,11 +945,58 @@ async fn cmd_list_local(backend: &Backend, nomen: Option<&Nomen>, ephemeral: boo
     if stats {
         let result = cli_dispatch(backend, nomen, "memory.list", &json!({"stats": true, "limit": 0})).await?;
         if let Some(s) = result.get("stats") {
-            let total = s["total"].as_u64().unwrap_or(0);
+            let named = s["named"].as_u64().unwrap_or(0);
             let pending = s["pending"].as_u64().unwrap_or(0);
             println!("\n{}\n{}", "Memory Statistics".bold(), "═".repeat(40));
-            println!("  Named memories: {}", total);
+            println!("  Named memories: {}", named);
             println!("  Ephemeral (pending): {}", pending.to_string().yellow());
+
+            // Last consolidation time
+            if let Some(last) = s.get("last_consolidation").and_then(|v| v.as_str()) {
+                println!("  Last consolidation: {}", last.dimmed());
+            }
+
+            // Memories by tier
+            if let Some(tiers) = s.get("by_tier").and_then(|v| v.as_array()) {
+                if !tiers.is_empty() {
+                    println!("\n  {}:", "By tier".bold());
+                    for tier in tiers {
+                        let name = tier["tier"].as_str().unwrap_or("?");
+                        let count = tier["count"].as_u64().unwrap_or(0);
+                        println!("    {:<14} {}", name, count);
+                    }
+                }
+            }
+
+            // Unconsolidated messages by channel
+            if let Some(channels) = s.get("channels").and_then(|v| v.as_array()) {
+                let has_pending: Vec<&Value> = channels
+                    .iter()
+                    .filter(|ch| ch["unconsolidated"].as_u64().unwrap_or(0) > 0)
+                    .collect();
+                if !has_pending.is_empty() {
+                    println!("\n  {}:", "Unconsolidated messages by channel".bold());
+                    for ch in &has_pending {
+                        let name = ch["channel"].as_str().unwrap_or("(none)");
+                        let display_name = if name.is_empty() { "(none)" } else { name };
+                        let uncons = ch["unconsolidated"].as_u64().unwrap_or(0);
+                        let mut line = format!("    {:<40} {} pending", display_name, uncons.to_string().yellow());
+                        let oldest = ch.get("oldest_unconsolidated").and_then(|v| v.as_str());
+                        let newest = ch.get("newest_unconsolidated").and_then(|v| v.as_str());
+                        if let (Some(o), Some(n)) = (oldest, newest) {
+                            let o_short = &o[..o.len().min(10)];
+                            let n_short = &n[..n.len().min(10)];
+                            if o_short == n_short {
+                                line.push_str(&format!(" ({})", o_short.dimmed()));
+                            } else {
+                                line.push_str(&format!(" ({} .. {})", o_short.dimmed(), n_short.dimmed()));
+                            }
+                        }
+                        println!("{}", line);
+                    }
+                }
+            }
+
             println!();
         }
         return Ok(());
@@ -1451,6 +1570,26 @@ async fn cmd_consolidate(
             let channel_strs: Vec<&str> = channels.iter().filter_map(|c| c.as_str()).collect();
             if !channel_strs.is_empty() {
                 println!("  Channels: {}", channel_strs.join(", "));
+            }
+        }
+        if let Some(groups) = result["groups"].as_array() {
+            if !groups.is_empty() {
+                println!("\n  {}", "Per-group breakdown:".dimmed());
+                for g in groups {
+                    let scope = g["scope"].as_str().unwrap_or("");
+                    let count = g["message_count"].as_u64().unwrap_or(0);
+                    let topic = g["topic"].as_str().unwrap_or("?");
+                    let t_start = g["time_start"].as_str().unwrap_or("?");
+                    let t_end = g["time_end"].as_str().unwrap_or("?");
+
+                    println!(
+                        "    {} ({} msgs, {})",
+                        topic.bold(),
+                        count,
+                        scope.dimmed()
+                    );
+                    println!("      {} \u{2192} {}", t_start, t_end);
+                }
             }
         }
     }

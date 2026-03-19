@@ -7,6 +7,7 @@
     personal: 'bg-purple-900/40 text-purple-400 border-purple-800/50',
     private: 'bg-purple-900/40 text-purple-400 border-purple-800/50',
     internal: 'bg-red-900/40 text-red-400 border-red-800/50',
+    circle: 'bg-orange-900/40 text-orange-400 border-orange-800/50',
   };
 
   const style = $derived(styles[visibility] || 'bg-gray-800 text-gray-400 border-gray-700');

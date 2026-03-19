@@ -68,16 +68,41 @@ pub fn tools_list() -> Value {
             },
             {
                 "name": "nomen_messages",
-                "description": "Query raw messages",
+                "description": "Query raw messages with filters",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
                         "source": { "type": "string", "description": "Filter by source" },
                         "channel": { "type": "string", "description": "Filter by channel" },
                         "sender": { "type": "string", "description": "Filter by sender" },
+                        "room": { "type": "string", "description": "Filter by room" },
+                        "topic": { "type": "string", "description": "Filter by topic" },
+                        "thread": { "type": "string", "description": "Filter by thread" },
                         "since": { "type": "string", "description": "Show messages since (RFC3339 timestamp)" },
+                        "until": { "type": "string", "description": "Show messages until (RFC3339 timestamp)" },
+                        "order": { "type": "string", "description": "Sort order: asc or desc (default desc)" },
+                        "include_consolidated": { "type": "boolean", "description": "Include consolidated messages (default false)" },
                         "limit": { "type": "integer", "description": "Max results (default 50)" }
                     }
+                }
+            },
+            {
+                "name": "nomen_message_search",
+                "description": "Full-text BM25 search over raw messages",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "query": { "type": "string", "description": "Search query" },
+                        "source": { "type": "string", "description": "Filter by source" },
+                        "room": { "type": "string", "description": "Filter by room" },
+                        "topic": { "type": "string", "description": "Filter by topic" },
+                        "sender": { "type": "string", "description": "Filter by sender" },
+                        "since": { "type": "string", "description": "Show messages since (RFC3339 timestamp)" },
+                        "until": { "type": "string", "description": "Show messages until (RFC3339 timestamp)" },
+                        "include_consolidated": { "type": "boolean", "description": "Include consolidated messages (default false)" },
+                        "limit": { "type": "integer", "description": "Max results (default 50)" }
+                    },
+                    "required": ["query"]
                 }
             },
             {
@@ -216,6 +241,7 @@ pub async fn dispatch_tool(
         "nomen_store" => tool_store(nomen, default_channel, args).await,
         "nomen_ingest" => tool_ingest(nomen, default_channel, args).await,
         "nomen_messages" => tool_messages(nomen, default_channel, args).await,
+        "nomen_message_search" => tool_message_search(nomen, default_channel, args).await,
         "nomen_entities" => tool_entities(nomen, default_channel, args).await,
         "nomen_consolidate" => tool_consolidate(nomen, default_channel, args).await,
         "nomen_delete" => tool_delete(nomen, default_channel, args).await,
@@ -402,8 +428,13 @@ pub async fn tool_messages(nomen: &Nomen, _default_channel: &str, args: &Value) 
         channel: args.get("channel").and_then(|v| v.as_str()).map(String::from),
         sender: args.get("sender").and_then(|v| v.as_str()).map(String::from),
         since: args.get("since").and_then(|v| v.as_str()).map(String::from),
+        until: args.get("until").and_then(|v| v.as_str()).map(String::from),
+        room: args.get("room").and_then(|v| v.as_str()).map(String::from),
+        topic: args.get("topic").and_then(|v| v.as_str()).map(String::from),
+        thread: args.get("thread").and_then(|v| v.as_str()).map(String::from),
         limit: Some(args.get("limit").and_then(|v| v.as_u64()).unwrap_or(50) as usize),
-        consolidated_only: false,
+        include_consolidated: args.get("include_consolidated").and_then(|v| v.as_bool()).unwrap_or(false),
+        order: args.get("order").and_then(|v| v.as_str()).map(String::from),
     };
 
     let messages = nomen.get_messages(opts).await?;
@@ -428,6 +459,49 @@ pub async fn tool_messages(nomen: &Nomen, _default_channel: &str, args: &Value) 
     Ok(format!(
         "{} messages:\n\n{}",
         messages.len(),
+        output.join("\n\n")
+    ))
+}
+
+pub async fn tool_message_search(nomen: &Nomen, _default_channel: &str, args: &Value) -> Result<String> {
+    let query = args.get("query").and_then(|v| v.as_str()).unwrap_or("");
+    if query.is_empty() {
+        anyhow::bail!("query parameter is required");
+    }
+
+    let source = args.get("source").and_then(|v| v.as_str());
+    let room = args.get("room").and_then(|v| v.as_str());
+    let topic = args.get("topic").and_then(|v| v.as_str());
+    let sender = args.get("sender").and_then(|v| v.as_str());
+    let since = args.get("since").and_then(|v| v.as_str());
+    let until = args.get("until").and_then(|v| v.as_str());
+    let include_consolidated = args.get("include_consolidated").and_then(|v| v.as_bool()).unwrap_or(false);
+    let limit = args.get("limit").and_then(|v| v.as_u64()).unwrap_or(50) as usize;
+
+    let results = nomen.search_messages(
+        query, source, room, topic, sender, since, until, include_consolidated, limit,
+    ).await?;
+
+    if results.is_empty() {
+        return Ok("No messages found.".to_string());
+    }
+
+    let mut output = Vec::new();
+    for msg in &results {
+        let channel_str = if msg.channel.is_empty() {
+            String::new()
+        } else {
+            format!(" #{}", msg.channel)
+        };
+        output.push(format!(
+            "[{}] {}{}: {} (score: {:.2})\n  {}",
+            msg.source, msg.sender, channel_str, msg.content, msg.score, msg.created_at
+        ));
+    }
+
+    Ok(format!(
+        "{} messages:\n\n{}",
+        results.len(),
         output.join("\n\n")
     ))
 }

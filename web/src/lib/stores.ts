@@ -4,7 +4,7 @@ import { writable, derived, get } from 'svelte/store';
 import { NomenRelay, setSigner as setRelaySigner } from './relay';
 import { NomenApi } from './api';
 import type { NostrProfile, NostrSigner } from './nostr';
-import type { Memory, Message, Group, Entity, SearchResult } from './api';
+import type { Memory, Message, Group, Entity, SearchResult, MessageListOpts } from './api';
 
 // ── Settings ──────────────────────────────────────────────────────
 export const relayUrl = writable(localStorage.getItem('nomen:relayUrl') || 'wss://zooid.atlantislabs.space');

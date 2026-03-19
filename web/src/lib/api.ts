@@ -1,4 +1,6 @@
-// Nomen API Client — REST calls for server-side operations only (search, entities, consolidation)
+// Nomen API Client — REST calls for server-side operations
+
+import { normalizeVisibility } from './dtag';
 
 export interface SearchResult {
   topic: string;
@@ -21,21 +23,91 @@ export interface Memory {
   scope: string;
   confidence: number;
   model: string;
-  version: string;
+  version: number;
   source: string;
   created_at: string;
+  updated_at: string;
   d_tag: string;
+  nostr_id: string;
+  ephemeral: boolean;
+  importance: number | null;
+  access_count: number;
+  source_time_start: string | null;
+  source_time_end: string | null;
+  consolidated_from: string | null;
+  consolidated_at: string | null;
+  pinned: boolean;
+  embedded: boolean;
+}
+
+export interface MemoryListStats {
+  total: number;
+  named: number;
+  pending: number;
+  by_visibility?: Record<string, number>;
+}
+
+export interface MemoryListResult {
+  count: number;
+  memories: Memory[];
+  stats?: MemoryListStats;
 }
 
 export interface Message {
   id: string;
   source: string;
+  source_id: string;
   sender: string;
   channel: string;
   content: string;
   metadata: string;
   consolidated: boolean;
   created_at: string;
+  nostr_event_id: string;
+  provider_id: string;
+  sender_id: string;
+  room: string;
+  topic: string;
+  thread: string;
+  scope: string;
+  source_created_at: string;
+  publish_status: string;
+}
+
+export interface MessageListOpts {
+  source?: string;
+  channel?: string;
+  sender?: string;
+  room?: string;
+  topic?: string;
+  thread?: string;
+  since?: string;
+  until?: string;
+  order?: 'asc' | 'desc';
+  include_consolidated?: boolean;
+  limit?: number;
+}
+
+export interface MessageListResult {
+  count: number;
+  messages: Message[];
+}
+
+export interface MessageContextOpts {
+  id?: string;
+  nostr_event_id?: string;
+  provider_id?: string;
+  channel?: string;
+  source_id?: string;
+  before?: number;
+  after?: number;
+  same_container_only?: boolean;
+}
+
+export interface MessageContextResult {
+  count: number;
+  messages: Message[];
+  target_index: number;
 }
 
 export interface Group {
@@ -64,6 +136,12 @@ export interface SearchOpts {
   scope?: string;
   limit?: number;
   mode?: 'hybrid' | 'text';
+}
+
+export interface ListOpts {
+  visibility?: string;
+  limit?: number;
+  stats?: boolean;
 }
 
 export interface EntityOpts {
@@ -163,6 +241,32 @@ export class NomenApi {
     return data.results.map(mapSearchResult);
   }
 
+  async listMemories(opts?: ListOpts): Promise<MemoryListResult> {
+    const params: Record<string, unknown> = {
+      limit: opts?.limit ?? 500,
+      stats: opts?.stats ?? true,
+    };
+    if (opts?.visibility) params.visibility = opts.visibility;
+    const data = await this.dispatch<MemoryListResult>('memory.list', params);
+    // Normalize visibilities
+    for (const m of data.memories) {
+      m.visibility = normalizeVisibility(m.visibility);
+    }
+    return data;
+  }
+
+  async deleteMemory(opts: { topic?: string; d_tag?: string; id?: string }): Promise<{ deleted: boolean; d_tag?: string }> {
+    return this.dispatch('memory.delete', opts as Record<string, unknown>);
+  }
+
+  async pinMemory(d_tag: string): Promise<{ pinned: boolean; d_tag: string }> {
+    return this.dispatch('memory.pin', { d_tag });
+  }
+
+  async unpinMemory(d_tag: string): Promise<{ pinned: boolean; d_tag: string }> {
+    return this.dispatch('memory.unpin', { d_tag });
+  }
+
   async getEntities(opts?: EntityOpts): Promise<Entity[]> {
     const data = await this.dispatch<{ entities: Entity[] }>('entity.list', {
       kind: opts?.kind,
@@ -199,6 +303,14 @@ export class NomenApi {
   async prune(days: number, dryRun: boolean): Promise<PruneResult> {
     return this.dispatch('memory.prune', { days, dry_run: dryRun });
   }
+
+  async listMessages(opts?: MessageListOpts): Promise<MessageListResult> {
+    return this.dispatch('message.list', { ...opts, limit: opts?.limit ?? 100 });
+  }
+
+  async getMessageContext(opts: MessageContextOpts): Promise<MessageContextResult> {
+    return this.dispatch('message.context', { ...opts });
+  }
 }
 
 // ── Raw backend types & mappers ──────────────────────────────────
@@ -220,7 +332,7 @@ function mapSearchResult(r: RawSearchResult): SearchResult {
     topic: r.topic,
     summary: r.summary,
     detail: r.detail || '',
-    visibility: r.visibility,
+    visibility: normalizeVisibility(r.visibility),
     scope: r.scope || '',
     confidence: parseFloat(r.confidence) || 0,
     score: r.score,

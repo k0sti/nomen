@@ -2,6 +2,7 @@
   import Layout from './components/Layout.svelte';
   import Landing from './pages/Landing.svelte';
   import Memories from './pages/Memories.svelte';
+  import Events from './pages/Events.svelte';
   import Search from './pages/Search.svelte';
   import Messages from './pages/Messages.svelte';
   import Groups from './pages/Groups.svelte';
@@ -20,6 +21,8 @@
   <Layout>
     {#if $currentPage === 'memories'}
       <Memories />
+    {:else if $currentPage === 'events'}
+      <Events />
     {:else if $currentPage === 'search'}
       <Search />
     {:else if $currentPage === 'messages'}

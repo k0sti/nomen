@@ -615,11 +615,11 @@ mod operations_tests {
             &json!({"topic": "room/deploys", "summary": "Deployment topic room", "detail": "Deployment discussions", "visibility": "group", "scope": "techteam"}),
         ).await;
 
-        // Batch fetch both
+        // Batch fetch both (slash-format d-tags)
         let resp = nomen::api::dispatch(
             &nomen, "test",
             "memory.get_batch",
-            &json!({"d_tags": ["group:techteam:room", "group:techteam:room/deploys"]}),
+            &json!({"d_tags": ["group/techteam/room", "group/techteam/room/deploys"]}),
         ).await;
         assert!(resp.ok, "get_batch failed: {:?}", resp.error);
         let result = resp.result.unwrap();
@@ -627,8 +627,8 @@ mod operations_tests {
 
         // Check by_d_tag map
         let by_dtag = &result["by_d_tag"];
-        assert_eq!(by_dtag["group:techteam:room"]["summary"], "Engineering group room");
-        assert_eq!(by_dtag["group:techteam:room/deploys"]["summary"], "Deployment topic room");
+        assert_eq!(by_dtag["group/techteam/room"]["summary"], "Engineering group room");
+        assert_eq!(by_dtag["group/techteam/room/deploys"]["summary"], "Deployment topic room");
     }
 
     #[tokio::test]
@@ -642,17 +642,17 @@ mod operations_tests {
             &json!({"topic": "room", "summary": "Existing room", "visibility": "group", "scope": "mygroup"}),
         ).await;
 
-        // Batch fetch including a missing d-tag
+        // Batch fetch including a missing d-tag (slash-format)
         let resp = nomen::api::dispatch(
             &nomen, "test",
             "memory.get_batch",
-            &json!({"d_tags": ["group:mygroup:room", "group:mygroup:room/nonexistent"]}),
+            &json!({"d_tags": ["group/mygroup/room", "group/mygroup/room/nonexistent"]}),
         ).await;
         assert!(resp.ok);
         let result = resp.result.unwrap();
         assert_eq!(result["count"], 1);
-        assert!(result["by_d_tag"]["group:mygroup:room"].is_object());
-        assert!(result["by_d_tag"].get("group:mygroup:room/nonexistent").is_none());
+        assert!(result["by_d_tag"]["group/mygroup/room"].is_object());
+        assert!(result["by_d_tag"].get("group/mygroup/room/nonexistent").is_none());
     }
 
     #[tokio::test]
@@ -666,5 +666,353 @@ mod operations_tests {
         ).await;
         assert!(!resp.ok);
         assert_eq!(resp.error.unwrap().code, "invalid_params");
+    }
+}
+
+// ════════════════════════════════════════════════════════════════════
+// 5. Integration tests for message.search
+// ════════════════════════════════════════════════════════════════════
+
+mod message_search_tests {
+    use nomen::ingest::RawMessage;
+    use serde_json::json;
+
+    /// Helper: ingest a raw message directly via Nomen, supporting all fields.
+    async fn ingest_message(
+        nomen: &nomen::Nomen,
+        content: &str,
+        source: &str,
+        sender: &str,
+        channel: &str,
+        room: Option<&str>,
+    ) -> String {
+        let msg = RawMessage {
+            source: source.to_string(),
+            sender: sender.to_string(),
+            channel: Some(channel.to_string()),
+            content: content.to_string(),
+            room: room.map(|r| r.to_string()),
+            ..Default::default()
+        };
+        nomen.ingest_message(msg).await.unwrap()
+    }
+
+    /// Seed a set of messages for search tests and return the Nomen instance.
+    async fn seed_messages() -> (nomen::Nomen, tempfile::TempDir) {
+        let (nomen, tmp) = super::test_nomen().await.unwrap();
+
+        ingest_message(
+            &nomen,
+            "The quick brown fox jumps over the lazy dog",
+            "test-search",
+            "alice",
+            "general",
+            Some("room-alpha"),
+        )
+        .await;
+        ingest_message(
+            &nomen,
+            "Rust programming language is fast and memory safe",
+            "test-search",
+            "bob",
+            "engineering",
+            Some("room-beta"),
+        )
+        .await;
+        ingest_message(
+            &nomen,
+            "The lazy cat sleeps all day long",
+            "test-search",
+            "alice",
+            "general",
+            Some("room-alpha"),
+        )
+        .await;
+        ingest_message(
+            &nomen,
+            "Memory management in Rust prevents data races",
+            "other-source",
+            "charlie",
+            "engineering",
+            Some("room-beta"),
+        )
+        .await;
+        ingest_message(
+            &nomen,
+            "Deploy the new docker containers to production",
+            "test-search",
+            "bob",
+            "devops",
+            None,
+        )
+        .await;
+
+        (nomen, tmp)
+    }
+
+    #[tokio::test]
+    async fn basic_keyword_search_returns_matching_messages() {
+        let (nomen, _tmp) = seed_messages().await;
+
+        let resp = nomen::api::dispatch(
+            &nomen,
+            "test",
+            "message.search",
+            &json!({"query": "lazy"}),
+        )
+        .await;
+        assert!(resp.ok, "search failed: {:?}", resp.error);
+        let result = resp.result.unwrap();
+        let messages = result["messages"].as_array().unwrap();
+
+        // Both "quick brown fox" and "lazy cat" messages contain "lazy"
+        assert!(
+            messages.len() >= 2,
+            "expected at least 2 results for 'lazy', got {}",
+            messages.len()
+        );
+        for msg in messages {
+            let content = msg["content"].as_str().unwrap();
+            assert!(
+                content.to_lowercase().contains("lazy"),
+                "result should contain 'lazy': {content}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn empty_query_returns_invalid_params_error() {
+        let (nomen, _tmp) = super::test_nomen().await.unwrap();
+
+        // Empty string query
+        let resp = nomen::api::dispatch(
+            &nomen,
+            "test",
+            "message.search",
+            &json!({"query": ""}),
+        )
+        .await;
+        assert!(!resp.ok);
+        assert_eq!(resp.error.unwrap().code, "invalid_params");
+    }
+
+    #[tokio::test]
+    async fn missing_query_returns_invalid_params_error() {
+        let (nomen, _tmp) = super::test_nomen().await.unwrap();
+
+        let resp = nomen::api::dispatch(
+            &nomen,
+            "test",
+            "message.search",
+            &json!({}),
+        )
+        .await;
+        assert!(!resp.ok);
+        assert_eq!(resp.error.unwrap().code, "invalid_params");
+    }
+
+    #[tokio::test]
+    async fn filter_by_sender() {
+        let (nomen, _tmp) = seed_messages().await;
+
+        let resp = nomen::api::dispatch(
+            &nomen,
+            "test",
+            "message.search",
+            &json!({"query": "Rust", "sender": "bob"}),
+        )
+        .await;
+        assert!(resp.ok, "search failed: {:?}", resp.error);
+        let result = resp.result.unwrap();
+        let messages = result["messages"].as_array().unwrap();
+
+        // Only bob's Rust message should match, not charlie's
+        assert_eq!(messages.len(), 1, "expected 1 result for sender=bob + Rust");
+        assert_eq!(messages[0]["sender"].as_str().unwrap(), "bob");
+        assert!(messages[0]["content"]
+            .as_str()
+            .unwrap()
+            .contains("Rust"));
+    }
+
+    #[tokio::test]
+    async fn filter_by_room() {
+        let (nomen, _tmp) = seed_messages().await;
+
+        let resp = nomen::api::dispatch(
+            &nomen,
+            "test",
+            "message.search",
+            &json!({"query": "Rust", "room": "room-beta"}),
+        )
+        .await;
+        assert!(resp.ok, "search failed: {:?}", resp.error);
+        let result = resp.result.unwrap();
+        let messages = result["messages"].as_array().unwrap();
+
+        // Both Rust messages are in room-beta
+        assert_eq!(
+            messages.len(),
+            2,
+            "expected 2 results for room=room-beta + Rust"
+        );
+        for msg in messages {
+            assert_eq!(msg["room"].as_str().unwrap(), "room-beta");
+        }
+    }
+
+    #[tokio::test]
+    async fn filter_by_source() {
+        let (nomen, _tmp) = seed_messages().await;
+
+        // charlie's message has source "other-source"
+        let resp = nomen::api::dispatch(
+            &nomen,
+            "test",
+            "message.search",
+            &json!({"query": "Rust", "source": "other-source"}),
+        )
+        .await;
+        assert!(resp.ok, "search failed: {:?}", resp.error);
+        let result = resp.result.unwrap();
+        let messages = result["messages"].as_array().unwrap();
+
+        assert_eq!(
+            messages.len(),
+            1,
+            "expected 1 result for source=other-source + Rust"
+        );
+        assert_eq!(messages[0]["sender"].as_str().unwrap(), "charlie");
+    }
+
+    #[tokio::test]
+    async fn limit_parameter_is_respected() {
+        let (nomen, _tmp) = seed_messages().await;
+
+        // Ingest additional messages to have more potential results
+        for i in 0..5 {
+            ingest_message(
+                &nomen,
+                &format!("Additional lazy message number {i}"),
+                "test-search",
+                "alice",
+                "general",
+                None,
+            )
+            .await;
+        }
+
+        let resp = nomen::api::dispatch(
+            &nomen,
+            "test",
+            "message.search",
+            &json!({"query": "lazy", "limit": 2}),
+        )
+        .await;
+        assert!(resp.ok, "search failed: {:?}", resp.error);
+        let result = resp.result.unwrap();
+        let messages = result["messages"].as_array().unwrap();
+
+        assert!(
+            messages.len() <= 2,
+            "expected at most 2 results with limit=2, got {}",
+            messages.len()
+        );
+    }
+
+    #[tokio::test]
+    async fn results_include_score_field() {
+        let (nomen, _tmp) = seed_messages().await;
+
+        let resp = nomen::api::dispatch(
+            &nomen,
+            "test",
+            "message.search",
+            &json!({"query": "lazy"}),
+        )
+        .await;
+        assert!(resp.ok, "search failed: {:?}", resp.error);
+        let result = resp.result.unwrap();
+        let messages = result["messages"].as_array().unwrap();
+
+        assert!(!messages.is_empty(), "expected at least one result");
+        for msg in messages {
+            assert!(
+                msg.get("score").is_some(),
+                "result should include a 'score' field"
+            );
+            // Score should be a number (BM25 scores are non-negative)
+            assert!(
+                msg["score"].as_f64().is_some(),
+                "score should be a numeric value, got: {:?}",
+                msg["score"]
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn count_field_matches_messages_length() {
+        let (nomen, _tmp) = seed_messages().await;
+
+        let resp = nomen::api::dispatch(
+            &nomen,
+            "test",
+            "message.search",
+            &json!({"query": "docker"}),
+        )
+        .await;
+        assert!(resp.ok, "search failed: {:?}", resp.error);
+        let result = resp.result.unwrap();
+        let messages = result["messages"].as_array().unwrap();
+        let count = result["count"].as_u64().unwrap() as usize;
+
+        assert_eq!(count, messages.len());
+    }
+
+    #[tokio::test]
+    async fn no_results_for_unmatched_query() {
+        let (nomen, _tmp) = seed_messages().await;
+
+        let resp = nomen::api::dispatch(
+            &nomen,
+            "test",
+            "message.search",
+            &json!({"query": "xylophone"}),
+        )
+        .await;
+        assert!(resp.ok, "search failed: {:?}", resp.error);
+        let result = resp.result.unwrap();
+        let messages = result["messages"].as_array().unwrap();
+        assert_eq!(messages.len(), 0);
+        assert_eq!(result["count"].as_u64().unwrap(), 0);
+    }
+
+    #[tokio::test]
+    async fn combined_filters_narrow_results() {
+        let (nomen, _tmp) = seed_messages().await;
+
+        // Search for "Rust" with sender=bob AND room=room-beta
+        let resp = nomen::api::dispatch(
+            &nomen,
+            "test",
+            "message.search",
+            &json!({
+                "query": "Rust",
+                "sender": "bob",
+                "room": "room-beta"
+            }),
+        )
+        .await;
+        assert!(resp.ok, "search failed: {:?}", resp.error);
+        let result = resp.result.unwrap();
+        let messages = result["messages"].as_array().unwrap();
+
+        assert_eq!(
+            messages.len(),
+            1,
+            "expected exactly 1 result with combined filters"
+        );
+        assert_eq!(messages[0]["sender"].as_str().unwrap(), "bob");
+        assert_eq!(messages[0]["room"].as_str().unwrap(), "room-beta");
     }
 }

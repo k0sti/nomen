@@ -12,6 +12,7 @@ import { EventStore, QueryStore } from 'applesauce-core';
 import { firstValueFrom, filter as rxFilter, toArray, map, Observable, Subscription as RxSubscription } from 'rxjs';
 import { type EventTemplate, type NostrEvent } from 'nostr-tools';
 import type { Memory, Message, Group } from './api';
+import { parseDTag, normalizeVisibility } from './dtag';
 
 // ── Types ────────────────────────────────────────────────────────
 
@@ -160,6 +161,11 @@ async function publishEvent(event: NostrEvent, timeoutMs = 10000): Promise<strin
   });
 }
 
+/** Fetch raw events by filter — used by Event Explorer page. */
+export async function requestRawEvents(filters: any[], timeoutMs = 15000): Promise<NostrEvent[]> {
+  return requestEvents(filters, timeoutMs);
+}
+
 // ── Memory helpers ───────────────────────────────────────────────
 
 function isMemoryEvent(e: NostrEvent): boolean {
@@ -177,26 +183,36 @@ function parseMemory(e: NostrEvent): Memory {
 
   const getTag = (name: string) => e.tags.find(t => t[0] === name)?.[1];
 
-  // Parse v0.2 d-tag: {visibility}:{scope}:{topic}
+  // Use centralized d-tag parser
   const dTag = getTag('d') || '';
-  const parts = dTag.split(':');
-  const dtag_visibility = parts[0] || '';
-  const dtag_scope = parts.length >= 3 ? parts[1] : '';
-  const dtag_topic = parts.length >= 3 ? parts.slice(2).join(':') : parts.slice(1).join(':');
+  const dtag = parseDTag(dTag);
+
+  const visibility = normalizeVisibility(getTag('visibility') || dtag.visibility || 'public');
 
   return {
     id: e.id,
     d_tag: dTag,
-    topic: dtag_topic || parsed.topic || '',
+    topic: dtag.topic || parsed.topic || '',
     summary: parsed.summary || '',
     detail: parsed.detail || '',
-    visibility: getTag('visibility') || dtag_visibility || 'public',
-    scope: getTag('scope') || getTag('h') || dtag_scope || '',
+    visibility,
+    scope: getTag('scope') || getTag('h') || dtag.scope || '',
     confidence: parseFloat(getTag('confidence') || String(parsed.confidence || '0.8')),
     source: e.pubkey,
     model: getTag('model') || parsed.model || '',
+    nostr_id: e.id,
     created_at: new Date(e.created_at * 1000).toISOString(),
+    updated_at: new Date(e.created_at * 1000).toISOString(),
     version: parseInt(getTag('version') || String(parsed.version || '1'), 10),
+    importance: parsed.importance ?? null,
+    access_count: parsed.access_count ?? 0,
+    source_time_start: parsed.source_time_start ?? null,
+    source_time_end: parsed.source_time_end ?? null,
+    consolidated_from: parsed.consolidated_from ?? null,
+    consolidated_at: parsed.consolidated_at ?? null,
+    ephemeral: false,
+    pinned: parsed.pinned ?? false,
+    embedded: false, // not available from relay events
   };
 }
 
@@ -364,37 +380,34 @@ export async function getGroupMessages(groupId: string, limit = 100): Promise<Me
   return events
     .map(e => ({
       id: e.id,
+      source: 'nostr',
+      source_id: '',
       content: e.content,
       sender: e.pubkey,
+      sender_id: e.pubkey,
       channel: groupId,
+      metadata: '',
       created_at: new Date(e.created_at * 1000).toISOString(),
       consolidated: false,
+      nostr_event_id: e.id,
+      provider_id: '',
+      room: '',
+      topic: '',
+      thread: '',
+      scope: '',
+      source_created_at: '',
+      publish_status: '',
     }))
     .sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
 }
 
 // ── App data (NIP-78) ────────────────────────────────────────────
 
-/**
- * Fetch NIP-78 application-specific data (kind 30078) from the relay.
- *
- * This is an intentional NIP-78 app data utility for storing/retrieving
- * arbitrary application settings (e.g. UI preferences, dashboard layout).
- * It is NOT a memory operation — kind 30078 is a general-purpose replaceable
- * event for app-specific data, separate from the kind 31234 memory system.
- */
 export async function fetchAppData(pubkey: string, dTag: string): Promise<NostrEvent | null> {
   const events = await requestEvents([{ kinds: [30078], authors: [pubkey], '#d': [dTag], limit: 1 }]);
   return events[0] || null;
 }
 
-/**
- * Publish NIP-78 application-specific data (kind 30078) to the relay.
- *
- * This is an intentional NIP-78 app data utility for persisting arbitrary
- * application settings as replaceable events keyed by d-tag. It is NOT a
- * memory operation — kind 30078 is separate from the kind 31234 memory system.
- */
 export async function publishAppData(dTag: string, content: string, signer: Signer): Promise<string> {
   const event: EventTemplate = {
     kind: 30078,

@@ -62,6 +62,7 @@ mod tests {
         MemoryRecord {
             content: String::new(),
             summary: None,
+            detail: None,
             embedding: None,
             tier: tier.to_string(),
             scope: scope.to_string(),
@@ -75,6 +76,13 @@ mod tests {
             created_at: String::new(),
             updated_at: String::new(),
             ephemeral: false,
+            consolidated_from: None,
+            consolidated_at: None,
+            last_accessed: None,
+            access_count: 0,
+            importance: None,
+            embedded: false,
+            pinned: false,
         }
     }
 

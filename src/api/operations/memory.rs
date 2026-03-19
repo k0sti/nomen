@@ -225,7 +225,7 @@ fn record_to_value(record: Option<crate::db::MemoryRecord>) -> Value {
         Some(m) => json!({
             "topic": m.topic,
             "summary": m.summary,
-            "detail": m.content,
+            "detail": m.detail.unwrap_or_else(|| m.content.clone()),
             "visibility": m.tier,
             "scope": m.scope,
             "confidence": m.confidence,
@@ -275,7 +275,7 @@ pub async fn list(nomen: &Nomen, default_channel: &str, params: &Value) -> Resul
             json!({
                 "topic": m.topic,
                 "summary": m.summary,
-                "detail": m.content,
+                "detail": m.detail.as_ref().unwrap_or(&m.content),
                 "visibility": m.tier,
                 "scope": m.scope,
                 "confidence": m.confidence,
@@ -302,11 +302,44 @@ pub async fn list(nomen: &Nomen, default_channel: &str, params: &Value) -> Resul
     });
 
     if let Some(ref stats) = report.stats {
-        result["stats"] = json!({
+        let mut stats_json = json!({
             "total": stats.total,
             "named": stats.named,
             "pending": stats.pending,
         });
+        if let Some(ref detailed) = stats.detailed {
+            let by_tier: Vec<Value> = detailed
+                .memories_by_tier
+                .iter()
+                .map(|(tier, count)| json!({"tier": tier, "count": count}))
+                .collect();
+            stats_json["by_tier"] = json!(by_tier);
+
+            let channels: Vec<Value> = detailed
+                .channels
+                .iter()
+                .map(|ch| {
+                    let mut obj = json!({
+                        "channel": ch.channel,
+                        "unconsolidated": ch.unconsolidated,
+                        "consolidated": ch.consolidated,
+                    });
+                    if let Some(ref oldest) = ch.oldest_unconsolidated {
+                        obj["oldest_unconsolidated"] = json!(oldest);
+                    }
+                    if let Some(ref newest) = ch.newest_unconsolidated {
+                        obj["newest_unconsolidated"] = json!(newest);
+                    }
+                    obj
+                })
+                .collect();
+            stats_json["channels"] = json!(channels);
+
+            if let Some(ref last) = detailed.last_consolidation {
+                stats_json["last_consolidation"] = json!(last);
+            }
+        }
+        result["stats"] = stats_json;
     }
 
     Ok(result)
@@ -385,7 +418,7 @@ pub async fn get_batch(
             json!({
                 "topic": m.topic,
                 "summary": m.summary,
-                "detail": m.content,
+                "detail": m.detail.as_ref().unwrap_or(&m.content),
                 "visibility": m.tier,
                 "scope": m.scope,
                 "confidence": m.confidence,
@@ -404,7 +437,7 @@ pub async fn get_batch(
                 json!({
                     "topic": m.topic,
                     "summary": m.summary,
-                    "detail": m.content,
+                    "detail": m.detail.as_ref().unwrap_or(&m.content),
                     "visibility": m.tier,
                     "scope": m.scope,
                     "confidence": m.confidence,

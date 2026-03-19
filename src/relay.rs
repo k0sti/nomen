@@ -5,7 +5,7 @@ use anyhow::{Context, Result};
 use nostr_sdk::prelude::*;
 use tracing::{debug, info, warn};
 
-use crate::kinds::{LEGACY_APP_DATA_KIND, MEMORY_KIND, RAW_SOURCE_KIND};
+use crate::kinds::{MEMORY_KIND, RAW_SOURCE_KIND};
 use crate::signer::NomenSigner;
 
 /// Result of publishing an event to relays.
@@ -95,12 +95,11 @@ impl RelayManager {
         Ok(())
     }
 
-    /// Fetch memory events (kind 31234 + legacy 30078) and raw source events (kind 1235).
+    /// Fetch memory events (kind 31234) and raw source events (kind 1235).
     pub async fn fetch_memories(&self, pubkeys: &[PublicKey]) -> Result<Events> {
         let filter = Filter::new()
             .kinds(vec![
                 Kind::Custom(MEMORY_KIND),
-                Kind::Custom(LEGACY_APP_DATA_KIND),
                 Kind::Custom(RAW_SOURCE_KIND),
             ])
             .authors(pubkeys.to_vec());
@@ -205,7 +204,6 @@ impl RelayManager {
         let filter = Filter::new()
             .kinds(vec![
                 Kind::Custom(MEMORY_KIND),
-                Kind::Custom(LEGACY_APP_DATA_KIND),
                 Kind::Custom(RAW_SOURCE_KIND),
             ])
             .authors(pubkeys.to_vec());

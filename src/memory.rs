@@ -34,66 +34,122 @@ pub fn parse_d_tag(d_tag: &str) -> String {
     d_tag.to_string()
 }
 
-/// Check if a d-tag uses the v0.2 format: `{visibility}:{scope}:{topic}`.
+/// Check if a d-tag uses the v0.2+ format.
+///
+/// Accepts both colon (`{vis}:{scope}:{topic}`) and slash (`{vis}/{scope}/{topic}`) separators.
 pub fn is_v2_dtag(d_tag: &str) -> bool {
-    let prefix = d_tag.split(':').next().unwrap_or("");
+    let prefix = d_tag
+        .split(|c: char| c == ':' || c == '/')
+        .next()
+        .unwrap_or("");
     matches!(
         prefix,
         "public" | "group" | "circle" | "personal" | "internal"
     )
 }
 
-/// Extract the topic component from a v0.2 d-tag.
-/// For `public::rust-error-handling` returns `rust-error-handling`.
-/// For `group:techteam:deployment` returns `deployment`.
-/// For `group:telegram:-1003821690204:room/8485` returns `room/8485`.
+/// Extract the topic component from a d-tag.
+///
+/// Supports both colon and slash formats:
+/// - `public::rust-error-handling` → `rust-error-handling`
+/// - `group:telegram:-1003821690204:room/8485` → `room/8485`
+/// - `public/rust-error-handling` → `rust-error-handling`
+/// - `group/telegram:-1003821690204/room/8485` → `room/8485`
 pub fn v2_dtag_topic(d_tag: &str) -> Option<&str> {
     if !is_v2_dtag(d_tag) {
         return None;
     }
-    let first_colon = d_tag.find(':')?;
-    let last_colon = d_tag.rfind(':')?;
-    if last_colon <= first_colon {
-        return None;
+
+    let vis_end = d_tag.find(|c: char| c == ':' || c == '/')?;
+    let sep = d_tag.as_bytes()[vis_end];
+    let visibility = &d_tag[..vis_end];
+
+    if sep == b'/' {
+        // Slash format
+        let rest = &d_tag[vis_end + 1..];
+        if visibility == "public" {
+            // public/{topic}
+            if rest.is_empty() { return None; }
+            return Some(rest);
+        }
+        // {vis}/{scope}/{topic} — scope is up to the next '/'
+        match rest.find('/') {
+            Some(i) if i + 1 < rest.len() => Some(&rest[i + 1..]),
+            _ => None,
+        }
+    } else {
+        // Colon format: topic is after the last ':'
+        let last_colon = d_tag.rfind(':')?;
+        if last_colon <= vis_end {
+            return None;
+        }
+        Some(&d_tag[last_colon + 1..])
     }
-    Some(&d_tag[last_colon + 1..])
 }
 
-/// Extract visibility and scope from a v0.2 d-tag.
-/// Returns `(visibility, scope)` — e.g. `("group", "techteam")` from `"group:techteam:deploy"`.
-/// Supports scopes containing colons, e.g. `("group", "telegram:-1003821690204")`
-/// from `"group:telegram:-1003821690204:room/8485"`.
+/// Extract visibility and scope from a d-tag.
+///
+/// Returns `(visibility, scope)`. Supports both colon and slash formats:
+/// - `"group:techteam:deploy"` → `("group", "techteam")`
+/// - `"group/techteam/deploy"` → `("group", "techteam")`
+/// - `"public/my-topic"` → `("public", "")`
+/// - `"personal/d29fe7c1/projects/nomen"` → `("personal", "d29fe7c1")`
+///
 /// For non-v0.2 d-tags, returns `("public", "")`.
 pub fn extract_visibility_scope(d_tag: &str) -> (String, String) {
     if !is_v2_dtag(d_tag) {
         return ("public".to_string(), String::new());
     }
-    let first_colon = match d_tag.find(':') {
+
+    let vis_end = match d_tag.find(|c: char| c == ':' || c == '/') {
         Some(i) => i,
         None => return ("public".to_string(), String::new()),
     };
-    let last_colon = match d_tag.rfind(':') {
-        Some(i) if i > first_colon => i,
-        _ => return ("public".to_string(), String::new()),
-    };
-    let visibility = d_tag[..first_colon].to_string();
-    let scope = d_tag[first_colon + 1..last_colon].to_string();
-    (visibility, scope)
+    let visibility = &d_tag[..vis_end];
+    let sep = d_tag.as_bytes()[vis_end];
+
+    if sep == b'/' {
+        // Slash format
+        let rest = &d_tag[vis_end + 1..];
+        if visibility == "public" {
+            return (visibility.to_string(), String::new());
+        }
+        // Scope is up to the next '/' (scopes never contain slashes)
+        match rest.find('/') {
+            Some(i) => (visibility.to_string(), rest[..i].to_string()),
+            None => (visibility.to_string(), rest.to_string()),
+        }
+    } else {
+        // Colon format: scope is between first and last ':'
+        let last_colon = match d_tag.rfind(':') {
+            Some(i) if i > vis_end => i,
+            _ => return (visibility.to_string(), String::new()),
+        };
+        let scope = d_tag[vis_end + 1..last_colon].to_string();
+        (visibility.to_string(), scope)
+    }
 }
 
-/// Build a v0.2 d-tag from visibility, context, and topic.
+/// Build a v0.3 d-tag from visibility, context, and topic.
+///
+/// Uses slash separators: `{visibility}/{context}/{topic}`.
+/// Empty context collapses: `{visibility}/{topic}`.
 pub fn build_v2_dtag(visibility: &str, context: &str, topic: &str) -> String {
-    format!("{visibility}:{context}:{topic}")
+    if context.is_empty() {
+        format!("{visibility}/{topic}")
+    } else {
+        format!("{visibility}/{context}/{topic}")
+    }
 }
 
-/// Build a v0.2 d-tag from tier string and author pubkey hex.
+/// Build a d-tag from tier string and author pubkey hex.
 ///
 /// Derives visibility and context from the tier:
-/// - `"public"` → `public::topic`
-/// - `"group:techteam"` → `group:techteam:topic`
-/// - `"group"` → `group::topic`
-/// - `"personal"` / `"private"` → `personal:{pubkey_hex}:topic`
-/// - `"internal"` → `internal:{pubkey_hex}:topic`
+/// - `"public"` → `public/topic`
+/// - `"group:techteam"` → `group/techteam/topic`
+/// - `"group"` → `group/topic`
+/// - `"personal"` / `"private"` → `personal/{pubkey_hex}/topic`
+/// - `"internal"` → `internal/{pubkey_hex}/topic`
 pub fn build_dtag_from_tier(tier: &str, author_pubkey_hex: &str, topic: &str) -> String {
     if tier == "public" {
         build_v2_dtag("public", "", topic)
@@ -119,6 +175,47 @@ pub fn build_dtag_from_tier(tier: &str, author_pubkey_hex: &str, topic: &str) ->
 }
 
 
+/// Convert a colon-format d-tag to slash format.
+///
+/// Returns the d-tag unchanged if it's already in slash format or unrecognized.
+pub fn migrate_dtag_to_slash(d_tag: &str) -> String {
+    if !is_v2_dtag(d_tag) {
+        return d_tag.to_string();
+    }
+
+    // Find the separator after visibility
+    let vis_end = match d_tag.find(|c: char| c == ':' || c == '/') {
+        Some(i) => i,
+        None => return d_tag.to_string(),
+    };
+
+    // Already slash format
+    if d_tag.as_bytes()[vis_end] == b'/' {
+        return d_tag.to_string();
+    }
+
+    // Parse colon format and rebuild as slash
+    let (visibility, scope) = extract_visibility_scope(d_tag);
+    let topic = match v2_dtag_topic(d_tag) {
+        Some(t) => t.to_string(),
+        None => return d_tag.to_string(),
+    };
+
+    build_v2_dtag(&visibility, &scope, &topic)
+}
+
+/// Check if a d-tag uses colon separators (legacy format needing migration).
+pub fn is_colon_format(d_tag: &str) -> bool {
+    if !is_v2_dtag(d_tag) {
+        return false;
+    }
+    let vis_end = match d_tag.find(|c: char| c == ':' || c == '/') {
+        Some(i) => i,
+        None => return false,
+    };
+    d_tag.as_bytes()[vis_end] == b':'
+}
+
 /// Parse tier from event tags.
 ///
 /// Reads `visibility` tag first, then falls back to d-tag prefix.
@@ -128,9 +225,9 @@ pub fn parse_tier(tags: &Tags) -> String {
     let tier_val = if let Some(vis) = get_tag_value(tags, "visibility") {
         vis
     } else {
-        // Fall back to d-tag prefix
+        // Fall back to d-tag prefix (supports both ':' and '/' separators)
         if let Some(d) = get_tag_value(tags, "d") {
-            if let Some(vis) = d.split(':').next() {
+            if let Some(vis) = d.split(|c: char| c == ':' || c == '/').next() {
                 match vis {
                     "public" | "group" | "personal" | "internal" | "circle" => {
                         vis.to_string()
