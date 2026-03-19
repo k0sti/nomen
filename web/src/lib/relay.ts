@@ -375,11 +375,26 @@ export async function getGroupMessages(groupId: string, limit = 100): Promise<Me
 
 // ── App data (NIP-78) ────────────────────────────────────────────
 
+/**
+ * Fetch NIP-78 application-specific data (kind 30078) from the relay.
+ *
+ * This is an intentional NIP-78 app data utility for storing/retrieving
+ * arbitrary application settings (e.g. UI preferences, dashboard layout).
+ * It is NOT a memory operation — kind 30078 is a general-purpose replaceable
+ * event for app-specific data, separate from the kind 31234 memory system.
+ */
 export async function fetchAppData(pubkey: string, dTag: string): Promise<NostrEvent | null> {
   const events = await requestEvents([{ kinds: [30078], authors: [pubkey], '#d': [dTag], limit: 1 }]);
   return events[0] || null;
 }
 
+/**
+ * Publish NIP-78 application-specific data (kind 30078) to the relay.
+ *
+ * This is an intentional NIP-78 app data utility for persisting arbitrary
+ * application settings as replaceable events keyed by d-tag. It is NOT a
+ * memory operation — kind 30078 is separate from the kind 31234 memory system.
+ */
 export async function publishAppData(dTag: string, content: string, signer: Signer): Promise<string> {
   const event: EventTemplate = {
     kind: 30078,

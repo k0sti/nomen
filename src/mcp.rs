@@ -427,6 +427,41 @@ fn v2_tools_list() -> Value {
                     },
                     "required": ["id", "npub"]
                 }
+            },
+            {
+                "name": "room_resolve",
+                "description": "Resolve room context for a provider ID. Returns all memories bound to this provider ID.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "provider_id": { "type": "string", "description": "Provider-specific room/chat ID (e.g. telegram group ID)" }
+                    },
+                    "required": ["provider_id"]
+                }
+            },
+            {
+                "name": "room_bind",
+                "description": "Bind a provider-specific room ID to a memory d-tag for room context injection",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "provider_id": { "type": "string", "description": "Provider-specific room/chat ID" },
+                        "d_tag": { "type": "string", "description": "Memory d-tag to bind" }
+                    },
+                    "required": ["provider_id", "d_tag"]
+                }
+            },
+            {
+                "name": "room_unbind",
+                "description": "Unbind a provider-specific room ID from a memory d-tag",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "provider_id": { "type": "string", "description": "Provider-specific room/chat ID" },
+                        "d_tag": { "type": "string", "description": "Memory d-tag to unbind" }
+                    },
+                    "required": ["provider_id", "d_tag"]
+                }
             }
         ]
     })

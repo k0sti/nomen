@@ -738,12 +738,15 @@ async fn main() -> Result<()> {
             cmd_cluster(&backend, nomen.as_ref(), dry_run, prefix, min_members, namespace_depth).await?;
         }
         Command::Prune { days, dry_run } => {
+            let pruning = config.pruning_config();
+            // CLI --days overrides config; if CLI uses default (90), prefer config value
+            let effective_days = if days != 90 { days } else { pruning.max_age_days };
             let nomen = if matches!(backend, Backend::Direct) {
                 Some(build_nomen(&config).await?)
             } else {
                 None
             };
-            cmd_prune(&backend, nomen.as_ref(), days, dry_run).await?;
+            cmd_prune(&backend, nomen.as_ref(), effective_days, dry_run).await?;
         }
         Command::Send {
             content,
@@ -2104,6 +2107,7 @@ async fn cmd_init(force: bool, non_interactive: bool) -> Result<()> {
 
         Some(MemorySection {
             cluster: None,
+            pruning: None,
             consolidation: Some(MemoryConsolidationConfig {
                 enabled: true,
                 mode: "internal".to_string(),
@@ -2232,6 +2236,7 @@ async fn cmd_init_non_interactive() -> Result<()> {
         consolidation: None,
         memory: Some(MemorySection {
             cluster: None,
+            pruning: None,
             consolidation: Some(MemoryConsolidationConfig {
                 enabled: true,
                 mode: "internal".to_string(),
