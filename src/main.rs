@@ -341,27 +341,27 @@ enum GroupAction {
 enum FsAction {
     /// Initialize a new filesystem sync directory
     Init {
-        /// Directory path (default: ./nomen-fs)
-        #[arg(long, default_value = "./nomen-fs")]
-        dir: PathBuf,
+        /// Directory path (overrides config [fs].dir)
+        #[arg(long)]
+        dir: Option<PathBuf>,
     },
     /// Pull all memories from DB to filesystem as markdown files
     Pull {
-        /// Directory path (default: ./nomen-fs)
-        #[arg(long, default_value = "./nomen-fs")]
-        dir: PathBuf,
+        /// Directory path (overrides config [fs].dir)
+        #[arg(long)]
+        dir: Option<PathBuf>,
     },
     /// Push changed files back to Nomen as memory events
     Push {
-        /// Directory path (default: ./nomen-fs)
-        #[arg(long, default_value = "./nomen-fs")]
-        dir: PathBuf,
+        /// Directory path (overrides config [fs].dir)
+        #[arg(long)]
+        dir: Option<PathBuf>,
     },
     /// Show sync status
     Status {
-        /// Directory path (default: ./nomen-fs)
-        #[arg(long, default_value = "./nomen-fs")]
-        dir: PathBuf,
+        /// Directory path (overrides config [fs].dir)
+        #[arg(long)]
+        dir: Option<PathBuf>,
     },
 }
 
@@ -899,13 +899,24 @@ async fn main() -> Result<()> {
             println!("{prefix}Done: {migrated} migrated, {skipped} skipped");
         }
         Command::Fs { action } => {
+            let resolve_dir = |cli_dir: Option<PathBuf>| -> PathBuf {
+                cli_dir
+                    .or_else(|| config.fs.as_ref().map(|f| f.dir.clone()))
+                    .unwrap_or_else(|| {
+                        dirs::home_dir()
+                            .unwrap_or_else(|| PathBuf::from("."))
+                            .join(".nomen")
+                            .join("fs")
+                    })
+            };
             match action {
                 FsAction::Init { dir } => {
-                    // Init doesn't need DB — just creates directories
+                    let dir = resolve_dir(dir);
                     nomen::fs::init_sync_dir(&dir)?;
                     println!("Initialized sync directory: {}", dir.display());
                 }
                 FsAction::Pull { dir } => {
+                    let dir = resolve_dir(dir);
                     let dispatch = make_dispatch_fn(&backend, &config).await?;
                     if !dir.join(".nomen-fs").exists() {
                         nomen::fs::init_sync_dir(&dir)?;
@@ -914,11 +925,13 @@ async fn main() -> Result<()> {
                     println!("Pulled {count} memories to {}", dir.display());
                 }
                 FsAction::Push { dir } => {
+                    let dir = resolve_dir(dir);
                     let dispatch = make_dispatch_fn(&backend, &config).await?;
                     let count = nomen::fs::push(&dispatch, &dir).await?;
                     println!("Pushed {count} changed files from {}", dir.display());
                 }
                 FsAction::Status { dir } => {
+                    let dir = resolve_dir(dir);
                     let dispatch = make_dispatch_fn(&backend, &config).await?;
                     nomen::fs::status(&dispatch, &dir).await?;
                 }
@@ -2440,6 +2453,7 @@ async fn cmd_init(force: bool, non_interactive: bool) -> Result<()> {
         entities: None,
         contextvm: None,
         socket: None,
+        fs: None,
     };
 
     // Write config
@@ -2529,6 +2543,7 @@ async fn cmd_init_non_interactive() -> Result<()> {
         entities: None,
         contextvm: None,
         socket: None,
+        fs: None,
     };
 
     let config_path = Config::path();

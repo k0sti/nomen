@@ -64,6 +64,16 @@ pub struct Config {
     /// Socket server configuration
     #[serde(default)]
     pub socket: Option<SocketConfig>,
+    /// Filesystem sync configuration
+    #[serde(default)]
+    pub fs: Option<FsSyncConfig>,
+}
+
+/// The [fs] config section for filesystem sync.
+#[derive(Deserialize, Serialize, Clone, Default)]
+pub struct FsSyncConfig {
+    /// Directory to sync memories to/from. Default: ~/.nomen/fs
+    pub dir: PathBuf,
 }
 
 /// The [memory] config section, per spec.
