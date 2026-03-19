@@ -37,11 +37,14 @@ async fn dispatch_inner(
         "memory.get_batch" => operations::memory::get_batch(nomen, default_channel, params).await,
         "memory.list" => operations::memory::list(nomen, default_channel, params).await,
         "memory.delete" => operations::memory::delete(nomen, default_channel, params).await,
+        "memory.pin" => operations::memory::pin(nomen, default_channel, params).await,
+        "memory.unpin" => operations::memory::unpin(nomen, default_channel, params).await,
 
         // Message domain
         "message.ingest" => operations::message::ingest(nomen, default_channel, params).await,
         "message.list" => operations::message::list(nomen, default_channel, params).await,
         "message.context" => operations::message::context(nomen, default_channel, params).await,
+        "message.search" => operations::message::search(nomen, default_channel, params).await,
         "message.send" => operations::message::send_message(nomen, default_channel, params).await,
 
         // Entity domain
@@ -63,12 +66,13 @@ async fn dispatch_inner(
         "memory.cluster" => operations::maintenance::cluster(nomen, default_channel, params).await,
         "memory.sync" => operations::maintenance::sync(nomen, default_channel, params).await,
         "memory.embed" => operations::maintenance::embed(nomen, default_channel, params).await,
+        "memory.publish" => operations::maintenance::publish(nomen, default_channel, params).await,
         "memory.prune" => operations::maintenance::prune(nomen, default_channel, params).await,
 
-        // Room domain
-        "room.resolve" => operations::room::resolve(nomen, default_channel, params).await,
-        "room.bind" => operations::room::bind(nomen, default_channel, params).await,
-        "room.unbind" => operations::room::unbind(nomen, default_channel, params).await,
+        // Room domain (provider bindings disabled — using direct d-tag lookups)
+        // "room.resolve" => operations::room::resolve(nomen, default_channel, params).await,
+        // "room.bind" => operations::room::bind(nomen, default_channel, params).await,
+        // "room.unbind" => operations::room::unbind(nomen, default_channel, params).await,
 
         // Group domain
         "group.list" => operations::group::list(nomen, default_channel, params).await,
@@ -96,25 +100,27 @@ pub fn mcp_tool_to_action(tool_name: &str) -> Option<String> {
             "memory.search"
             | "memory.put"
             | "memory.get"
-            | "memory.get_batch"
             | "memory.list"
             | "memory.delete"
             | "message.ingest"
             | "message.list"
             | "message.context"
+            | "message.search"
             | "message.send"
+            | "memory.pin"
+            | "memory.unpin"
+            | "memory.get_batch"
             | "memory.consolidate"
             | "memory.consolidate_prepare"
             | "memory.consolidate_commit"
             | "memory.cluster"
             | "memory.sync"
             | "memory.embed"
+            | "memory.publish"
             | "memory.prune"
             | "entity.list"
             | "entity.relationships"
-            | "room.resolve"
-            | "room.bind"
-            | "room.unbind"
+            // room.resolve, room.bind, room.unbind disabled
             | "group.list"
             | "group.members"
             | "group.create"
