@@ -344,15 +344,11 @@ pub async fn init_db_with_dimensions(dimensions: usize) -> Result<Surreal<Db>> {
         .await
         .context("Failed to apply base schema")?;
 
-    // Migrate: ensure search_text is populated (FTS index field)
-    // Rebuild from topic + detail for any records where search_text is missing
-    db.query("UPDATE memory SET search_text = string::concat(topic, ' ', detail) WHERE (search_text IS NONE OR search_text = '') AND detail IS NOT NONE")
+    // Migrate: fix null search_text fields (caused by content→search_text rename)
+    // Use NONE-safe concatenation: coalesce nulls to empty strings
+    db.query("UPDATE memory SET search_text = string::concat(topic ?? '', ' ', detail ?? '') WHERE search_text IS NONE OR search_text = ''")
         .await
-        .context("Failed to rebuild search_text from detail")?;
-    // Fallback: set empty string for any remaining nulls (required by SCHEMAFULL)
-    db.query("UPDATE memory SET search_text = topic WHERE search_text IS NONE OR search_text = ''")
-        .await
-        .context("Failed to set fallback search_text")?;
+        .context("Failed to populate search_text")?;
     // Remove deprecated fields
     db.query("REMOVE FIELD IF EXISTS content ON TABLE memory; REMOVE FIELD IF EXISTS summary ON TABLE memory; REMOVE FIELD IF EXISTS tier ON TABLE memory; REMOVE FIELD IF EXISTS confidence ON TABLE memory")
         .await
@@ -649,7 +645,7 @@ pub async fn hybrid_search(
 /// Get a single memory by d-tag (topic).
 pub async fn get_memory_by_dtag(db: &Surreal<Db>, d_tag: &str) -> Result<Option<MemoryRecord>> {
     let mut results: Vec<MemoryRecord> = db
-        .query("SELECT search_text, detail, visibility, scope, topic, source, model, version, nostr_id, d_tag, created_at, updated_at, ephemeral, consolidated_from, consolidated_at, last_accessed, access_count, importance, pinned, embedding IS NOT NONE AS embedded FROM memory WHERE d_tag = $d_tag LIMIT 1")
+        .query("SELECT search_text ?? '' AS search_text, detail ?? '' AS detail, visibility ?? 'personal' AS visibility, scope ?? '' AS scope, topic ?? '' AS topic, source ?? '' AS source, detail, visibility, scope, topic, source, model, version, nostr_id, d_tag, created_at, updated_at, ephemeral, consolidated_from, consolidated_at, last_accessed, access_count, importance, pinned, embedding IS NOT NONE AS embedded FROM memory WHERE d_tag = $d_tag LIMIT 1")
         .bind(("d_tag", d_tag.to_string()))
         .await?
         .check()?
@@ -663,7 +659,7 @@ pub async fn get_memories_by_dtags(db: &Surreal<Db>, d_tags: &[String]) -> Resul
         return Ok(vec![]);
     }
     let results: Vec<MemoryRecord> = db
-        .query("SELECT search_text, detail, visibility, scope, topic, source, model, version, nostr_id, d_tag, created_at, updated_at, ephemeral, consolidated_from, consolidated_at, last_accessed, access_count, importance, pinned, embedding IS NOT NONE AS embedded FROM memory WHERE d_tag IN $d_tags")
+        .query("SELECT search_text ?? '' AS search_text, detail ?? '' AS detail, visibility ?? 'personal' AS visibility, scope ?? '' AS scope, topic ?? '' AS topic, source ?? '' AS source, detail, visibility, scope, topic, source, model, version, nostr_id, d_tag, created_at, updated_at, ephemeral, consolidated_from, consolidated_at, last_accessed, access_count, importance, pinned, embedding IS NOT NONE AS embedded FROM memory WHERE d_tag IN $d_tags")
         .bind(("d_tags", d_tags.to_vec()))
         .await?
         .check()?
@@ -674,7 +670,7 @@ pub async fn get_memories_by_dtags(db: &Surreal<Db>, d_tags: &[String]) -> Resul
 /// Get a single memory by topic field (raw topic, not d-tag).
 pub async fn get_memory_by_topic(db: &Surreal<Db>, topic: &str) -> Result<Option<MemoryRecord>> {
     let mut results: Vec<MemoryRecord> = db
-        .query("SELECT search_text, detail, visibility, scope, topic, source, model, version, nostr_id, d_tag, created_at, updated_at, ephemeral, consolidated_from, consolidated_at, last_accessed, access_count, importance, pinned, embedding IS NOT NONE AS embedded FROM memory WHERE topic = $topic LIMIT 1")
+        .query("SELECT search_text ?? '' AS search_text, detail ?? '' AS detail, visibility ?? 'personal' AS visibility, scope ?? '' AS scope, topic ?? '' AS topic, source ?? '' AS source, detail, visibility, scope, topic, source, model, version, nostr_id, d_tag, created_at, updated_at, ephemeral, consolidated_from, consolidated_at, last_accessed, access_count, importance, pinned, embedding IS NOT NONE AS embedded FROM memory WHERE topic = $topic LIMIT 1")
         .bind(("topic", topic.to_string()))
         .await?
         .check()?

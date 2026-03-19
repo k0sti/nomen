@@ -418,11 +418,27 @@ pub async fn push(dispatch: &DispatchFn, dir: &Path) -> Result<usize> {
             }
         };
 
+        // Extract clean topic from d-tag (handles both old colon and new slash formats)
+        let topic = if !d_tag.is_empty() {
+            memory::v2_dtag_topic(&d_tag)
+                .unwrap_or(&parsed.frontmatter.topic)
+                .to_string()
+        } else {
+            parsed.frontmatter.topic.clone()
+        };
+
+        // Extract visibility and scope from d-tag for correctness
+        let (visibility, scope) = if !d_tag.is_empty() {
+            memory::extract_visibility_scope(&d_tag)
+        } else {
+            (parsed.frontmatter.visibility.clone(), parsed.frontmatter.scope.clone())
+        };
+
         let mut params = serde_json::json!({
-            "topic": parsed.frontmatter.topic,
+            "topic": topic,
             "detail": parsed.detail,
-            "visibility": parsed.frontmatter.visibility,
-            "scope": parsed.frontmatter.scope,
+            "visibility": visibility,
+            "scope": scope,
             "source": "fs-push",
         });
 
