@@ -754,8 +754,9 @@ impl Nomen {
         &self,
         tier: Option<&str>,
         limit: usize,
+        pinned: Option<bool>,
     ) -> Result<Vec<db::MemoryRecord>> {
-        db::list_memories(&self.db, tier, limit).await
+        db::list_memories(&self.db, tier, limit, pinned).await
     }
 
     /// Count memories: returns (total, named, pending_raw_messages).
@@ -922,7 +923,7 @@ impl Nomen {
 
     /// List memories from local DB with optional filters.
     pub async fn list(&self, opts: ListOptions) -> Result<ListReport> {
-        let memories = db::list_memories(&self.db, opts.tier.as_deref(), opts.limit).await?;
+        let memories = db::list_memories(&self.db, opts.tier.as_deref(), opts.limit, opts.pinned).await?;
         let stats = if opts.include_stats {
             let (total, named, pending) = db::count_memories_by_type(&self.db).await?;
             Some(ListStats {
@@ -1254,6 +1255,7 @@ pub struct ListOptions {
     pub tier: Option<String>,
     pub limit: usize,
     pub include_stats: bool,
+    pub pinned: Option<bool>,
 }
 
 impl Default for ListOptions {
@@ -1262,6 +1264,7 @@ impl Default for ListOptions {
             tier: None,
             limit: 100,
             include_stats: false,
+            pinned: None,
         }
     }
 }

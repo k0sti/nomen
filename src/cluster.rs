@@ -312,7 +312,7 @@ pub async fn run_cluster_fusion(
     };
 
     // 1. Query all named memories
-    let all_memories = db::list_memories(db, None, 10000).await?;
+    let all_memories = db::list_memories(db, None, 10000, None).await?;
     report.memories_scanned = all_memories.len();
 
     if all_memories.is_empty() {

@@ -124,6 +124,18 @@ pub struct MemoryRecord {
     pub updated_at: String,
     #[serde(default)]
     pub ephemeral: bool,
+    pub consolidated_from: Option<String>,
+    pub consolidated_at: Option<String>,
+    pub last_accessed: Option<String>,
+    #[serde(default)]
+    pub access_count: i64,
+    pub importance: Option<i64>,
+    /// Whether this memory is pinned (always injected into agent sessions).
+    #[serde(default)]
+    pub pinned: bool,
+    /// Whether this memory has an embedding vector. Computed from queries, not stored directly.
+    #[serde(default)]
+    pub embedded: bool,
 }
 
 /// Version check result
@@ -213,6 +225,8 @@ DEFINE FIELD IF NOT EXISTS d_tag      ON memory TYPE option<string>;
 DEFINE FIELD IF NOT EXISTS created_at ON memory TYPE string;
 DEFINE FIELD IF NOT EXISTS updated_at ON memory TYPE string;
 DEFINE FIELD IF NOT EXISTS ephemeral  ON memory TYPE bool DEFAULT false;
+DEFINE FIELD IF NOT EXISTS pinned    ON memory TYPE bool DEFAULT false;
+DEFINE FIELD IF NOT EXISTS embedded  ON memory TYPE bool DEFAULT false;
 DEFINE FIELD IF NOT EXISTS consolidated_from ON memory TYPE option<string>;
 DEFINE FIELD IF NOT EXISTS consolidated_at   ON memory TYPE option<string>;
 DEFINE FIELD IF NOT EXISTS last_accessed     ON memory TYPE option<string>;
@@ -278,6 +292,14 @@ DEFINE INDEX IF NOT EXISTS raw_msg_nostr_id    ON raw_message FIELDS nostr_event
 DEFINE INDEX IF NOT EXISTS raw_msg_provider_id ON raw_message FIELDS provider_id, channel;
 DEFINE INDEX IF NOT EXISTS raw_msg_source ON raw_message FIELDS source, source_id;
 DEFINE INDEX IF NOT EXISTS raw_msg_sender ON raw_message FIELDS sender;
+DEFINE INDEX IF NOT EXISTS raw_msg_room    ON raw_message FIELDS room;
+DEFINE INDEX IF NOT EXISTS raw_msg_topic   ON raw_message FIELDS topic;
+DEFINE INDEX IF NOT EXISTS raw_msg_thread  ON raw_message FIELDS thread;
+DEFINE INDEX IF NOT EXISTS raw_msg_source_created_at ON raw_message FIELDS source_created_at;
+DEFINE ANALYZER IF NOT EXISTS raw_message_analyzer
+  TOKENIZERS class FILTERS ascii, lowercase, snowball(english);
+DEFINE INDEX IF NOT EXISTS raw_msg_fulltext
+  ON raw_message FIELDS content FULLTEXT ANALYZER raw_message_analyzer BM25;
 
 DEFINE TABLE IF NOT EXISTS meta SCHEMAFULL;
 DEFINE FIELD IF NOT EXISTS key        ON meta TYPE string;
@@ -386,6 +408,13 @@ fn build_record(parsed: &ParsedMemory, nostr_id: &str) -> MemoryRecord {
         created_at: created,
         updated_at: now,
         ephemeral: false,
+        consolidated_from: None,
+        consolidated_at: None,
+        last_accessed: None,
+        access_count: 0,
+        importance: None,
+        pinned: false,
+        embedded: false,
     }
 }
 
@@ -536,23 +565,27 @@ pub async fn list_memories(
     db: &Surreal<Db>,
     tier: Option<&str>,
     limit: usize,
+    pinned: Option<bool>,
 ) -> Result<Vec<MemoryRecord>> {
-    let (sql, bind_tier);
     // Exclude embedding from SELECT to avoid SurrealDB HNSW index deserialization issues
-    let fields = "content, summary, tier, scope, topic, confidence, source, model, version, nostr_id, d_tag, created_at, updated_at, ephemeral, consolidated_from, consolidated_at, last_accessed, access_count, importance";
-    if let Some(t) = tier {
-        sql = format!(
-            "SELECT {fields} FROM memory WHERE tier = $tier ORDER BY created_at DESC LIMIT {limit}"
-        );
-        bind_tier = Some(t.to_string());
-    } else {
-        sql = format!("SELECT {fields} FROM memory ORDER BY created_at DESC LIMIT {limit}");
-        bind_tier = None;
+    let fields = "content, summary, tier, scope, topic, confidence, source, model, version, nostr_id, d_tag, created_at, updated_at, ephemeral, consolidated_from, consolidated_at, last_accessed, access_count, importance, pinned, embedding IS NOT NONE AS embedded";
+    let mut conditions = Vec::new();
+    if tier.is_some() {
+        conditions.push("tier = $tier".to_string());
     }
+    if let Some(p) = pinned {
+        conditions.push(format!("pinned = {p}"));
+    }
+    let where_clause = if conditions.is_empty() {
+        String::new()
+    } else {
+        format!("WHERE {}", conditions.join(" AND "))
+    };
+    let sql = format!("SELECT {fields} FROM memory {where_clause} ORDER BY created_at DESC LIMIT {limit}");
 
     let mut q = db.query(&sql);
-    if let Some(ref t) = bind_tier {
-        q = q.bind(("tier", t.clone()));
+    if let Some(t) = tier {
+        q = q.bind(("tier", t.to_string()));
     }
 
     let mut results: Vec<MemoryRecord> = q.await?.check()?.take(0)?;
@@ -635,7 +668,7 @@ pub async fn hybrid_search(
 /// Get a single memory by d-tag (topic).
 pub async fn get_memory_by_dtag(db: &Surreal<Db>, d_tag: &str) -> Result<Option<MemoryRecord>> {
     let mut results: Vec<MemoryRecord> = db
-        .query("SELECT content, summary, tier, scope, topic, confidence, source, model, version, nostr_id, d_tag, created_at, updated_at, ephemeral, consolidated_from, consolidated_at, last_accessed, access_count, importance FROM memory WHERE d_tag = $d_tag LIMIT 1")
+        .query("SELECT content, summary, tier, scope, topic, confidence, source, model, version, nostr_id, d_tag, created_at, updated_at, ephemeral, consolidated_from, consolidated_at, last_accessed, access_count, importance, pinned, embedding IS NOT NONE AS embedded FROM memory WHERE d_tag = $d_tag LIMIT 1")
         .bind(("d_tag", d_tag.to_string()))
         .await?
         .check()?
@@ -649,7 +682,7 @@ pub async fn get_memories_by_dtags(db: &Surreal<Db>, d_tags: &[String]) -> Resul
         return Ok(vec![]);
     }
     let results: Vec<MemoryRecord> = db
-        .query("SELECT content, summary, tier, scope, topic, confidence, source, model, version, nostr_id, d_tag, created_at, updated_at, ephemeral, consolidated_from, consolidated_at, last_accessed, access_count, importance FROM memory WHERE d_tag IN $d_tags")
+        .query("SELECT content, summary, tier, scope, topic, confidence, source, model, version, nostr_id, d_tag, created_at, updated_at, ephemeral, consolidated_from, consolidated_at, last_accessed, access_count, importance, pinned, embedding IS NOT NONE AS embedded FROM memory WHERE d_tag IN $d_tags")
         .bind(("d_tags", d_tags.to_vec()))
         .await?
         .check()?
@@ -660,7 +693,7 @@ pub async fn get_memories_by_dtags(db: &Surreal<Db>, d_tags: &[String]) -> Resul
 /// Get a single memory by topic field (raw topic, not d-tag).
 pub async fn get_memory_by_topic(db: &Surreal<Db>, topic: &str) -> Result<Option<MemoryRecord>> {
     let mut results: Vec<MemoryRecord> = db
-        .query("SELECT content, summary, tier, scope, topic, confidence, source, model, version, nostr_id, d_tag, created_at, updated_at, ephemeral, consolidated_from, consolidated_at, last_accessed, access_count, importance FROM memory WHERE topic = $topic LIMIT 1")
+        .query("SELECT content, summary, tier, scope, topic, confidence, source, model, version, nostr_id, d_tag, created_at, updated_at, ephemeral, consolidated_from, consolidated_at, last_accessed, access_count, importance, pinned, embedding IS NOT NONE AS embedded FROM memory WHERE topic = $topic LIMIT 1")
         .bind(("topic", topic.to_string()))
         .await?
         .check()?
@@ -727,7 +760,7 @@ fn extract_scope(d_tag: &str) -> String {
 // ── Raw Message CRUD ────────────────────────────────────────────────
 
 use crate::entities::{EntityKind, EntityRecord};
-use crate::ingest::{MessageQuery, RawMessage, RawMessageRecord};
+use crate::ingest::{MessageQuery, RawMessage, RawMessageRecord, RawMessageSearchResult};
 
 /// Store a raw message into SurrealDB.
 pub async fn store_raw_message(db: &Surreal<Db>, msg: &RawMessage) -> Result<String> {
@@ -833,6 +866,9 @@ pub async fn check_duplicate_by_nostr_id(
     Ok(result.map(|r| r.count > 0).unwrap_or(false))
 }
 
+/// All fields selected from raw_message for query results.
+pub const RAW_MSG_SELECT_FIELDS: &str = "meta::id(id) AS id, source, source_id ?? '' AS source_id, sender, channel ?? '' AS channel, content, created_at, consolidated, nostr_event_id ?? '' AS nostr_event_id, provider_id ?? '' AS provider_id, sender_id ?? '' AS sender_id, room ?? '' AS room, topic ?? '' AS topic, thread ?? '' AS thread, scope ?? '' AS scope, source_created_at ?? '' AS source_created_at, publish_status ?? '' AS publish_status, metadata ?? '' AS metadata";
+
 /// Store a raw message imported from relay (with nostr_event_id already known).
 pub async fn store_raw_message_from_relay(
     db: &Surreal<Db>,
@@ -909,9 +945,19 @@ pub async fn query_raw_messages(
     if opts.since.is_some() {
         conditions.push("created_at >= $since".to_string());
     }
-    if opts.consolidated_only {
-        conditions.push("consolidated = true".to_string());
-    } else {
+    if opts.until.is_some() {
+        conditions.push("created_at <= $until".to_string());
+    }
+    if opts.room.is_some() {
+        conditions.push("room = $room".to_string());
+    }
+    if opts.topic.is_some() {
+        conditions.push("topic = $topic".to_string());
+    }
+    if opts.thread.is_some() {
+        conditions.push("thread = $thread".to_string());
+    }
+    if !opts.include_consolidated {
         conditions.push("consolidated = false".to_string());
     }
 
@@ -922,8 +968,12 @@ pub async fn query_raw_messages(
     };
 
     let limit = opts.limit.unwrap_or(100);
+    let order_dir = match opts.order.as_deref() {
+        Some("asc") => "ASC",
+        _ => "DESC",
+    };
     let sql = format!(
-        "SELECT meta::id(id) AS id, source, source_id ?? '' AS source_id, sender, channel ?? '' AS channel, content, created_at, consolidated, nostr_event_id ?? '' AS nostr_event_id, provider_id ?? '' AS provider_id, sender_id ?? '' AS sender_id, room ?? '' AS room, topic ?? '' AS topic, thread ?? '' AS thread, scope ?? '' AS scope, source_created_at ?? '' AS source_created_at, publish_status ?? '' AS publish_status, metadata ?? '' AS metadata FROM raw_message {where_clause} ORDER BY created_at ASC LIMIT {limit}"
+        "SELECT {RAW_MSG_SELECT_FIELDS} FROM raw_message {where_clause} ORDER BY created_at {order_dir} LIMIT {limit}"
     );
 
     let mut q = db.query(&sql);
@@ -939,8 +989,129 @@ pub async fn query_raw_messages(
     if let Some(ref since) = opts.since {
         q = q.bind(("since", since.clone()));
     }
+    if let Some(ref until) = opts.until {
+        q = q.bind(("until", until.clone()));
+    }
+    if let Some(ref room) = opts.room {
+        q = q.bind(("room", room.clone()));
+    }
+    if let Some(ref topic) = opts.topic {
+        q = q.bind(("topic", topic.clone()));
+    }
+    if let Some(ref thread) = opts.thread {
+        q = q.bind(("thread", thread.clone()));
+    }
 
     let results: Vec<RawMessageRecord> = q.await?.check()?.take(0)?;
+    Ok(results)
+}
+
+/// Look up a single raw message by various anchor types.
+///
+/// Tries in order: `id` (local DB id), `nostr_event_id`, `provider_id` + `channel`, `source_id`.
+pub async fn get_message_by_anchor(
+    db: &Surreal<Db>,
+    id: Option<&str>,
+    nostr_event_id: Option<&str>,
+    provider_id: Option<&str>,
+    channel: Option<&str>,
+    source_id: Option<&str>,
+) -> Result<Option<RawMessageRecord>> {
+    // Try by local DB id
+    if let Some(id_val) = id {
+        let sql = format!(
+            "SELECT {RAW_MSG_SELECT_FIELDS} FROM raw_message:{id_val} LIMIT 1"
+        );
+        let results: Vec<RawMessageRecord> = db.query(&sql).await?.check()?.take(0)?;
+        if let Some(r) = results.into_iter().next() {
+            return Ok(Some(r));
+        }
+    }
+
+    // Try by nostr_event_id
+    if let Some(neid) = nostr_event_id {
+        let sql = format!("SELECT {RAW_MSG_SELECT_FIELDS} FROM raw_message WHERE nostr_event_id = $neid LIMIT 1");
+        let results: Vec<RawMessageRecord> = db.query(&sql).bind(("neid", neid.to_string())).await?.check()?.take(0)?;
+        if let Some(r) = results.into_iter().next() {
+            return Ok(Some(r));
+        }
+    }
+
+    // Try by provider_id + channel
+    if let Some(pid) = provider_id {
+        let ch = channel.unwrap_or("");
+        let sql = format!("SELECT {RAW_MSG_SELECT_FIELDS} FROM raw_message WHERE provider_id = $pid AND channel = $ch LIMIT 1");
+        let results: Vec<RawMessageRecord> = db.query(&sql)
+            .bind(("pid", pid.to_string()))
+            .bind(("ch", ch.to_string()))
+            .await?.check()?.take(0)?;
+        if let Some(r) = results.into_iter().next() {
+            return Ok(Some(r));
+        }
+    }
+
+    // Try by legacy source_id
+    if let Some(sid) = source_id {
+        let sql = format!("SELECT {RAW_MSG_SELECT_FIELDS} FROM raw_message WHERE source_id = $sid LIMIT 1");
+        let results: Vec<RawMessageRecord> = db.query(&sql).bind(("sid", sid.to_string())).await?.check()?.take(0)?;
+        if let Some(r) = results.into_iter().next() {
+            return Ok(Some(r));
+        }
+    }
+
+    Ok(None)
+}
+
+/// Full-text BM25 search over raw messages.
+pub async fn search_raw_messages(
+    db: &Surreal<Db>,
+    query: &str,
+    source: Option<&str>,
+    room: Option<&str>,
+    topic: Option<&str>,
+    sender: Option<&str>,
+    since: Option<&str>,
+    until: Option<&str>,
+    include_consolidated: bool,
+    limit: usize,
+) -> Result<Vec<RawMessageSearchResult>> {
+    let mut conditions = vec!["content @1@ $query".to_string()];
+    if source.is_some() {
+        conditions.push("source = $source".to_string());
+    }
+    if room.is_some() {
+        conditions.push("room = $room".to_string());
+    }
+    if topic.is_some() {
+        conditions.push("topic = $topic".to_string());
+    }
+    if sender.is_some() {
+        conditions.push("sender = $sender".to_string());
+    }
+    if since.is_some() {
+        conditions.push("created_at >= $since".to_string());
+    }
+    if until.is_some() {
+        conditions.push("created_at <= $until".to_string());
+    }
+    if !include_consolidated {
+        conditions.push("consolidated = false".to_string());
+    }
+
+    let where_clause = conditions.join(" AND ");
+    let sql = format!(
+        "SELECT {RAW_MSG_SELECT_FIELDS}, search::score(1) AS score FROM raw_message WHERE {where_clause} ORDER BY score DESC, created_at DESC LIMIT {limit}"
+    );
+
+    let mut q = db.query(&sql).bind(("query", query.to_string()));
+    if let Some(s) = source { q = q.bind(("source", s.to_string())); }
+    if let Some(r) = room { q = q.bind(("room", r.to_string())); }
+    if let Some(t) = topic { q = q.bind(("topic", t.to_string())); }
+    if let Some(s) = sender { q = q.bind(("sender", s.to_string())); }
+    if let Some(s) = since { q = q.bind(("since", s.to_string())); }
+    if let Some(u) = until { q = q.bind(("until", u.to_string())); }
+
+    let results: Vec<RawMessageSearchResult> = q.await?.check()?.take(0)?;
     Ok(results)
 }
 
@@ -1050,6 +1221,16 @@ pub async fn set_importance(db: &Surreal<Db>, d_tag: &str, importance: i32) -> R
     db.query("UPDATE memory SET importance = $importance WHERE d_tag = $d_tag")
         .bind(("d_tag", d_tag.to_string()))
         .bind(("importance", importance))
+        .await?
+        .check()?;
+    Ok(())
+}
+
+/// Set the pinned flag on a memory record.
+pub async fn set_pinned(db: &Surreal<Db>, d_tag: &str, pinned: bool) -> Result<()> {
+    db.query("UPDATE memory SET pinned = $pinned WHERE d_tag = $d_tag")
+        .bind(("d_tag", d_tag.to_string()))
+        .bind(("pinned", pinned))
         .await?
         .check()?;
     Ok(())
@@ -1546,6 +1727,55 @@ pub async fn prune_memories(db: &Surreal<Db>, days: u64, dry_run: bool) -> Resul
         dry_run,
         pruned: prunable,
     })
+}
+
+// ── Publish queries ─────────────────────────────────────────────────
+
+/// Get raw messages with pending/failed publish status (not yet on relay).
+pub async fn get_unpublished_messages(
+    db: &Surreal<Db>,
+    limit: usize,
+) -> Result<Vec<RawMessageRecord>> {
+    let fields = RAW_MSG_SELECT_FIELDS;
+    let sql = format!(
+        "SELECT {fields} FROM raw_message \
+         WHERE publish_status = '' OR publish_status = 'pending' OR publish_status = 'failed' OR publish_status IS NONE \
+         ORDER BY created_at ASC LIMIT {limit}"
+    );
+    let results: Vec<RawMessageRecord> = db.query(&sql).await?.check()?.take(0)?;
+    Ok(results)
+}
+
+/// Get memories that have not been published to relay (nostr_id is not a valid 64-char hex event ID).
+pub async fn get_unpublished_memories(
+    db: &Surreal<Db>,
+    limit: usize,
+) -> Result<Vec<MemoryRecord>> {
+    let fields = "content, summary, tier, scope, topic, confidence, source, model, version, nostr_id, d_tag, created_at, updated_at, ephemeral, consolidated_from, consolidated_at, last_accessed, access_count, importance, pinned, embedding IS NOT NONE AS embedded";
+    let sql = format!(
+        "SELECT {fields} FROM memory \
+         WHERE nostr_id IS NONE OR nostr_id = '' OR string::len(nostr_id) != 64 \
+         ORDER BY created_at ASC LIMIT {limit}"
+    );
+    let mut results: Vec<MemoryRecord> = db.query(&sql).await?.check()?.take(0)?;
+    for r in &mut results {
+        r.embedding = None;
+    }
+    Ok(results)
+}
+
+/// Update a memory's nostr_id after successful relay publish.
+pub async fn update_memory_nostr_id(
+    db: &Surreal<Db>,
+    d_tag: &str,
+    nostr_id: &str,
+) -> Result<()> {
+    db.query("UPDATE memory SET nostr_id = $nid WHERE d_tag = $d_tag")
+        .bind(("d_tag", d_tag.to_string()))
+        .bind(("nid", nostr_id.to_string()))
+        .await?
+        .check()?;
+    Ok(())
 }
 
 // ── Entity CRUD ─────────────────────────────────────────────────────
