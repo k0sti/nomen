@@ -52,7 +52,7 @@ use crate::consolidate::{ConsolidationConfig, ConsolidationReport, NoopLlmProvid
 use crate::embed::Embedder;
 use crate::entities::{EntityKind, EntityRecord};
 use crate::groups::GroupStore;
-use crate::ingest::{MessageQuery, RawMessage, RawMessageRecord};
+use crate::ingest::{MessageQuery, RawMessage, RawMessageRecord, RawMessageSearchResult};
 use crate::relay::RelayManager;
 use crate::search::{SearchOptions, SearchResult};
 use crate::signer::NomenSigner;
@@ -86,6 +86,9 @@ pub struct ConsolidateOptions {
     pub min_messages: usize,
     pub llm_provider: Option<Box<dyn consolidate::LlmProvider>>,
     pub entity_extractor: Option<Box<dyn entities::EntityExtractor>>,
+    pub dry_run: bool,
+    pub older_than: Option<String>,
+    pub tier: Option<String>,
 }
 
 impl Default for ConsolidateOptions {
@@ -95,6 +98,9 @@ impl Default for ConsolidateOptions {
             min_messages: 3,
             llm_provider: None,
             entity_extractor: None,
+            dry_run: false,
+            older_than: None,
+            tier: None,
         }
     }
 }
@@ -244,16 +250,10 @@ impl Nomen {
             .unwrap_or_default();
 
         let base_tier = memory::base_tier(&mem.tier);
-        let context = if let Some(scope) = mem.tier.strip_prefix("personal:") {
-            scope.to_string()
-        } else if let Some(scope) = mem.tier.strip_prefix("internal:") {
-            scope.to_string()
-        } else if base_tier == "personal" || base_tier == "internal" {
+        let context = if base_tier == "personal" || base_tier == "internal" {
             author_pubkey_hex.clone()
         } else if let Some(group_id) = mem.tier.strip_prefix("group:") {
             group_id.to_string()
-        } else if let Some(circle_id) = mem.tier.strip_prefix("circle:") {
-            circle_id.to_string()
         } else {
             String::new()
         };
@@ -466,43 +466,49 @@ impl Nomen {
 
     /// Ingest a raw message for later consolidation.
     ///
-    /// Stores locally first, then publishes a kind 1235 raw source event to relay
-    /// if available. Relay publish failure is non-fatal (logged, status set to "pending").
+    /// Stores the message locally and publishes it to the relay as a kind 1235
+    /// raw source event if a relay is configured. On successful publish, the
+    /// local row is updated with the relay event ID and `publish_status = "published"`.
+    /// On relay failure, `publish_status` is set to `"failed"`.
     pub async fn ingest_message(&self, msg: RawMessage) -> Result<String> {
         let id = ingest::ingest_message(&self.db, &msg).await?;
+        if id == "duplicate" {
+            return Ok(id);
+        }
 
-        // Publish kind 1235 raw source event to relay if available
-        if id != "duplicate" {
-            if let Some(ref relay) = self.relay {
-                let (tags, content) = ingest::build_raw_source_event(&msg);
-                let builder = nostr_sdk::EventBuilder::new(
-                    nostr_sdk::Kind::Custom(crate::kinds::RAW_SOURCE_KIND),
-                    content,
-                )
-                .tags(tags);
-
-                match relay.publish(builder).await {
-                    Ok(result) => {
-                        let event_id_hex = result.event_id.to_hex();
-                        db::update_raw_message_publish(
-                            &self.db, &id, &event_id_hex, "published",
-                        )
-                        .await
-                        .ok();
-                        tracing::debug!(
-                            event_id = %event_id_hex,
-                            "Published kind 1235 raw source event to relay"
-                        );
-                    }
-                    Err(e) => {
-                        db::update_raw_message_publish(&self.db, &id, "", "pending")
-                            .await
-                            .ok();
-                        tracing::warn!("Failed to publish kind 1235 to relay: {e}");
-                    }
+        // Publish to relay as kind 1235 raw source event
+        if let Some(ref relay) = self.relay {
+            let builder = ingest::build_raw_source_event(&msg);
+            match relay.publish(builder).await {
+                Ok(result) => {
+                    tracing::debug!(
+                        event_id = %result.event_id,
+                        "Published raw source event to relay"
+                    );
+                    db::update_raw_message_publish(
+                        &self.db,
+                        &id,
+                        &result.event_id.to_hex(),
+                        "published",
+                    )
+                    .await?;
+                }
+                Err(e) => {
+                    tracing::warn!("Failed to publish raw source event: {e}");
+                    db::update_raw_message_publish(&self.db, &id, "", "failed").await?;
                 }
             }
         }
+
+        self.emit_event(
+            "message.ingested",
+            serde_json::json!({
+                "id": id,
+                "source": msg.source,
+                "sender": msg.sender,
+                "channel": msg.channel,
+            }),
+        );
 
         Ok(id)
     }
@@ -520,6 +526,9 @@ impl Nomen {
                 .entity_extractor
                 .unwrap_or_else(|| Box::new(entities::HeuristicExtractor)),
             author_pubkey,
+            dry_run: opts.dry_run,
+            older_than: opts.older_than,
+            tier: opts.tier,
             ..Default::default()
         };
         let report = consolidate::consolidate(
@@ -617,6 +626,54 @@ impl Nomen {
         ingest::get_messages(&self.db, &opts).await
     }
 
+    /// Full-text BM25 search over raw messages.
+    pub async fn search_messages(
+        &self,
+        query: &str,
+        source: Option<&str>,
+        room: Option<&str>,
+        topic: Option<&str>,
+        sender: Option<&str>,
+        since: Option<&str>,
+        until: Option<&str>,
+        include_consolidated: bool,
+        limit: usize,
+    ) -> Result<Vec<RawMessageSearchResult>> {
+        db::search_raw_messages(
+            &self.db,
+            query,
+            source,
+            room,
+            topic,
+            sender,
+            since,
+            until,
+            include_consolidated,
+            limit,
+        )
+        .await
+    }
+
+    /// Resolve all d-tags bound to a provider ID.
+    pub async fn resolve_provider(&self, provider_id: &str) -> Result<Vec<String>> {
+        db::resolve_provider(&self.db, provider_id).await
+    }
+
+    /// Get multiple memories by d-tags in a single query.
+    pub async fn get_batch(&self, d_tags: &[String]) -> Result<Vec<db::MemoryRecord>> {
+        db::get_memories_by_dtags(&self.db, d_tags).await
+    }
+
+    /// Bind a provider ID to a memory d-tag.
+    pub async fn bind_provider(&self, provider_id: &str, d_tag: &str) -> Result<()> {
+        db::bind_provider(&self.db, provider_id, d_tag).await
+    }
+
+    /// Unbind a provider ID from a d-tag.
+    pub async fn unbind_provider(&self, provider_id: &str, d_tag: &str) -> Result<bool> {
+        db::unbind_provider(&self.db, provider_id, d_tag).await
+    }
+
     /// List extracted entities, optionally filtered by kind.
     pub async fn entities(&self, kind: Option<&str>) -> Result<Vec<EntityRecord>> {
         let kind = kind.and_then(EntityKind::from_str);
@@ -711,11 +768,6 @@ impl Nomen {
         db::get_memory_by_dtag(&self.db, d_tag).await
     }
 
-    /// Get multiple memories by d-tags in a single query.
-    pub async fn get_batch(&self, d_tags: &[String]) -> Result<Vec<db::MemoryRecord>> {
-        db::get_memories_by_dtags(&self.db, d_tags).await
-    }
-
     /// Get a memory by raw topic string (queries the `topic` field, not `d_tag`).
     pub async fn get_by_raw_topic(&self, topic: &str) -> Result<Option<db::MemoryRecord>> {
         db::get_memory_by_topic(&self.db, topic).await
@@ -759,33 +811,41 @@ impl Nomen {
         let mut errors = 0usize;
 
         for event in events.into_iter() {
-            // Handle raw source events (kind 1235)
-            if event.kind == nostr_sdk::Kind::Custom(crate::kinds::RAW_SOURCE_KIND) {
-                let nostr_event_id = event.id.to_hex();
-                match db::check_duplicate_by_nostr_id(&self.db, &nostr_event_id).await {
+            // Skip legacy lesson events (kind 31235 and 4129) — migrated to kind 31234
+            // Skip legacy NIP-78 events (kind 30078) — obsolete
+            if event.kind == nostr_sdk::Kind::Custom(31235)
+                || event.kind == nostr_sdk::Kind::Custom(4129)
+                || event.kind == nostr_sdk::Kind::Custom(kinds::LEGACY_APP_DATA_KIND)
+            {
+                continue;
+            }
+
+            // Handle kind 1235 raw source events — import as raw messages
+            if event.kind == nostr_sdk::Kind::Custom(kinds::RAW_SOURCE_KIND) {
+                let nostr_id = event.id.to_hex();
+                match db::check_duplicate_by_nostr_id(&self.db, &nostr_id).await {
                     Ok(true) => {
                         skipped += 1;
-                        continue;
                     }
-                    Ok(false) => {}
-                    Err(e) => {
-                        tracing::warn!("Failed to check raw source event dedup: {e}");
-                        errors += 1;
-                        continue;
-                    }
-                }
-                match crate::ingest::parse_raw_source_event(&event) {
-                    Ok(raw_msg) => {
-                        match db::store_raw_message_from_relay(&self.db, &raw_msg, &nostr_event_id).await {
+                    Ok(false) => {
+                        let raw_msg = ingest::parse_raw_source_event(&event);
+                        match db::store_raw_message_from_relay(&self.db, &raw_msg, &nostr_id).await
+                        {
                             Ok(_) => stored += 1,
                             Err(e) => {
-                                tracing::warn!("Failed to store raw source event {nostr_event_id}: {e}");
+                                tracing::warn!(
+                                    "Failed to import raw source event {}: {e}",
+                                    nostr_id
+                                );
                                 errors += 1;
                             }
                         }
                     }
                     Err(e) => {
-                        tracing::warn!("Failed to parse raw source event {nostr_event_id}: {e}");
+                        tracing::warn!(
+                            "Failed to check duplicate for raw source event {}: {e}",
+                            nostr_id
+                        );
                         errors += 1;
                     }
                 }
@@ -918,9 +978,263 @@ impl Nomen {
     pub async fn group_remove_member(&self, group_id: &str, npub: &str) -> Result<()> {
         crate::groups::remove_member(&self.db, group_id, npub).await
     }
+
+    /// Publish local DB items that are missing from the relay.
+    ///
+    /// Reconciles local DB with relay by publishing memories and raw messages
+    /// that have not been successfully published yet.
+    pub async fn publish(&self, opts: PublishOptions) -> Result<PublishReport> {
+        let relay = self
+            .relay
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("No relay configured for publish"))?;
+
+        let mut published = 0usize;
+        let mut failed = 0usize;
+        let mut skipped = 0usize;
+
+        // Publish memories (kind 31234)
+        if opts.memories {
+            let memories = db::get_unpublished_memories(&self.db, opts.limit).await?;
+            for mem in &memories {
+                if opts.dry_run {
+                    skipped += 1;
+                    continue;
+                }
+
+                let d_tag = match &mem.d_tag {
+                    Some(dt) if !dt.is_empty() => dt.clone(),
+                    _ => {
+                        skipped += 1;
+                        continue;
+                    }
+                };
+
+                let base_tier = memory::base_tier(&mem.tier);
+                let content_str = mem.content.clone();
+
+                // NIP-44 encrypt for personal/internal tier
+                let final_content = if base_tier == "personal" || base_tier == "internal" {
+                    relay.signer().encrypt(&content_str).unwrap_or(content_str)
+                } else {
+                    content_str
+                };
+
+                let mut tags = vec![
+                    nostr_sdk::Tag::custom(
+                        nostr_sdk::TagKind::Custom("d".into()),
+                        vec![d_tag.clone()],
+                    ),
+                    nostr_sdk::Tag::custom(
+                        nostr_sdk::TagKind::Custom("visibility".into()),
+                        vec![base_tier.to_string()],
+                    ),
+                    nostr_sdk::Tag::custom(
+                        nostr_sdk::TagKind::Custom("scope".into()),
+                        vec![mem.scope.clone()],
+                    ),
+                    nostr_sdk::Tag::custom(
+                        nostr_sdk::TagKind::Custom("version".into()),
+                        vec![mem.version.to_string()],
+                    ),
+                ];
+
+                if let Some(ref model) = mem.model {
+                    tags.push(nostr_sdk::Tag::custom(
+                        nostr_sdk::TagKind::Custom("model".into()),
+                        vec![model.clone()],
+                    ));
+                }
+
+                if let Some(confidence) = mem.confidence {
+                    tags.push(nostr_sdk::Tag::custom(
+                        nostr_sdk::TagKind::Custom("confidence".into()),
+                        vec![format!("{confidence:.2}")],
+                    ));
+                }
+
+                // Add topic tags for relay-side filtering
+                for part in mem.topic.split('/') {
+                    if !part.is_empty() {
+                        tags.push(nostr_sdk::Tag::custom(
+                            nostr_sdk::TagKind::Custom("t".into()),
+                            vec![part.to_string()],
+                        ));
+                    }
+                }
+
+                // Add h tag for group tier (NIP-29)
+                if let Some(group_id) = mem.tier.strip_prefix("group:") {
+                    tags.push(nostr_sdk::Tag::custom(
+                        nostr_sdk::TagKind::Custom("h".into()),
+                        vec![group_id.to_string()],
+                    ));
+                }
+
+                let builder = nostr_sdk::EventBuilder::new(
+                    nostr_sdk::Kind::Custom(crate::kinds::MEMORY_KIND),
+                    final_content,
+                )
+                .tags(tags);
+
+                match relay.publish(builder).await {
+                    Ok(result) => {
+                        let event_id_hex = result.event_id.to_hex();
+                        let _ = db::update_memory_nostr_id(&self.db, &d_tag, &event_id_hex).await;
+                        published += 1;
+                    }
+                    Err(e) => {
+                        tracing::warn!("Failed to publish memory {}: {e}", d_tag);
+                        failed += 1;
+                    }
+                }
+            }
+        }
+
+        // Publish raw messages (kind 1235)
+        if opts.messages {
+            let remaining = opts.limit.saturating_sub(published + failed + skipped);
+            if remaining > 0 {
+                let messages = db::get_unpublished_messages(&self.db, remaining).await?;
+                for msg_record in &messages {
+                    if opts.dry_run {
+                        skipped += 1;
+                        continue;
+                    }
+
+                    // Convert RawMessageRecord back to RawMessage for event building
+                    let raw_msg = ingest::RawMessage {
+                        source: msg_record.source.clone(),
+                        source_id: if msg_record.source_id.is_empty() {
+                            None
+                        } else {
+                            Some(msg_record.source_id.clone())
+                        },
+                        sender: msg_record.sender_id.clone(),
+                        channel: if msg_record.channel.is_empty() {
+                            None
+                        } else {
+                            Some(msg_record.channel.clone())
+                        },
+                        content: msg_record.content.clone(),
+                        metadata: if msg_record.metadata.is_empty() {
+                            None
+                        } else {
+                            Some(msg_record.metadata.clone())
+                        },
+                        created_at: Some(msg_record.created_at.clone()),
+                        provider_id: if msg_record.provider_id.is_empty() {
+                            None
+                        } else {
+                            Some(msg_record.provider_id.clone())
+                        },
+                        sender_name: if msg_record.sender.is_empty() {
+                            None
+                        } else {
+                            Some(msg_record.sender.clone())
+                        },
+                        room: if msg_record.room.is_empty() {
+                            None
+                        } else {
+                            Some(msg_record.room.clone())
+                        },
+                        topic: if msg_record.topic.is_empty() {
+                            None
+                        } else {
+                            Some(msg_record.topic.clone())
+                        },
+                        thread: if msg_record.thread.is_empty() {
+                            None
+                        } else {
+                            Some(msg_record.thread.clone())
+                        },
+                        scope: if msg_record.scope.is_empty() {
+                            None
+                        } else {
+                            Some(msg_record.scope.clone())
+                        },
+                        source_ts: if msg_record.source_created_at.is_empty() {
+                            None
+                        } else {
+                            Some(msg_record.source_created_at.clone())
+                        },
+                    };
+
+                    let builder = ingest::build_raw_source_event(&raw_msg);
+
+                    // Extract the raw_message DB id (strip table prefix if present)
+                    let db_id = msg_record
+                        .id
+                        .strip_prefix("raw_message:")
+                        .unwrap_or(&msg_record.id);
+
+                    match relay.publish(builder).await {
+                        Ok(result) => {
+                            let event_id_hex = result.event_id.to_hex();
+                            let _ = db::update_raw_message_publish(
+                                &self.db,
+                                db_id,
+                                &event_id_hex,
+                                "published",
+                            )
+                            .await;
+                            published += 1;
+                        }
+                        Err(e) => {
+                            tracing::warn!("Failed to publish raw message {}: {e}", db_id);
+                            let _ = db::update_raw_message_publish(
+                                &self.db,
+                                db_id,
+                                "",
+                                "failed",
+                            )
+                            .await;
+                            failed += 1;
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(PublishReport {
+            published,
+            failed,
+            skipped,
+        })
+    }
+}
+
+/// Options for the publish command.
+pub struct PublishOptions {
+    /// Publish memories (kind 31234)
+    pub memories: bool,
+    /// Publish raw messages (kind 1235)
+    pub messages: bool,
+    /// Dry run (preview only)
+    pub dry_run: bool,
+    /// Max items to publish
+    pub limit: usize,
+}
+
+impl Default for PublishOptions {
+    fn default() -> Self {
+        Self {
+            memories: true,
+            messages: true,
+            dry_run: false,
+            limit: 100,
+        }
+    }
 }
 
 // ── Report structs ──────────────────────────────────────────────────
+
+/// Report from a publish operation.
+pub struct PublishReport {
+    pub published: usize,
+    pub failed: usize,
+    pub skipped: usize,
+}
 
 /// Report from a sync operation.
 pub struct SyncReport {
@@ -963,24 +1277,4 @@ pub struct ListStats {
     pub total: usize,
     pub named: usize,
     pub pending: usize,
-}
-
-// ── Provider binding pass-through ─────────────────────────────────
-
-impl Nomen {
-    pub async fn bind_provider(&self, provider_id: &str, d_tag: &str) -> Result<()> {
-        db::bind_provider(self.db(), provider_id, d_tag).await
-    }
-
-    pub async fn resolve_provider(&self, provider_id: &str) -> Result<Vec<String>> {
-        db::resolve_provider(self.db(), provider_id).await
-    }
-
-    pub async fn unbind_provider(&self, provider_id: &str, d_tag: &str) -> Result<bool> {
-        db::unbind_provider(self.db(), provider_id, d_tag).await
-    }
-
-    pub async fn list_providers_for_dtag(&self, d_tag: &str) -> Result<Vec<String>> {
-        db::list_providers_for_dtag(self.db(), d_tag).await
-    }
 }

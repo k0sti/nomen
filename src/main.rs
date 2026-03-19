@@ -17,6 +17,7 @@ use nomen::cvm;
 use nomen::db;
 use nomen::display::display_memories;
 use nomen::mcp;
+use nomen::kinds::{LEGACY_APP_DATA_KIND, RAW_SOURCE_KIND};
 use nomen::memory::{get_tag_value, parse_event};
 use nomen::relay::{RelayConfig, RelayManager};
 use nomen::signer::{KeysSigner, NomenSigner};
@@ -217,6 +218,21 @@ enum Command {
         /// Preview what would be pruned without deleting
         #[arg(long)]
         dry_run: bool,
+    },
+    /// Publish local memories/messages to relay that are missing or failed
+    Publish {
+        /// Only publish memories (kind 31234)
+        #[arg(long)]
+        memories: bool,
+        /// Only publish raw messages (kind 1235)
+        #[arg(long)]
+        messages: bool,
+        /// Preview what would be published without actually publishing
+        #[arg(long)]
+        dry_run: bool,
+        /// Max items to publish in one run
+        #[arg(long, default_value = "100")]
+        limit: usize,
     },
     /// Send a message to a recipient (npub, group, or public)
     Send {
@@ -748,6 +764,19 @@ async fn main() -> Result<()> {
             };
             cmd_prune(&backend, nomen.as_ref(), effective_days, dry_run).await?;
         }
+        Command::Publish {
+            memories,
+            messages,
+            dry_run,
+            limit,
+        } => {
+            let nomen = if matches!(backend, Backend::Direct) {
+                Some(build_nomen_with_relay(&config, &resolved).await?)
+            } else {
+                None
+            };
+            cmd_publish(&backend, nomen.as_ref(), memories, messages, dry_run, limit).await?;
+        }
         Command::Send {
             content,
             to,
@@ -806,6 +835,13 @@ async fn cmd_list_relay(relay_url: &str, nsecs: &[String], named: bool) -> Resul
     let mut memories = Vec::new();
 
     for event in events.into_iter() {
+        // Skip raw source events (kind 1235) and legacy NIP-78 events (kind 30078)
+        if event.kind == nostr_sdk::Kind::Custom(RAW_SOURCE_KIND)
+            || event.kind == nostr_sdk::Kind::Custom(LEGACY_APP_DATA_KIND)
+        {
+            continue;
+        }
+
         let d_tag = get_tag_value(&event.tags, "d").unwrap_or_default();
         if d_tag.starts_with("snowclaw:config:") {
             continue;
@@ -1399,13 +1435,13 @@ async fn cmd_consolidate(
             "{}: {} messages → {} memories",
             prefix, messages_processed, memories_created
         );
-        if events_published > 0 {
+        if events_published > 0 && !dry_run {
             println!(
                 "  Published {} memories to relay (kind 31234)",
                 events_published
             );
         }
-        if events_deleted > 0 {
+        if events_deleted > 0 && !dry_run {
             println!(
                 "  Deleted {} ephemeral events from relay (NIP-09)",
                 events_deleted
@@ -1639,6 +1675,61 @@ async fn cmd_prune(backend: &Backend, nomen: Option<&Nomen>, days: u64, dry_run:
                 raw_messages_pruned
             );
         }
+    }
+
+    Ok(())
+}
+
+// ── Command: publish ────────────────────────────────────────────────
+
+async fn cmd_publish(
+    backend: &Backend,
+    nomen: Option<&Nomen>,
+    memories: bool,
+    messages: bool,
+    dry_run: bool,
+    limit: usize,
+) -> Result<()> {
+    if dry_run {
+        println!(
+            "{} Publishing local items to relay (limit: {})...",
+            "[DRY RUN]".yellow().bold(),
+            limit
+        );
+    } else {
+        println!("Publishing local items to relay (limit: {})...", limit);
+    }
+
+    let params = json!({
+        "memories": memories,
+        "messages": messages,
+        "dry_run": dry_run,
+        "limit": limit,
+    });
+
+    let result = cli_dispatch(backend, nomen, "memory.publish", &params).await?;
+
+    let published = result["published"].as_u64().unwrap_or(0);
+    let failed = result["failed"].as_u64().unwrap_or(0);
+    let skipped = result["skipped"].as_u64().unwrap_or(0);
+
+    if dry_run {
+        println!(
+            "{}: {} items would be published",
+            "[DRY RUN]".yellow().bold(),
+            skipped
+        );
+    } else {
+        println!(
+            "Publish complete: {} published, {} failed, {} skipped",
+            published.to_string().green(),
+            if failed > 0 {
+                failed.to_string().red().to_string()
+            } else {
+                failed.to_string()
+            },
+            skipped
+        );
     }
 
     Ok(())

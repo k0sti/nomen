@@ -18,10 +18,25 @@ pub async fn consolidate(
         .get("min_messages")
         .and_then(|v| v.as_u64())
         .unwrap_or(3) as usize;
+    let dry_run = params
+        .get("dry_run")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    let older_than = params
+        .get("older_than")
+        .and_then(|v| v.as_str())
+        .map(String::from);
+    let tier = params
+        .get("tier")
+        .and_then(|v| v.as_str())
+        .map(String::from);
 
     let opts = crate::ConsolidateOptions {
         batch_size,
         min_messages,
+        dry_run,
+        older_than,
+        tier,
         ..Default::default()
     };
 
@@ -35,6 +50,7 @@ pub async fn consolidate(
         "memories_created": report.memories_created,
         "events_published": report.events_published,
         "channels": report.channels,
+        "dry_run": report.dry_run,
     }))
 }
 
@@ -181,6 +197,54 @@ pub async fn embed(
     Ok(json!({
         "embedded": report.embedded,
         "total": report.total,
+    }))
+}
+
+pub async fn publish(
+    nomen: &Nomen,
+    _default_channel: &str,
+    params: &Value,
+) -> Result<Value, ApiError> {
+    let memories = params
+        .get("memories")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    let messages = params
+        .get("messages")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    let dry_run = params
+        .get("dry_run")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    let limit = params
+        .get("limit")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(100) as usize;
+
+    // If neither flag is set, publish both
+    let (do_memories, do_messages) = if !memories && !messages {
+        (true, true)
+    } else {
+        (memories, messages)
+    };
+
+    let opts = crate::PublishOptions {
+        memories: do_memories,
+        messages: do_messages,
+        dry_run,
+        limit,
+    };
+
+    let report = nomen
+        .publish(opts)
+        .await
+        .map_err(ApiError::from_anyhow)?;
+
+    Ok(json!({
+        "published": report.published,
+        "failed": report.failed,
+        "skipped": report.skipped,
     }))
 }
 
