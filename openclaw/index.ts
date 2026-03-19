@@ -732,12 +732,6 @@ const memoryNomenPlugin = {
             if (groupRecord) {
               sections.push(formatRoomSection("Room Context", groupRecord));
               groupInjected = true;
-            } else {
-              const boundRooms = await resolveRoomsByProvider(cfg.apiUrl, chatId, cfg.timeoutMs);
-              if (boundRooms.length > 0) {
-                sections.push(...boundRooms.map((r) => formatRoomSection("Room Context", r)));
-                groupInjected = true;
-              }
             }
 
             // Topic/thread layer
@@ -748,13 +742,6 @@ const memoryNomenPlugin = {
               if (topicRecord) {
                 sections.push(formatRoomSection("Topic Context", topicRecord));
                 topicInjected = true;
-              } else {
-                const topicProviderId = `${chatId}:topic:${threadId}`;
-                const topicRooms = await resolveRoomsByProvider(cfg.apiUrl, topicProviderId, cfg.timeoutMs);
-                if (topicRooms.length > 0) {
-                  sections.push(...topicRooms.map((r) => formatRoomSection("Topic Context", r)));
-                  topicInjected = true;
-                }
               }
             }
 
