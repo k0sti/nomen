@@ -552,6 +552,43 @@ async fn cli_dispatch(
     }
 }
 
+/// Create a `DispatchFn` closure for use with `nomen::fs` functions.
+///
+/// Uses the HTTP backend if service is running, otherwise opens DB directly.
+async fn make_dispatch_fn(
+    backend: &Backend,
+    config: &Config,
+) -> Result<nomen::fs::DispatchFn> {
+    match backend {
+        Backend::Http(base_url) => {
+            let url = base_url.clone();
+            Ok(Box::new(move |action: String, params: serde_json::Value| {
+                let url = url.clone();
+                Box::pin(async move { dispatch_http(&url, &action, &params).await })
+            }))
+        }
+        Backend::Direct => {
+            let nomen = build_nomen(config).await?;
+            let nomen = std::sync::Arc::new(nomen);
+            Ok(Box::new(move |action: String, params: serde_json::Value| {
+                let nomen = nomen.clone();
+                Box::pin(async move {
+                    let resp = nomen::api::dispatch(&nomen, CLI_CHANNEL, &action, &params).await;
+                    if resp.ok {
+                        Ok(resp.result.unwrap_or(serde_json::Value::Null))
+                    } else {
+                        let err = resp
+                            .error
+                            .map(|e| e.message)
+                            .unwrap_or_else(|| "unknown error".to_string());
+                        anyhow::bail!("{action}: {err}")
+                    }
+                })
+            }))
+        }
+    }
+}
+
 // ── Main ────────────────────────────────────────────────────────────
 
 #[tokio::main]
@@ -869,21 +906,21 @@ async fn main() -> Result<()> {
                     println!("Initialized sync directory: {}", dir.display());
                 }
                 FsAction::Pull { dir } => {
-                    let nomen = build_nomen(&config).await?;
+                    let dispatch = make_dispatch_fn(&backend, &config).await?;
                     if !dir.join(".nomen-fs").exists() {
                         nomen::fs::init_sync_dir(&dir)?;
                     }
-                    let count = nomen::fs::pull(&nomen, &dir).await?;
+                    let count = nomen::fs::pull(&dispatch, &dir).await?;
                     println!("Pulled {count} memories to {}", dir.display());
                 }
                 FsAction::Push { dir } => {
-                    let nomen = build_nomen(&config).await?;
-                    let count = nomen::fs::push(&nomen, &dir).await?;
+                    let dispatch = make_dispatch_fn(&backend, &config).await?;
+                    let count = nomen::fs::push(&dispatch, &dir).await?;
                     println!("Pushed {count} changed files from {}", dir.display());
                 }
                 FsAction::Status { dir } => {
-                    let nomen = build_nomen(&config).await?;
-                    nomen::fs::status(&nomen, &dir).await?;
+                    let dispatch = make_dispatch_fn(&backend, &config).await?;
+                    nomen::fs::status(&dispatch, &dir).await?;
                 }
             }
         }

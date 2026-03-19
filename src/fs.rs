@@ -27,9 +27,18 @@ use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
 use tracing::{debug, info, warn};
 
-use crate::db::{self, MemoryRecord};
+use crate::db::MemoryRecord;
 use crate::memory;
-use crate::Nomen;
+use std::future::Future;
+use std::pin::Pin;
+
+/// A dispatch function that sends an action + params to Nomen (via HTTP or direct DB).
+/// Returns the `result` value from the response.
+pub type DispatchFn = Box<
+    dyn Fn(String, serde_json::Value) -> Pin<Box<dyn Future<Output = Result<serde_json::Value>> + Send>>
+        + Send
+        + Sync,
+>;
 
 // ── Constants ────────────────────────────────────────────────────────
 
@@ -271,12 +280,38 @@ pub fn memory_to_markdown(mem: &MemoryRecord) -> String {
         updated_at: mem.updated_at.clone(),
     };
 
-    let yaml = serde_yaml_ng::to_string(&fm).unwrap_or_default();
+    frontmatter_to_markdown(&fm, mem.summary.as_deref().unwrap_or(""), mem.detail.as_deref().unwrap_or(""))
+}
+
+/// Serialize a JSON memory value (from API response) to markdown.
+pub fn json_memory_to_markdown(val: &serde_json::Value) -> String {
+    let d_tag = val["d_tag"].as_str().unwrap_or("").to_string();
+    let (visibility, scope) = memory::extract_visibility_scope(&d_tag);
+
+    let fm = MemoryFrontmatter {
+        d_tag,
+        topic: val["topic"].as_str().unwrap_or("").to_string(),
+        visibility,
+        scope,
+        tier: val["visibility"].as_str().unwrap_or("").to_string(), // API returns visibility as tier
+        version: val["version"].as_i64().unwrap_or(0),
+        pinned: val["pinned"].as_bool().unwrap_or(false),
+        confidence: val["confidence"].as_f64(),
+        importance: val["importance"].as_i64(),
+        created_at: val["created_at"].as_str().unwrap_or("").to_string(),
+        updated_at: val["updated_at"].as_str().unwrap_or("").to_string(),
+    };
+
+    let summary = val["summary"].as_str().unwrap_or("");
+    let detail = val["detail"].as_str().unwrap_or("");
+
+    frontmatter_to_markdown(&fm, summary, detail)
+}
+
+fn frontmatter_to_markdown(fm: &MemoryFrontmatter, summary: &str, detail: &str) -> String {
+    let yaml = serde_yaml_ng::to_string(fm).unwrap_or_default();
     // serde_yaml_ng adds a trailing newline; trim it so the --- is clean
     let yaml = yaml.trim_end();
-
-    let summary = mem.summary.as_deref().unwrap_or("");
-    let detail = mem.detail.as_deref().unwrap_or("");
 
     let mut out = String::new();
     out.push_str("---\n");
@@ -374,16 +409,25 @@ pub fn init_sync_dir(dir: &Path) -> Result<()> {
 
 // ── Pull ─────────────────────────────────────────────────────────────
 
-/// Pull all memories from DB to filesystem. Returns count of files written.
-pub async fn pull(nomen: &Nomen, dir: &Path) -> Result<usize> {
-    let memories = db::list_memories(nomen.db(), None, 10000, None).await?;
+/// Pull all memories from DB to filesystem via API dispatch. Returns count of files written.
+pub async fn pull(dispatch: &DispatchFn, dir: &Path) -> Result<usize> {
+    let result = dispatch(
+        "memory.list".to_string(),
+        serde_json::json!({"limit": 10000}),
+    )
+    .await?;
+
+    let memories = result["memories"]
+        .as_array()
+        .context("memory.list did not return memories array")?;
+
     let mut state = SyncState::load(dir)?;
     let mut pkmap = PubkeyMap::load(dir)?;
     let mut count = 0;
 
-    for mem in &memories {
-        let d_tag = match &mem.d_tag {
-            Some(d) if !d.is_empty() => d.clone(),
+    for mem in memories {
+        let d_tag = match mem["d_tag"].as_str() {
+            Some(d) if !d.is_empty() => d.to_string(),
             _ => continue,
         };
 
@@ -395,12 +439,13 @@ pub async fn pull(nomen: &Nomen, dir: &Path) -> Result<usize> {
             std::fs::create_dir_all(parent)?;
         }
 
-        let markdown = memory_to_markdown(mem);
+        let markdown = json_memory_to_markdown(mem);
         let hash = content_hash(&markdown);
+        let version = mem["version"].as_i64().unwrap_or(0);
 
         // Check if file already exists with same content
         if let Some(entry) = state.files.get(rel_path.to_str().unwrap_or("")) {
-            if entry.content_hash == hash && entry.version == mem.version {
+            if entry.content_hash == hash && entry.version == version {
                 debug!(d_tag = %d_tag, "Skipping (unchanged)");
                 continue;
             }
@@ -415,7 +460,7 @@ pub async fn pull(nomen: &Nomen, dir: &Path) -> Result<usize> {
             SyncEntry {
                 d_tag,
                 content_hash: hash,
-                version: mem.version,
+                version,
                 synced_at: chrono::Utc::now().to_rfc3339(),
             },
         );
@@ -430,8 +475,8 @@ pub async fn pull(nomen: &Nomen, dir: &Path) -> Result<usize> {
 
 // ── Push ─────────────────────────────────────────────────────────────
 
-/// Push changed files back to Nomen. Returns count of memories updated.
-pub async fn push(nomen: &Nomen, dir: &Path) -> Result<usize> {
+/// Push changed files back to Nomen via API dispatch. Returns count of memories updated.
+pub async fn push(dispatch: &DispatchFn, dir: &Path) -> Result<usize> {
     let mut state = SyncState::load(dir)?;
     let pkmap = PubkeyMap::load(dir)?;
     let mut count = 0;
@@ -495,24 +540,26 @@ pub async fn push(nomen: &Nomen, dir: &Path) -> Result<usize> {
             }
         };
 
-        let new_mem = crate::NewMemory {
-            topic: parsed.frontmatter.topic.clone(),
-            summary: parsed.summary.clone(),
-            detail: parsed.detail.clone(),
-            tier,
-            confidence: parsed.frontmatter.confidence.unwrap_or(0.8),
-            source: Some("fs-push".to_string()),
-            model: None,
-        };
+        let mut params = serde_json::json!({
+            "topic": parsed.frontmatter.topic,
+            "summary": parsed.summary,
+            "detail": parsed.detail,
+            "visibility": tier,
+            "confidence": parsed.frontmatter.confidence.unwrap_or(0.8),
+            "source": "fs-push",
+        });
 
-        match nomen.store(new_mem).await {
-            Ok(stored_dtag) => {
+        if parsed.frontmatter.pinned {
+            params["pinned"] = serde_json::json!(true);
+        }
+
+        match dispatch("memory.put".to_string(), params).await {
+            Ok(result) => {
+                let stored_dtag = result["d_tag"]
+                    .as_str()
+                    .unwrap_or(&d_tag)
+                    .to_string();
                 info!(d_tag = %stored_dtag, "Pushed from file");
-
-                // Update pinned status if specified in frontmatter
-                if parsed.frontmatter.pinned {
-                    let _ = db::set_pinned(nomen.db(), &stored_dtag, true).await;
-                }
 
                 state.files.insert(
                     rel_key,
@@ -539,7 +586,7 @@ pub async fn push(nomen: &Nomen, dir: &Path) -> Result<usize> {
 // ── Status ───────────────────────────────────────────────────────────
 
 /// Show sync status for a directory.
-pub async fn status(nomen: &Nomen, dir: &Path) -> Result<()> {
+pub async fn status(dispatch: &DispatchFn, dir: &Path) -> Result<()> {
     if !dir.join(SYNC_META_DIR).exists() {
         println!("Not a nomen-fs directory: {}", dir.display());
         println!("Run: nomen fs init --dir {}", dir.display());
@@ -547,8 +594,17 @@ pub async fn status(nomen: &Nomen, dir: &Path) -> Result<()> {
     }
 
     let state = SyncState::load(dir)?;
-    let pkmap = PubkeyMap::load(dir)?;
-    let memories = db::list_memories(nomen.db(), None, 10000, None).await?;
+    let mut pkmap = PubkeyMap::load(dir)?;
+
+    let result = dispatch(
+        "memory.list".to_string(),
+        serde_json::json!({"limit": 10000}),
+    )
+    .await?;
+
+    let memories = result["memories"]
+        .as_array()
+        .context("memory.list did not return memories array")?;
 
     let md_files = walk_md_files(dir)?;
     let mut local_changed = 0;
@@ -571,13 +627,12 @@ pub async fn status(nomen: &Nomen, dir: &Path) -> Result<()> {
     }
 
     // Check for memories not yet synced
-    let mut pkmap_clone = pkmap;
-    for mem in &memories {
-        let d_tag = match &mem.d_tag {
-            Some(d) if !d.is_empty() => d.clone(),
+    for mem in memories {
+        let d_tag = match mem["d_tag"].as_str() {
+            Some(d) if !d.is_empty() => d.to_string(),
             _ => continue,
         };
-        let rel_path = dtag_to_path(&d_tag, &mut pkmap_clone);
+        let rel_path = dtag_to_path(&d_tag, &mut pkmap);
         let rel_key = rel_path.to_str().unwrap_or("");
         if !state.files.contains_key(rel_key) {
             remote_new += 1;
