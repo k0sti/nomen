@@ -911,8 +911,39 @@ async fn main() -> Result<()> {
             };
             match action {
                 FsAction::Init { dir } => {
-                    let dir = resolve_dir(dir);
+                    let dir = resolve_dir(dir.clone());
                     nomen::fs::init_sync_dir(&dir)?;
+
+                    // Update config with the fs dir if not already set or different
+                    let needs_update = config.fs.as_ref().map(|f| f.dir != dir).unwrap_or(true);
+                    if needs_update {
+                        let config_path = Config::path();
+                        if config_path.exists() {
+                            let mut text = std::fs::read_to_string(&config_path)?;
+                            let dir_str = dir.display().to_string();
+                            if let Some(fs_idx) = text.find("[fs]") {
+                                // Replace existing dir line after [fs]
+                                let after_fs = &text[fs_idx..];
+                                if let Some(dir_offset) = after_fs.find("dir = \"") {
+                                    let abs_start = fs_idx + dir_offset;
+                                    let val_start = abs_start + 7; // after 'dir = "'
+                                    if let Some(end_quote) = text[val_start..].find('"') {
+                                        text.replace_range(val_start..val_start + end_quote, &dir_str);
+                                    }
+                                } else {
+                                    // [fs] exists but no dir line — insert after [fs]
+                                    let insert_at = fs_idx + 4;
+                                    text.insert_str(insert_at, &format!("\ndir = \"{dir_str}\""));
+                                }
+                            } else {
+                                // Append [fs] section
+                                text.push_str(&format!("\n[fs]\ndir = \"{dir_str}\"\n"));
+                            }
+                            std::fs::write(&config_path, &text)?;
+                            println!("Updated config: [fs].dir = \"{}\"", dir_str);
+                        }
+                    }
+
                     println!("Initialized sync directory: {}", dir.display());
                 }
                 FsAction::Pull { dir } => {
