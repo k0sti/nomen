@@ -71,10 +71,11 @@ pub struct Nomen {
 /// Options for creating a new memory directly (without relay event).
 pub struct NewMemory {
     pub topic: String,
-    pub summary: String,
     pub detail: String,
-    pub tier: String,
-    pub confidence: f64,
+    pub visibility: String,
+    /// Scope/context for d-tag construction (e.g. group ID, pubkey hex).
+    /// If empty, derived from visibility.
+    pub scope: String,
     /// Source label (e.g. "api", "mcp", "contextvm"). Defaults to "api".
     pub source: Option<String>,
     /// Model label. Defaults to "nomen/api".
@@ -250,10 +251,12 @@ impl Nomen {
             .map(|s| s.public_key().to_hex())
             .unwrap_or_default();
 
-        let base_tier = memory::base_tier(&mem.tier);
-        let context = if base_tier == "personal" || base_tier == "internal" {
+        let base_tier = memory::base_tier(&mem.visibility);
+        let context = if !mem.scope.is_empty() {
+            mem.scope.clone()
+        } else if base_tier == "personal" || base_tier == "internal" {
             author_pubkey_hex.clone()
-        } else if let Some(group_id) = mem.tier.strip_prefix("group:") {
+        } else if let Some(group_id) = mem.visibility.strip_prefix("group:") {
             group_id.to_string()
         } else {
             String::new()
@@ -262,17 +265,7 @@ impl Nomen {
 
         let source = mem.source.as_deref().unwrap_or("api");
         let model = mem.model.as_deref().unwrap_or("nomen/api");
-        let detail_text = if mem.detail.is_empty() {
-            &mem.summary
-        } else {
-            &mem.detail
-        };
-        let content = serde_json::json!({
-            "summary": mem.summary,
-            "detail": detail_text,
-            "context": null,
-        });
-        let content_str = content.to_string();
+        let content_str = mem.detail.clone();
 
         // Supersedes logic: check for existing memory with same topic
         let (version, previous_nostr_id) =
@@ -294,24 +287,22 @@ impl Nomen {
             };
 
         let parsed = memory::ParsedMemory {
-            tier: mem.tier.clone(),
+            visibility: mem.visibility.clone(),
             topic: mem.topic.clone(),
             version: version.to_string(),
-            confidence: format!("{:.2}", mem.confidence),
             model: model.to_string(),
-            summary: mem.summary.clone(),
             created_at: nostr_sdk::Timestamp::now(),
             d_tag: d_tag.clone(),
             source: source.to_string(),
             content_raw: content_str.clone(),
-            detail: detail_text.to_string(),
+            detail: mem.detail.clone(),
         };
 
         db::store_memory_direct(&self.db, &parsed, source).await?;
 
         // Generate embedding if embedder is configured
         if self.embedder.dimensions() > 0 {
-            let text = format!("{} {}", parsed.summary, parsed.detail);
+            let text = parsed.detail.clone();
             if let Ok(embeddings) = self.embedder.embed(&[text]).await {
                 if let Some(embedding) = embeddings.into_iter().next() {
                     let _ = db::store_embedding(&self.db, &d_tag, embedding).await;
@@ -343,10 +334,6 @@ impl Nomen {
                     vec![model.to_string()],
                 ),
                 nostr_sdk::Tag::custom(
-                    nostr_sdk::TagKind::Custom("confidence".into()),
-                    vec![format!("{:.2}", mem.confidence)],
-                ),
-                nostr_sdk::Tag::custom(
                     nostr_sdk::TagKind::Custom("version".into()),
                     vec![version.to_string()],
                 ),
@@ -373,7 +360,7 @@ impl Nomen {
             }
 
             // Add h tag for group tier (NIP-29)
-            if let Some(group_id) = mem.tier.strip_prefix("group:") {
+            if let Some(group_id) = mem.visibility.strip_prefix("group:") {
                 tags.push(nostr_sdk::Tag::custom(
                     nostr_sdk::TagKind::Custom("h".into()),
                     vec![group_id.to_string()],
@@ -423,38 +410,38 @@ impl Nomen {
         mem: NewMemory,
         author_pubkey_hex: &str,
     ) -> Result<String> {
-        let d_tag = memory::build_dtag_from_tier(&mem.tier, author_pubkey_hex, &mem.topic);
+        let base_tier = memory::base_tier(&mem.visibility);
+        let context = if !mem.scope.is_empty() {
+            mem.scope.clone()
+        } else if base_tier == "personal" || base_tier == "internal" {
+            author_pubkey_hex.to_string()
+        } else if let Some(group_id) = mem.visibility.strip_prefix("group:") {
+            group_id.to_string()
+        } else {
+            String::new()
+        };
+        let d_tag = memory::build_v2_dtag(base_tier, &context, &mem.topic);
         let source = mem.source.as_deref().unwrap_or("api");
         let model = mem.model.as_deref().unwrap_or("nomen/api");
-        let detail_text = if mem.detail.is_empty() {
-            &mem.summary
-        } else {
-            &mem.detail
-        };
-        let content = serde_json::json!({
-            "summary": mem.summary,
-            "detail": detail_text,
-        });
+        let content_str = mem.detail.clone();
 
         let parsed = memory::ParsedMemory {
-            tier: mem.tier,
+            visibility: mem.visibility,
             topic: mem.topic,
             version: "1".to_string(),
-            confidence: format!("{:.2}", mem.confidence),
             model: model.to_string(),
-            summary: mem.summary.clone(),
             created_at: nostr_sdk::Timestamp::now(),
             d_tag: d_tag.clone(),
             source: source.to_string(),
-            content_raw: content.to_string(),
-            detail: detail_text.to_string(),
+            content_raw: content_str,
+            detail: mem.detail,
         };
 
         db::store_memory_direct(db, &parsed, source).await?;
 
         // Generate embedding if embedder is configured
         if embedder.dimensions() > 0 {
-            let text = format!("{} {}", parsed.summary, parsed.detail);
+            let text = parsed.detail.clone();
             if let Ok(embeddings) = embedder.embed(&[text]).await {
                 if let Some(embedding) = embeddings.into_iter().next() {
                     let _ = db::store_embedding(db, &d_tag, embedding).await;
@@ -886,7 +873,7 @@ impl Nomen {
 
         let texts: Vec<String> = missing
             .iter()
-            .map(|m| m.summary.clone().unwrap_or_else(|| m.content.clone()))
+            .map(|m| m.search_text.clone())
             .collect();
 
         let embeddings = self.embedder.embed(&texts).await?;
@@ -1057,8 +1044,8 @@ impl Nomen {
                     }
                 };
 
-                let base_tier = memory::base_tier(&mem.tier);
-                let content_str = mem.content.clone();
+                let base_tier = memory::base_tier(&mem.visibility);
+                let content_str = mem.search_text.clone();
 
                 // NIP-44 encrypt for personal/internal tier
                 let final_content = if base_tier == "personal" || base_tier == "internal" {
@@ -1093,13 +1080,6 @@ impl Nomen {
                     ));
                 }
 
-                if let Some(confidence) = mem.confidence {
-                    tags.push(nostr_sdk::Tag::custom(
-                        nostr_sdk::TagKind::Custom("confidence".into()),
-                        vec![format!("{confidence:.2}")],
-                    ));
-                }
-
                 // Add topic tags for relay-side filtering
                 for part in mem.topic.split('/') {
                     if !part.is_empty() {
@@ -1111,10 +1091,10 @@ impl Nomen {
                 }
 
                 // Add h tag for group tier (NIP-29)
-                if let Some(group_id) = mem.tier.strip_prefix("group:") {
+                if base_tier == "group" && !mem.scope.is_empty() {
                     tags.push(nostr_sdk::Tag::custom(
                         nostr_sdk::TagKind::Custom("h".into()),
-                        vec![group_id.to_string()],
+                        vec![mem.scope.clone()],
                     ));
                 }
 

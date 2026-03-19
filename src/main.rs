@@ -66,18 +66,15 @@ enum Command {
     Store {
         /// Topic/namespace for the memory
         topic: String,
-        /// Short summary
+        /// Short summary (deprecated, use --detail; if set without --detail, treated as detail)
         #[arg(long)]
-        summary: String,
+        summary: Option<String>,
         /// Full detail text
         #[arg(long, default_value = "")]
         detail: String,
         /// Visibility tier
-        #[arg(long, default_value = "public")]
-        tier: String,
-        /// Confidence score (0.0 to 1.0)
-        #[arg(long, default_value = "0.8")]
-        confidence: f64,
+        #[arg(long, visible_alias = "tier", default_value = "public")]
+        visibility: String,
     },
     /// Delete a memory by topic or event ID
     Delete {
@@ -668,15 +665,20 @@ async fn main() -> Result<()> {
             topic,
             summary,
             detail,
-            tier,
-            confidence,
+            visibility,
         } => {
+            // Backward compat: if --summary is set but --detail is empty, use summary as detail
+            let effective_detail = if detail.is_empty() {
+                summary.as_deref().unwrap_or("")
+            } else {
+                &detail
+            };
             let nomen = if matches!(backend, Backend::Direct) {
                 Some(build_nomen_with_relay(&config, &resolved).await?)
             } else {
                 None
             };
-            cmd_store(&backend, nomen.as_ref(), &topic, &summary, &detail, &tier, confidence).await?;
+            cmd_store(&backend, nomen.as_ref(), &topic, effective_detail, &visibility).await?;
         }
         Command::Delete {
             topic,
@@ -1037,10 +1039,10 @@ async fn cmd_list_local(backend: &Backend, nomen: Option<&Nomen>, ephemeral: boo
                 println!("  Last consolidation: {}", last.dimmed());
             }
 
-            // Memories by tier
+            // Memories by visibility
             if let Some(tiers) = s.get("by_tier").and_then(|v| v.as_array()) {
                 if !tiers.is_empty() {
-                    println!("\n  {}:", "By tier".bold());
+                    println!("\n  {}:", "By visibility".bold());
                     for tier in tiers {
                         let name = tier["tier"].as_str().unwrap_or("?");
                         let count = tier["count"].as_u64().unwrap_or(0);
@@ -1168,19 +1170,15 @@ async fn cmd_store(
     backend: &Backend,
     nomen: Option<&Nomen>,
     topic: &str,
-    summary: &str,
     detail: &str,
-    tier: &str,
-    confidence: f64,
+    visibility: &str,
 ) -> Result<()> {
     println!("Publishing to relay...");
 
     let params = json!({
         "topic": topic,
-        "summary": summary,
         "detail": detail,
-        "visibility": tier,
-        "confidence": confidence,
+        "visibility": visibility,
     });
 
     let result = cli_dispatch(backend, nomen, "memory.put", &params).await?;
@@ -1190,7 +1188,7 @@ async fn cmd_store(
         "{} stored: {} [{}]",
         "Memory".green().bold(),
         topic.bold(),
-        tier
+        visibility
     );
     println!("  d_tag: {}", d_tag);
 
@@ -1329,22 +1327,19 @@ async fn cmd_search(
         };
 
         let topic = r["topic"].as_str().unwrap_or("");
-        let confidence = r["confidence"].as_f64()
-            .or_else(|| r["confidence"].as_str().and_then(|s| s.parse::<f64>().ok()))
-            .unwrap_or(0.0);
-        let summary = r["summary"].as_str().unwrap_or("");
+        let detail = r["detail"].as_str().unwrap_or("");
+        let first_line = detail.lines().next().unwrap_or("");
         let created_at = r["created_at"].as_str().unwrap_or("");
 
         println!(
-            "\n{}. {} {}{} (confidence: {:.2}){}",
+            "\n{}. {} {}{}{}",
             i + 1,
             tier_colored,
             contradicts_prefix,
             topic.bold(),
-            confidence,
             match_indicator.dimmed()
         );
-        println!("   {}", summary);
+        println!("   {}", first_line);
         println!("   Created: {}", created_at);
     }
 
@@ -1850,14 +1845,12 @@ async fn cmd_prune(backend: &Backend, nomen: Option<&Nomen>, days: u64, dry_run:
             println!("\n{} memories eligible for pruning:", pruned.len());
             for mem in pruned {
                 let topic = mem["topic"].as_str().unwrap_or("");
-                let confidence = mem["confidence"].as_f64().map(|c| format!("{c:.2}")).unwrap_or_else(|| "?".to_string());
                 let access_count = mem["access_count"].as_u64().unwrap_or(0);
                 let created_at = mem["created_at"].as_str().unwrap_or("");
                 let date = if created_at.len() >= 10 { &created_at[..10] } else { created_at };
                 println!(
-                    "  {} (confidence: {}, accesses: {}, created: {})",
+                    "  {} (accesses: {}, created: {})",
                     topic.bold(),
-                    confidence,
                     access_count,
                     date
                 );

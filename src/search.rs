@@ -9,7 +9,7 @@ use tracing::debug;
 use crate::db;
 use crate::embed::Embedder;
 
-/// Minimum decay factor — memories never lose more than 80% of their confidence.
+/// Minimum recency factor — memories never decay below 20%.
 const MIN_DECAY: f64 = 0.2;
 /// Maximum age in days for full decay (365 days).
 const MAX_AGE_DAYS: f64 = 365.0;
@@ -37,7 +37,6 @@ pub struct SearchOptions {
     pub limit: usize,
     pub vector_weight: f32,
     pub text_weight: f32,
-    pub min_confidence: Option<f64>,
     /// If true, group results with >0.85 embedding similarity and merge them.
     pub aggregate: bool,
     /// Enable graph expansion: traverse edges from results to surface related memories.
@@ -55,7 +54,6 @@ impl Default for SearchOptions {
             limit: 10,
             vector_weight: 0.7,
             text_weight: 0.3,
-            min_confidence: None,
             aggregate: false,
             graph_expand: false,
             max_hops: 1,
@@ -65,10 +63,8 @@ impl Default for SearchOptions {
 
 /// A search result with scoring info.
 pub struct SearchResult {
-    pub tier: String,
+    pub visibility: String,
     pub topic: String,
-    pub confidence: String,
-    pub summary: String,
     pub detail: String,
     pub created_at: Timestamp,
     pub score: f64,
@@ -83,13 +79,12 @@ pub struct SearchResult {
     pub contradicts: bool,
 }
 
-/// Calculate confidence decay factor based on days since last access.
+/// Calculate recency factor based on days since last access.
 ///
-/// `effective_confidence = confidence × decay_factor`
-/// `decay_factor = 1.0 - (days_since_access / max_age) × (1.0 - min_decay)`
+/// `factor = 1.0 - (days_since_access / max_age) × (1.0 - min_decay)`
 ///
 /// Clamped to [MIN_DECAY, 1.0].
-fn confidence_decay_factor(last_accessed: Option<&str>, created_at: &str) -> f64 {
+fn recency_factor(last_accessed: Option<&str>, created_at: &str) -> f64 {
     let reference_time = last_accessed.unwrap_or(created_at);
     let days_since = chrono::DateTime::parse_from_rfc3339(reference_time)
         .map(|dt| {
@@ -135,7 +130,7 @@ pub async fn search(
         &query_embedding,
         opts.tier.as_deref(),
         opts.allowed_scopes.as_deref(),
-        opts.min_confidence,
+        None,
         opts.vector_weight,
         opts.text_weight,
         opts.limit,
@@ -152,13 +147,8 @@ pub async fn search(
             let vec_score = r.vec_score.unwrap_or(0.0);
             let text_score = r.text_score.unwrap_or(0.0);
 
-            // Apply confidence decay
-            let decay = confidence_decay_factor(r.last_accessed.as_deref(), &r.created_at);
-            let raw_confidence = r.confidence.unwrap_or(0.5);
-            let effective_confidence = raw_confidence * decay;
-
             // Compute recency factor (1.0 for now, decays to 0.0 over MAX_AGE_DAYS)
-            let recency = confidence_decay_factor(Some(&r.created_at), &r.created_at);
+            let recency = recency_factor(Some(&r.created_at), &r.created_at);
 
             // Importance normalized to 0.0–1.0 (importance 1-10 → 0.1–1.0)
             let importance_norm = r.importance.unwrap_or(5) as f64 / 10.0;
@@ -176,11 +166,9 @@ pub async fn search(
             };
 
             SearchResult {
-                tier: r.tier,
+                visibility: r.visibility,
                 topic: r.topic,
-                confidence: format!("{effective_confidence:.2}"),
-                summary: r.summary.unwrap_or_else(|| r.content.clone()),
-                detail: r.detail.unwrap_or_else(|| r.content.clone()),
+                detail: r.detail.unwrap_or_else(|| r.search_text.clone()),
                 created_at: ts,
                 score: decayed_score,
                 match_type,
@@ -312,18 +300,10 @@ async fn graph_expand(
                 .map(Timestamp::from)
                 .unwrap_or(Timestamp::now());
 
-            // Apply confidence decay
-            let raw_confidence = neighbor.confidence.unwrap_or(0.5);
-            let decay =
-                confidence_decay_factor(neighbor.last_accessed.as_deref(), &neighbor.created_at);
-            let effective_confidence = raw_confidence * decay;
-
             expanded.push(SearchResult {
-                tier: neighbor.tier,
+                visibility: neighbor.visibility,
                 topic: neighbor.topic,
-                confidence: format!("{effective_confidence:.2}"),
-                summary: neighbor.summary.unwrap_or_else(|| neighbor.content.clone()),
-                detail: neighbor.detail.unwrap_or_else(|| neighbor.content.clone()),
+                detail: neighbor.detail.unwrap_or_else(|| neighbor.search_text.clone()),
                 created_at: ts,
                 score: graph_score,
                 match_type: MatchType::Graph,
@@ -355,15 +335,12 @@ async fn graph_expand(
 /// This ensures results have meaningful scores even when embeddings are disabled,
 /// preventing downstream filters from discarding all results.
 async fn text_only_search(db: &Surreal<Db>, opts: &SearchOptions) -> Result<Vec<SearchResult>> {
-    let mut conditions = vec!["content @1@ $query".to_string()];
+    let mut conditions = vec!["search_text @1@ $query".to_string()];
     if opts.tier.is_some() {
-        conditions.push("tier = $tier".to_string());
+        conditions.push("visibility = $tier".to_string());
     }
     if opts.allowed_scopes.is_some() {
         conditions.push("(scope = \"\" OR array::any($scopes, |$s| scope = $s OR string::starts_with(scope, string::concat($s, \".\"))))".to_string());
-    }
-    if opts.min_confidence.is_some() {
-        conditions.push("(confidence IS NONE OR confidence >= $min_conf)".to_string());
     }
     let where_clause = conditions.join(" AND ");
 
@@ -381,9 +358,6 @@ async fn text_only_search(db: &Surreal<Db>, opts: &SearchOptions) -> Result<Vec<
     if let Some(ref scopes) = opts.allowed_scopes {
         q = q.bind(("scopes", scopes.clone()));
     }
-    if let Some(min_conf) = opts.min_confidence {
-        q = q.bind(("min_conf", min_conf));
-    }
 
     let rows: Vec<db::HybridSearchRow> = q.await?.check()?.take(0)?;
 
@@ -396,12 +370,7 @@ async fn text_only_search(db: &Surreal<Db>, opts: &SearchOptions) -> Result<Vec<
 
             let text_score = r.text_score.unwrap_or(0.0);
 
-            // Apply confidence decay
-            let decay = confidence_decay_factor(r.last_accessed.as_deref(), &r.created_at);
-            let raw_confidence = r.confidence.unwrap_or(0.5);
-            let effective_confidence = raw_confidence * decay;
-
-            let recency = confidence_decay_factor(Some(&r.created_at), &r.created_at);
+            let recency = recency_factor(Some(&r.created_at), &r.created_at);
             let importance_norm = r.importance.unwrap_or(5) as f64 / 10.0;
 
             // Same composite as hybrid search, minus vector component:
@@ -409,11 +378,9 @@ async fn text_only_search(db: &Surreal<Db>, opts: &SearchOptions) -> Result<Vec<
             let decayed_score = text_score * 0.3 + recency * 0.15 + importance_norm * 0.15;
 
             SearchResult {
-                tier: r.tier,
+                visibility: r.visibility,
                 topic: r.topic,
-                confidence: format!("{effective_confidence:.2}"),
-                summary: r.summary.unwrap_or_else(|| r.content.clone()),
-                detail: r.detail.unwrap_or_else(|| r.content.clone()),
+                detail: r.detail.unwrap_or_else(|| r.search_text.clone()),
                 created_at: ts,
                 score: decayed_score,
                 match_type: MatchType::Text,
@@ -465,7 +432,7 @@ fn cosine_similarity(a: &[f32], b: &[f32]) -> f64 {
 }
 
 /// Aggregate search results: group results with >0.85 embedding similarity
-/// and merge them into a single result with combined detail and highest confidence.
+/// and merge them into a single result with combined detail.
 fn aggregate_results(results: Vec<SearchResult>) -> Vec<SearchResult> {
     if results.len() <= 1 {
         return results;
@@ -500,10 +467,8 @@ fn aggregate_results(results: Vec<SearchResult>) -> Vec<SearchResult> {
 
         if group_indices.len() == 1 {
             aggregated.push(SearchResult {
-                tier: results[i].tier.clone(),
+                visibility: results[i].visibility.clone(),
                 topic: results[i].topic.clone(),
-                confidence: results[i].confidence.clone(),
-                summary: results[i].summary.clone(),
                 detail: results[i].detail.clone(),
                 created_at: results[i].created_at,
                 score: results[i].score,
@@ -524,11 +489,6 @@ fn aggregate_results(results: Vec<SearchResult>) -> Vec<SearchResult> {
                         .unwrap_or(std::cmp::Ordering::Equal)
                 })
                 .unwrap();
-
-            let max_confidence: f64 = group_indices
-                .iter()
-                .filter_map(|&idx| results[idx].confidence.parse::<f64>().ok())
-                .fold(0.0f64, f64::max);
 
             let mut combined_detail = String::new();
             let mut topics: Vec<&str> = Vec::new();
@@ -554,10 +514,8 @@ fn aggregate_results(results: Vec<SearchResult>) -> Vec<SearchResult> {
             };
 
             aggregated.push(SearchResult {
-                tier: results[best_idx].tier.clone(),
+                visibility: results[best_idx].visibility.clone(),
                 topic: topic_display,
-                confidence: format!("{max_confidence:.2}"),
-                summary: results[best_idx].summary.clone(),
                 detail: combined_detail,
                 created_at: results[best_idx].created_at,
                 score: results[best_idx].score,

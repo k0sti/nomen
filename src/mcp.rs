@@ -129,14 +129,12 @@ fn v2_tools_list() -> Value {
                     "type": "object",
                     "properties": {
                         "topic": { "type": "string", "description": "Topic/namespace for the memory" },
-                        "summary": { "type": "string", "description": "Short summary" },
-                        "detail": { "type": "string", "description": "Full detail text" },
+                        "detail": { "type": "string", "description": "Full detail text (the memory content)" },
                         "visibility": { "type": "string", "description": "Visibility (public/group/circle/personal/internal, default: public)" },
-                        "scope": { "type": "string", "description": "Scope (required for group/circle)" },
-                        "confidence": { "type": "number", "description": "Confidence score 0.0-1.0 (default 0.8)" },
+                        "scope": { "type": "string", "description": "Scope (required for group/circle, e.g. group ID or pubkey)" },
                         "metadata": { "type": "object", "description": "Arbitrary metadata" }
                     },
-                    "required": ["topic", "summary"]
+                    "required": ["topic", "detail"]
                 }
             },
             {

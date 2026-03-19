@@ -84,11 +84,9 @@ pub async fn search(
         .map(|r| {
             json!({
                 "topic": r.topic,
-                "summary": r.summary,
                 "detail": r.detail,
-                "visibility": r.tier,
+                "visibility": r.visibility,
                 "scope": "",
-                "confidence": r.confidence,
                 "match_type": format!("{:?}", r.match_type).to_lowercase(),
                 "graph_edge": r.graph_edge,
                 "contradicts": r.contradicts,
@@ -109,37 +107,27 @@ pub async fn put(nomen: &Nomen, default_channel: &str, params: &Value) -> Result
         .and_then(|v| v.as_str())
         .unwrap_or("")
         .to_string();
-    let summary = params
-        .get("summary")
-        .and_then(|v| v.as_str())
-        .unwrap_or("")
-        .to_string();
-
-    if topic.is_empty() || summary.is_empty() {
-        return Err(ApiError::invalid_params("topic and summary are required"));
-    }
-
+    // Accept "detail" or "content" (backward compat with OpenClaw) for body text
     let detail = params
         .get("detail")
+        .or_else(|| params.get("content"))
         .and_then(|v| v.as_str())
         .unwrap_or("")
         .to_string();
-    let confidence = params
-        .get("confidence")
-        .and_then(|v| v.as_f64())
-        .unwrap_or(0.8);
+
+    if topic.is_empty() || detail.is_empty() {
+        return Err(ApiError::invalid_params("topic and detail are required"));
+    }
 
     let (vis, scope) = resolve_visibility_scope(params, nomen, default_channel)?;
     let visibility = vis.unwrap_or(Visibility::Public);
     let scope_str = scope.unwrap_or_default();
-    let tier = visibility.to_tier(&scope_str);
 
     let mem = crate::NewMemory {
         topic: topic.clone(),
-        summary,
         detail,
-        tier,
-        confidence,
+        visibility: visibility.as_str().to_string(),
+        scope: scope_str,
         source: Some("api/v2".to_string()),
         model: Some("api/v2".to_string()),
     };
@@ -224,11 +212,9 @@ fn record_to_value(record: Option<crate::db::MemoryRecord>) -> Value {
     match record {
         Some(m) => json!({
             "topic": m.topic,
-            "summary": m.summary,
-            "detail": m.detail.unwrap_or_else(|| m.content.clone()),
-            "visibility": m.tier,
+            "detail": m.detail.unwrap_or_else(|| m.search_text.clone()),
+            "visibility": m.visibility,
             "scope": m.scope,
-            "confidence": m.confidence,
             "version": m.version,
             "source": m.source,
             "model": m.model,
@@ -274,11 +260,9 @@ pub async fn list(nomen: &Nomen, default_channel: &str, params: &Value) -> Resul
         .map(|m| {
             json!({
                 "topic": m.topic,
-                "summary": m.summary,
-                "detail": m.detail.as_ref().unwrap_or(&m.content),
-                "visibility": m.tier,
+                "detail": m.detail.as_ref().unwrap_or(&m.search_text),
+                "visibility": m.visibility,
                 "scope": m.scope,
-                "confidence": m.confidence,
                 "version": m.version,
                 "source": m.source,
                 "model": m.model,
@@ -417,11 +401,9 @@ pub async fn get_batch(
         .map(|m| {
             json!({
                 "topic": m.topic,
-                "summary": m.summary,
-                "detail": m.detail.as_ref().unwrap_or(&m.content),
-                "visibility": m.tier,
+                "detail": m.detail.as_ref().unwrap_or(&m.search_text),
+                "visibility": m.visibility,
                 "scope": m.scope,
-                "confidence": m.confidence,
                 "version": m.version,
                 "created_at": m.created_at,
                 "d_tag": m.d_tag,
@@ -436,11 +418,9 @@ pub async fn get_batch(
                 dt.clone(),
                 json!({
                     "topic": m.topic,
-                    "summary": m.summary,
-                    "detail": m.detail.as_ref().unwrap_or(&m.content),
-                    "visibility": m.tier,
+                    "detail": m.detail.as_ref().unwrap_or(&m.search_text),
+                    "visibility": m.visibility,
                     "scope": m.scope,
-                    "confidence": m.confidence,
                     "version": m.version,
                     "created_at": m.created_at,
                     "d_tag": m.d_tag,

@@ -9,14 +9,9 @@
 //! scope: telegram:-1003821690204
 //! version: 3
 //! pinned: true
-//! confidence: 0.8
 //! created_at: 2026-03-19T16:00:00Z
 //! updated_at: 2026-03-19T18:00:00Z
 //! ---
-//! Summary line here
-//!
-//! ---
-//!
 //! Detail content here (markdown).
 //! ```
 
@@ -44,8 +39,6 @@ pub type DispatchFn = Box<
 
 const SYNC_META_DIR: &str = ".nomen-fs";
 const STATE_FILE: &str = "state.json";
-const PUBKEY_MAP_FILE: &str = "pubkey-map.json";
-const PUBKEY_SHORT_LEN: usize = 8;
 
 // ── Sync state ───────────────────────────────────────────────────────
 
@@ -89,53 +82,6 @@ impl SyncState {
     }
 }
 
-/// Shortened pubkey → full hex pubkey mapping.
-#[derive(Debug, Default, Serialize, Deserialize)]
-pub struct PubkeyMap {
-    pub mappings: HashMap<String, String>,
-}
-
-impl PubkeyMap {
-    fn load(dir: &Path) -> Result<Self> {
-        let path = dir.join(SYNC_META_DIR).join(PUBKEY_MAP_FILE);
-        if !path.exists() {
-            return Ok(Self::default());
-        }
-        let text = std::fs::read_to_string(&path)?;
-        Ok(serde_json::from_str(&text)?)
-    }
-
-    fn save(&self, dir: &Path) -> Result<()> {
-        let path = dir.join(SYNC_META_DIR).join(PUBKEY_MAP_FILE);
-        let text = serde_json::to_string_pretty(self)?;
-        std::fs::write(&path, text)?;
-        Ok(())
-    }
-
-    /// Get or create a short key for a full hex pubkey.
-    fn shorten(&mut self, full_hex: &str) -> String {
-        // Check if we already have a mapping
-        for (short, full) in &self.mappings {
-            if full == full_hex {
-                return short.clone();
-            }
-        }
-        // Create new short key
-        let short = if full_hex.len() >= PUBKEY_SHORT_LEN {
-            full_hex[..PUBKEY_SHORT_LEN].to_string()
-        } else {
-            full_hex.to_string()
-        };
-        self.mappings.insert(short.clone(), full_hex.to_string());
-        short
-    }
-
-    /// Resolve a short key back to full hex.
-    fn resolve(&self, short: &str) -> Option<&str> {
-        self.mappings.get(short).map(|s| s.as_str())
-    }
-}
-
 // ── YAML frontmatter ─────────────────────────────────────────────────
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -145,16 +91,10 @@ pub struct MemoryFrontmatter {
     pub visibility: String,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub scope: String,
-    /// Original tier string (e.g. "group:telegram:-1003821690204", "personal", "public").
-    /// Preserved on roundtrip so push doesn't need to reconstruct it.
-    #[serde(default, skip_serializing_if = "String::is_empty")]
-    pub tier: String,
     #[serde(default)]
     pub version: i64,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub pinned: bool,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub confidence: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub importance: Option<i64>,
     pub created_at: String,
@@ -164,7 +104,6 @@ pub struct MemoryFrontmatter {
 /// A parsed markdown memory file.
 pub struct ParsedMemoryFile {
     pub frontmatter: MemoryFrontmatter,
-    pub summary: String,
     pub detail: String,
 }
 
@@ -175,10 +114,8 @@ pub struct ParsedMemoryFile {
 /// Slash-format d-tags map directly:
 /// - `public/my-topic` → `public/my-topic.md`
 /// - `group/telegram:-1003821690204/room/8485` → `group/telegram:-1003821690204/room/8485.md`
-/// - `personal/d29fe7c1.../projects/nomen` → `personal/d29fe7c1/projects/nomen.md` (shortened pubkey)
-///
-/// For personal/internal, the scope (pubkey) is shortened to 8 chars.
-pub fn dtag_to_path(d_tag: &str, pubkey_map: &mut PubkeyMap) -> PathBuf {
+/// - `personal/d29fe7c1.../projects/nomen` → `personal/d29fe7c1.../projects/nomen.md`
+pub fn dtag_to_path(d_tag: &str) -> PathBuf {
     let (visibility, scope) = memory::extract_visibility_scope(d_tag);
     let topic = memory::v2_dtag_topic(d_tag).unwrap_or(d_tag);
 
@@ -186,13 +123,7 @@ pub fn dtag_to_path(d_tag: &str, pubkey_map: &mut PubkeyMap) -> PathBuf {
     path.push(&visibility);
 
     if !scope.is_empty() {
-        // Shorten pubkeys for personal/internal
-        if visibility == "personal" || visibility == "internal" {
-            let short = pubkey_map.shorten(&scope);
-            path.push(&short);
-        } else {
-            path.push(&scope);
-        }
+        path.push(&scope);
     }
 
     // Topic may contain slashes → nested directories
@@ -204,8 +135,8 @@ pub fn dtag_to_path(d_tag: &str, pubkey_map: &mut PubkeyMap) -> PathBuf {
 
 /// Convert a relative file path back to a d-tag.
 ///
-/// Reverses `dtag_to_path`: strips `.md`, resolves shortened pubkeys.
-pub fn path_to_dtag(rel_path: &Path, pubkey_map: &PubkeyMap) -> Option<String> {
+/// Reverses `dtag_to_path`: strips `.md`, uses directory components directly.
+pub fn path_to_dtag(rel_path: &Path) -> Option<String> {
     let path_str = rel_path.to_str()?;
 
     // Must end in .md
@@ -233,27 +164,17 @@ pub fn path_to_dtag(rel_path: &Path, pubkey_map: &PubkeyMap) -> Option<String> {
     }
 
     // For other visibilities: {scope}/{topic}
-    // Scope is the first component of rest (no slashes in scope)
+    // Scope is the first component of rest
     let mut parts = rest.splitn(2, '/');
-    let scope_short = parts.next().unwrap_or("");
+    let scope = parts.next().unwrap_or("");
     let topic = parts.next();
 
-    if scope_short.is_empty() {
+    if scope.is_empty() {
         return None;
     }
 
-    // Resolve shortened pubkeys
-    let scope = if visibility == "personal" || visibility == "internal" {
-        pubkey_map
-            .resolve(scope_short)
-            .unwrap_or(scope_short)
-            .to_string()
-    } else {
-        scope_short.to_string()
-    };
-
     match topic {
-        Some(t) if !t.is_empty() => Some(memory::build_v2_dtag(visibility, &scope, t)),
+        Some(t) if !t.is_empty() => Some(memory::build_v2_dtag(visibility, scope, t)),
         _ => None,
     }
 }
@@ -271,16 +192,15 @@ pub fn memory_to_markdown(mem: &MemoryRecord) -> String {
         topic,
         visibility,
         scope,
-        tier: mem.tier.clone(),
         version: mem.version,
         pinned: mem.pinned,
-        confidence: mem.confidence,
         importance: mem.importance,
         created_at: mem.created_at.clone(),
         updated_at: mem.updated_at.clone(),
     };
 
-    frontmatter_to_markdown(&fm, mem.summary.as_deref().unwrap_or(""), mem.detail.as_deref().unwrap_or(""))
+    let detail = mem.detail.as_deref().unwrap_or("");
+    frontmatter_to_markdown(&fm, detail)
 }
 
 /// Serialize a JSON memory value (from API response) to markdown.
@@ -293,22 +213,19 @@ pub fn json_memory_to_markdown(val: &serde_json::Value) -> String {
         topic: val["topic"].as_str().unwrap_or("").to_string(),
         visibility,
         scope,
-        tier: val["visibility"].as_str().unwrap_or("").to_string(), // API returns visibility as tier
         version: val["version"].as_i64().unwrap_or(0),
         pinned: val["pinned"].as_bool().unwrap_or(false),
-        confidence: val["confidence"].as_f64(),
         importance: val["importance"].as_i64(),
         created_at: val["created_at"].as_str().unwrap_or("").to_string(),
         updated_at: val["updated_at"].as_str().unwrap_or("").to_string(),
     };
 
-    let summary = val["summary"].as_str().unwrap_or("");
     let detail = val["detail"].as_str().unwrap_or("");
 
-    frontmatter_to_markdown(&fm, summary, detail)
+    frontmatter_to_markdown(&fm, detail)
 }
 
-fn frontmatter_to_markdown(fm: &MemoryFrontmatter, summary: &str, detail: &str) -> String {
+fn frontmatter_to_markdown(fm: &MemoryFrontmatter, detail: &str) -> String {
     let yaml = serde_yaml_ng::to_string(fm).unwrap_or_default();
     // serde_yaml_ng adds a trailing newline; trim it so the --- is clean
     let yaml = yaml.trim_end();
@@ -317,18 +234,12 @@ fn frontmatter_to_markdown(fm: &MemoryFrontmatter, summary: &str, detail: &str) 
     out.push_str("---\n");
     out.push_str(yaml);
     out.push_str("\n---\n");
-    out.push_str(summary);
-
-    if !detail.is_empty() && detail != summary {
-        out.push_str("\n\n---\n\n");
-        out.push_str(detail);
-    }
-
+    out.push_str(detail);
     out.push('\n');
     out
 }
 
-/// Parse a markdown file into frontmatter + summary + detail.
+/// Parse a markdown file into frontmatter + detail.
 pub fn parse_markdown(content: &str) -> Result<ParsedMemoryFile> {
     // Split on YAML frontmatter delimiters
     let content = content.trim_start_matches('\u{feff}'); // BOM
@@ -347,22 +258,11 @@ pub fn parse_markdown(content: &str) -> Result<ParsedMemoryFile> {
     let frontmatter: MemoryFrontmatter =
         serde_yaml_ng::from_str(yaml_str).context("Invalid YAML frontmatter")?;
 
-    // Body: summary is before first `---`, detail is after
-    let (summary, detail) = if let Some(sep_idx) = body.find("\n---\n") {
-        let s = body[..sep_idx].trim().to_string();
-        let d = body[sep_idx + 5..].trim().to_string();
-        (s, d)
-    } else if let Some(sep_idx) = body.find("\n\n---\n") {
-        let s = body[..sep_idx].trim().to_string();
-        let d = body[sep_idx + 6..].trim().to_string();
-        (s, d)
-    } else {
-        (body.trim().to_string(), String::new())
-    };
+    // The entire body after frontmatter is the detail
+    let detail = body.trim().to_string();
 
     Ok(ParsedMemoryFile {
         frontmatter,
-        summary,
         detail,
     })
 }
@@ -394,11 +294,9 @@ pub fn init_sync_dir(dir: &Path) -> Result<()> {
         std::fs::create_dir_all(&tier_dir)?;
     }
 
-    // Initialize state and pubkey map
+    // Initialize state
     let state = SyncState::default();
     state.save(dir)?;
-    let pkmap = PubkeyMap::default();
-    pkmap.save(dir)?;
 
     // Create conflicts directory
     std::fs::create_dir_all(meta.join("conflicts"))?;
@@ -422,7 +320,6 @@ pub async fn pull(dispatch: &DispatchFn, dir: &Path) -> Result<usize> {
         .context("memory.list did not return memories array")?;
 
     let mut state = SyncState::load(dir)?;
-    let mut pkmap = PubkeyMap::load(dir)?;
     let mut count = 0;
 
     for mem in memories {
@@ -431,7 +328,7 @@ pub async fn pull(dispatch: &DispatchFn, dir: &Path) -> Result<usize> {
             _ => continue,
         };
 
-        let rel_path = dtag_to_path(&d_tag, &mut pkmap);
+        let rel_path = dtag_to_path(&d_tag);
         let abs_path = dir.join(&rel_path);
 
         // Create parent directories
@@ -468,7 +365,6 @@ pub async fn pull(dispatch: &DispatchFn, dir: &Path) -> Result<usize> {
     }
 
     state.save(dir)?;
-    pkmap.save(dir)?;
     info!(count, "Pulled memories to filesystem");
     Ok(count)
 }
@@ -478,7 +374,6 @@ pub async fn pull(dispatch: &DispatchFn, dir: &Path) -> Result<usize> {
 /// Push changed files back to Nomen via API dispatch. Returns count of memories updated.
 pub async fn push(dispatch: &DispatchFn, dir: &Path) -> Result<usize> {
     let mut state = SyncState::load(dir)?;
-    let pkmap = PubkeyMap::load(dir)?;
     let mut count = 0;
 
     // Walk all .md files in the sync directory
@@ -514,7 +409,7 @@ pub async fn push(dispatch: &DispatchFn, dir: &Path) -> Result<usize> {
         let d_tag = if !parsed.frontmatter.d_tag.is_empty() {
             parsed.frontmatter.d_tag.clone()
         } else {
-            match path_to_dtag(&rel_path, &pkmap) {
+            match path_to_dtag(&rel_path) {
                 Some(dt) => dt,
                 None => {
                     warn!(path = %abs_path.display(), "Cannot resolve d-tag, skipping");
@@ -523,29 +418,11 @@ pub async fn push(dispatch: &DispatchFn, dir: &Path) -> Result<usize> {
             }
         };
 
-        // Use tier from frontmatter if available (roundtrip-safe), otherwise reconstruct
-        let tier = if !parsed.frontmatter.tier.is_empty() {
-            parsed.frontmatter.tier.clone()
-        } else {
-            let (visibility, _scope) = memory::extract_visibility_scope(&d_tag);
-            if visibility == "group" {
-                let scope = parsed.frontmatter.scope.clone();
-                if scope.is_empty() {
-                    "group".to_string()
-                } else {
-                    format!("group:{scope}")
-                }
-            } else {
-                visibility.clone()
-            }
-        };
-
         let mut params = serde_json::json!({
             "topic": parsed.frontmatter.topic,
-            "summary": parsed.summary,
             "detail": parsed.detail,
-            "visibility": tier,
-            "confidence": parsed.frontmatter.confidence.unwrap_or(0.8),
+            "visibility": parsed.frontmatter.visibility,
+            "scope": parsed.frontmatter.scope,
             "source": "fs-push",
         });
 
@@ -594,7 +471,6 @@ pub async fn status(dispatch: &DispatchFn, dir: &Path) -> Result<()> {
     }
 
     let state = SyncState::load(dir)?;
-    let mut pkmap = PubkeyMap::load(dir)?;
 
     let result = dispatch(
         "memory.list".to_string(),
@@ -632,7 +508,7 @@ pub async fn status(dispatch: &DispatchFn, dir: &Path) -> Result<()> {
             Some(d) if !d.is_empty() => d.to_string(),
             _ => continue,
         };
-        let rel_path = dtag_to_path(&d_tag, &mut pkmap);
+        let rel_path = dtag_to_path(&d_tag);
         let rel_key = rel_path.to_str().unwrap_or("");
         if !state.files.contains_key(rel_key) {
             remote_new += 1;

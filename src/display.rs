@@ -31,7 +31,7 @@ pub fn display_memories(npubs: &[String], memories: &[ParsedMemory]) {
     let mut personal_count = 0usize;
 
     for mem in memories {
-        match mem.tier.as_str() {
+        match mem.visibility.as_str() {
             "public" => public_count += 1,
             "personal" | "internal" | "private" => personal_count += 1,
             t if t.starts_with("group") => group_count += 1,
@@ -40,22 +40,21 @@ pub fn display_memories(npubs: &[String], memories: &[ParsedMemory]) {
     }
 
     for mem in memories {
-        let tier_display = format!("[{}]", mem.tier);
-        let tier_colored = match mem.tier.as_str() {
+        let tier_display = format!("[{}]", mem.visibility);
+        let tier_colored = match mem.visibility.as_str() {
             "public" => tier_display.green(),
             "personal" | "internal" | "private" => tier_display.red(),
             _ => tier_display.yellow(),
         };
 
         println!(
-            "\n{} {} (v{}, confidence: {})",
+            "\n{} {} (v{})",
             tier_colored,
             mem.topic.bold(),
             mem.version,
-            mem.confidence
         );
         println!("  Model: {}", mem.model);
-        println!("  Summary: {}", mem.summary);
+        println!("  Summary: {}", crate::memory::first_line(&mem.detail));
         println!("  Created: {}", format_timestamp(mem.created_at));
     }
 

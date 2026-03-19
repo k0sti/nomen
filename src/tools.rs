@@ -306,15 +306,14 @@ pub async fn tool_search(nomen: &Nomen, default_channel: &str, args: &Value) -> 
             None => String::new(),
         };
         output.push(format!(
-            "{}. [{}] {}{} (confidence: {}, match: {:?}{})\n   {}",
+            "{}. [{}] {}{} (match: {:?}{})\n   {}",
             i + 1,
-            r.tier,
+            r.visibility,
             contradicts_prefix,
             r.topic,
-            r.confidence,
             r.match_type,
             graph_suffix,
-            r.summary
+            crate::memory::first_line(&r.detail)
         ));
     }
 

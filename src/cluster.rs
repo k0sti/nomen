@@ -236,9 +236,8 @@ pub struct ClusterDetail {
 struct ClusterableMemory {
     topic: String,
     d_tag: String,
-    summary: String,
     detail: String,
-    tier: String,
+    visibility: String,
 }
 
 /// Group memories by their topic namespace prefix at the given depth.
@@ -268,24 +267,19 @@ fn group_by_namespace(
 ///
 /// Uses the most restrictive tier among members:
 /// internal > personal > group > public
-fn derive_cluster_tier(members: &[&ClusterableMemory]) -> String {
-    let has_internal = members.iter().any(|m| m.tier == "internal");
+fn derive_cluster_visibility(members: &[&ClusterableMemory]) -> String {
+    let has_internal = members.iter().any(|m| m.visibility == "internal");
     let has_personal = members
         .iter()
-        .any(|m| m.tier == "personal" || m.tier == "private");
-    let has_group = members.iter().any(|m| m.tier.starts_with("group"));
+        .any(|m| m.visibility == "personal" || m.visibility == "private");
+    let has_group = members.iter().any(|m| m.visibility == "group");
 
     if has_internal {
         "internal".to_string()
     } else if has_personal {
         "personal".to_string()
     } else if has_group {
-        // Use the first group tier found
-        members
-            .iter()
-            .find(|m| m.tier.starts_with("group"))
-            .map(|m| m.tier.clone())
-            .unwrap_or_else(|| "group".to_string())
+        "group".to_string()
     } else {
         "public".to_string()
     }
@@ -335,9 +329,8 @@ pub async fn run_cluster_fusion(
             Some(ClusterableMemory {
                 topic: m.topic.clone(),
                 d_tag: m.d_tag.unwrap_or_default(),
-                summary: m.summary.unwrap_or_default(),
-                detail: m.content,
-                tier: m.tier,
+                detail: m.detail.unwrap_or_default(),
+                visibility: m.visibility.clone(),
             })
         })
         .collect();
@@ -389,7 +382,8 @@ pub async fn run_cluster_fusion(
                 } else {
                     m.detail.clone()
                 };
-                format!("- [{}] {}\n  {}", m.topic, m.summary, detail_preview)
+                let first_line = m.detail.lines().next().unwrap_or("");
+                format!("- [{}] {}\n  {}", m.topic, first_line, detail_preview)
             })
             .collect::<Vec<_>>()
             .join("\n");
@@ -407,18 +401,17 @@ pub async fn run_cluster_fusion(
             }
         };
 
-        // Determine tier from members
-        let tier = derive_cluster_tier(members);
+        // Determine visibility from members
+        let tier = derive_cluster_visibility(members);
         let cluster_topic = format!("cluster/{prefix}");
         let author_hex = config.author_pubkey.as_deref().unwrap_or("");
 
         // Store as cluster memory using store_direct
         let mem = crate::NewMemory {
             topic: cluster_topic.clone(),
-            summary: synthesis.summary,
-            detail: synthesis.detail,
-            tier,
-            confidence: synthesis.confidence,
+            detail: format!("{}\n\n{}", synthesis.summary, synthesis.detail),
+            visibility: tier,
+            scope: String::new(),
             source: Some("cluster_fusion".to_string()),
             model: Some("nomen/cluster".to_string()),
         };

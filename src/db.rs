@@ -108,16 +108,14 @@ where
 /// SurrealDB memory record
 #[derive(Debug, Clone, Serialize, Deserialize, SurrealValue)]
 pub struct MemoryRecord {
-    pub content: String,
-    pub summary: Option<String>,
+    pub search_text: String,
     /// The actual detail text, without topic/summary prepended.
     #[serde(default)]
     pub detail: Option<String>,
     pub embedding: Option<Vec<f32>>,
-    pub tier: String,
+    pub visibility: String,
     pub scope: String,
     pub topic: String,
-    pub confidence: Option<f64>,
     pub source: String,
     pub model: Option<String>,
     pub version: i64,
@@ -150,11 +148,9 @@ struct VersionCheck {
 /// Search result from SurrealDB (text-only search)
 #[derive(Debug, Deserialize, SurrealValue)]
 pub struct TextSearchResult {
-    pub content: String,
-    pub summary: Option<String>,
-    pub tier: String,
+    pub search_text: String,
+    pub visibility: String,
     pub topic: String,
-    pub confidence: Option<f64>,
     pub created_at: String,
     #[allow(dead_code)]
     pub score: Option<f64>,
@@ -163,14 +159,12 @@ pub struct TextSearchResult {
 /// Hybrid search result from SurrealDB
 #[derive(Debug, Deserialize, SurrealValue)]
 pub struct HybridSearchRow {
-    pub content: String,
-    pub summary: Option<String>,
+    pub search_text: String,
     #[serde(default)]
     pub detail: Option<String>,
-    pub tier: String,
+    pub visibility: String,
     pub scope: String,
     pub topic: String,
-    pub confidence: Option<f64>,
     pub importance: Option<i32>,
     pub source: String,
     pub model: Option<String>,
@@ -189,16 +183,13 @@ pub struct HybridSearchRow {
 #[derive(Debug, Deserialize, SurrealValue)]
 pub struct MissingEmbeddingRow {
     pub d_tag: Option<String>,
-    pub content: String,
-    pub summary: Option<String>,
+    pub search_text: String,
 }
 
 /// Formatted search result for display
 pub struct SearchDisplayResult {
-    pub tier: String,
+    pub visibility: String,
     pub topic: String,
-    pub confidence: String,
-    pub summary: String,
     pub created_at: Timestamp,
 }
 
@@ -215,14 +206,12 @@ fn db_path() -> std::path::PathBuf {
 pub const SCHEMA: &str = SCHEMA_BASE;
 const SCHEMA_BASE: &str = r#"
 DEFINE TABLE IF NOT EXISTS memory SCHEMAFULL;
-DEFINE FIELD IF NOT EXISTS content    ON memory TYPE string;
-DEFINE FIELD IF NOT EXISTS summary    ON memory TYPE option<string>;
+DEFINE FIELD IF NOT EXISTS search_text ON memory TYPE string;
 DEFINE FIELD IF NOT EXISTS detail     ON memory TYPE option<string>;
 DEFINE FIELD IF NOT EXISTS embedding  ON memory TYPE option<array<float>>;
-DEFINE FIELD IF NOT EXISTS tier       ON memory TYPE string;
+DEFINE FIELD IF NOT EXISTS visibility ON memory TYPE string;
 DEFINE FIELD IF NOT EXISTS scope      ON memory TYPE string;
 DEFINE FIELD IF NOT EXISTS topic      ON memory TYPE string;
-DEFINE FIELD IF NOT EXISTS confidence ON memory TYPE option<float>;
 DEFINE FIELD IF NOT EXISTS source     ON memory TYPE string;
 DEFINE FIELD IF NOT EXISTS model      ON memory TYPE option<string>;
 DEFINE FIELD IF NOT EXISTS version    ON memory TYPE int DEFAULT 1;
@@ -245,9 +234,9 @@ DEFINE FIELD IF NOT EXISTS source_time_end   ON memory TYPE option<string>;
 -- still support lexicographic ordering which is sufficient for our queries.
 
 DEFINE ANALYZER IF NOT EXISTS memory_analyzer TOKENIZERS class FILTERS ascii, lowercase, snowball(english);
-DEFINE INDEX IF NOT EXISTS memory_fulltext ON memory FIELDS content FULLTEXT ANALYZER memory_analyzer BM25;
+DEFINE INDEX IF NOT EXISTS memory_fulltext ON memory FIELDS search_text FULLTEXT ANALYZER memory_analyzer BM25;
 DEFINE INDEX IF NOT EXISTS memory_d_tag  ON memory FIELDS d_tag UNIQUE;
-DEFINE INDEX IF NOT EXISTS memory_tier   ON memory FIELDS tier;
+DEFINE INDEX IF NOT EXISTS memory_visibility ON memory FIELDS visibility;
 DEFINE INDEX IF NOT EXISTS memory_scope  ON memory FIELDS scope;
 DEFINE INDEX IF NOT EXISTS memory_topic  ON memory FIELDS topic;
 
@@ -378,33 +367,18 @@ fn build_record(parsed: &ParsedMemory, nostr_id: &str) -> MemoryRecord {
 
     let scope = extract_scope(&parsed.d_tag);
     let version: i64 = parsed.version.parse().unwrap_or(1);
-    let confidence: Option<f64> = parsed.confidence.parse().ok();
 
-    // Store plain text in content for FTS indexing (not JSON).
+    // Store plain text in search_text for FTS indexing (not JSON).
     // Include topic so topic words are searchable too.
-    let body = if parsed.detail.is_empty() {
-        parsed.summary.clone()
-    } else {
-        format!("{} {}", parsed.summary, parsed.detail)
-    };
-    let searchable_content = format!("{} {}", parsed.topic, body);
-
-    // Store actual detail text separately from FTS content.
-    let detail_text = if parsed.detail.is_empty() {
-        None
-    } else {
-        Some(parsed.detail.clone())
-    };
+    let searchable_content = format!("{} {}", parsed.topic, parsed.detail);
 
     MemoryRecord {
-        content: searchable_content,
-        summary: Some(parsed.summary.clone()),
-        detail: detail_text,
+        search_text: searchable_content,
+        detail: Some(parsed.detail.clone()),
         embedding: None,
-        tier: crate::memory::base_tier(&parsed.tier).to_string(),
+        visibility: crate::memory::base_tier(&parsed.visibility).to_string(),
         scope,
         topic: parsed.topic.clone(),
-        confidence,
         source: parsed.source.clone(),
         model: Some(parsed.model.clone()),
         version,
@@ -471,18 +445,16 @@ pub async fn store_memory_direct(
 
     db.query(
         "CREATE memory SET \
-         content = $content, summary = $summary, detail = $detail, tier = $tier, scope = $scope, \
-         topic = $topic, confidence = $confidence, source = $source, model = $model, \
+         search_text = $search_text, detail = $detail, visibility = $visibility, scope = $scope, \
+         topic = $topic, source = $source, model = $model, \
          version = $version, nostr_id = $nostr_id, d_tag = $d_tag, \
          created_at = $created_at, updated_at = $updated_at, ephemeral = $ephemeral"
     )
-    .bind(("content", record.content))
-    .bind(("summary", record.summary))
+    .bind(("search_text", record.search_text))
     .bind(("detail", record.detail))
-    .bind(("tier", record.tier))
+    .bind(("visibility", record.visibility))
     .bind(("scope", record.scope))
     .bind(("topic", record.topic))
-    .bind(("confidence", record.confidence))
     .bind(("source", record.source))
     .bind(("model", record.model))
     .bind(("version", record.version))
@@ -507,9 +479,9 @@ pub async fn search_memories(
 ) -> Result<Vec<SearchDisplayResult>> {
     let query_owned = query.to_string();
 
-    let mut conditions = vec!["content @1@ $query".to_string()];
+    let mut conditions = vec!["search_text @1@ $query".to_string()];
     if tier.is_some() {
-        conditions.push("tier = $tier".to_string());
+        conditions.push("visibility = $tier".to_string());
     }
     if allowed_scopes.is_some() {
         conditions.push("(scope = \"\" OR array::any($scopes, |$s| scope = $s OR string::starts_with(scope, string::concat($s, \".\"))))".to_string());
@@ -540,13 +512,8 @@ pub async fn search_memories(
                 .unwrap_or(Timestamp::from(0));
 
             SearchDisplayResult {
-                tier: r.tier,
+                visibility: r.visibility,
                 topic: r.topic,
-                confidence: r
-                    .confidence
-                    .map(|c| format!("{c:.2}"))
-                    .unwrap_or("?".to_string()),
-                summary: r.summary.unwrap_or(r.content),
                 created_at: ts,
             }
         })
@@ -574,10 +541,10 @@ pub async fn list_memories(
     pinned: Option<bool>,
 ) -> Result<Vec<MemoryRecord>> {
     // Exclude embedding from SELECT to avoid SurrealDB HNSW index deserialization issues
-    let fields = "content, summary, detail, tier, scope, topic, confidence, source, model, version, nostr_id, d_tag, created_at, updated_at, ephemeral, consolidated_from, consolidated_at, last_accessed, access_count, importance, pinned, embedding IS NOT NONE AS embedded";
+    let fields = "search_text, detail, visibility, scope, topic, source, model, version, nostr_id, d_tag, created_at, updated_at, ephemeral, consolidated_from, consolidated_at, last_accessed, access_count, importance, pinned, embedding IS NOT NONE AS embedded";
     let mut conditions = Vec::new();
     if tier.is_some() {
-        conditions.push("tier = $tier".to_string());
+        conditions.push("visibility = $tier".to_string());
     }
     if let Some(p) = pinned {
         conditions.push(format!("pinned = {p}"));
@@ -608,7 +575,7 @@ pub async fn get_memories_without_embeddings(
     limit: usize,
 ) -> Result<Vec<MissingEmbeddingRow>> {
     let sql =
-        format!("SELECT d_tag, content, summary FROM memory WHERE embedding IS NONE LIMIT {limit}");
+        format!("SELECT d_tag, search_text FROM memory WHERE embedding IS NONE LIMIT {limit}");
     let results: Vec<MissingEmbeddingRow> = db.query(&sql).await?.check()?.take(0)?;
     Ok(results)
 }
@@ -620,21 +587,18 @@ pub async fn hybrid_search(
     query_embedding: &[f32],
     tier: Option<&str>,
     allowed_scopes: Option<&[String]>,
-    min_confidence: Option<f64>,
+    _min_confidence: Option<f64>,
     vector_weight: f32,
     text_weight: f32,
     limit: usize,
 ) -> Result<Vec<HybridSearchRow>> {
-    let mut conditions = vec!["content @1@ $query".to_string()];
+    let mut conditions = vec!["search_text @1@ $query".to_string()];
 
     if tier.is_some() {
-        conditions.push("tier = $tier".to_string());
+        conditions.push("visibility = $tier".to_string());
     }
     if allowed_scopes.is_some() {
         conditions.push("(scope = \"\" OR array::any($scopes, |$s| scope = $s OR string::starts_with(scope, string::concat($s, \".\"))))".to_string());
-    }
-    if min_confidence.is_some() {
-        conditions.push("(confidence IS NONE OR confidence >= $min_conf)".to_string());
     }
 
     let where_clause = conditions.join(" AND ");
@@ -663,9 +627,6 @@ pub async fn hybrid_search(
     if let Some(scopes) = allowed_scopes {
         q = q.bind(("scopes", scopes.to_vec()));
     }
-    if let Some(min_conf) = min_confidence {
-        q = q.bind(("min_conf", min_conf));
-    }
 
     let results: Vec<HybridSearchRow> = q.await?.check()?.take(0)?;
     Ok(results)
@@ -674,7 +635,7 @@ pub async fn hybrid_search(
 /// Get a single memory by d-tag (topic).
 pub async fn get_memory_by_dtag(db: &Surreal<Db>, d_tag: &str) -> Result<Option<MemoryRecord>> {
     let mut results: Vec<MemoryRecord> = db
-        .query("SELECT content, summary, detail, tier, scope, topic, confidence, source, model, version, nostr_id, d_tag, created_at, updated_at, ephemeral, consolidated_from, consolidated_at, last_accessed, access_count, importance, pinned, embedding IS NOT NONE AS embedded FROM memory WHERE d_tag = $d_tag LIMIT 1")
+        .query("SELECT search_text, detail, visibility, scope, topic, source, model, version, nostr_id, d_tag, created_at, updated_at, ephemeral, consolidated_from, consolidated_at, last_accessed, access_count, importance, pinned, embedding IS NOT NONE AS embedded FROM memory WHERE d_tag = $d_tag LIMIT 1")
         .bind(("d_tag", d_tag.to_string()))
         .await?
         .check()?
@@ -688,7 +649,7 @@ pub async fn get_memories_by_dtags(db: &Surreal<Db>, d_tags: &[String]) -> Resul
         return Ok(vec![]);
     }
     let results: Vec<MemoryRecord> = db
-        .query("SELECT content, summary, detail, tier, scope, topic, confidence, source, model, version, nostr_id, d_tag, created_at, updated_at, ephemeral, consolidated_from, consolidated_at, last_accessed, access_count, importance, pinned, embedding IS NOT NONE AS embedded FROM memory WHERE d_tag IN $d_tags")
+        .query("SELECT search_text, detail, visibility, scope, topic, source, model, version, nostr_id, d_tag, created_at, updated_at, ephemeral, consolidated_from, consolidated_at, last_accessed, access_count, importance, pinned, embedding IS NOT NONE AS embedded FROM memory WHERE d_tag IN $d_tags")
         .bind(("d_tags", d_tags.to_vec()))
         .await?
         .check()?
@@ -699,7 +660,7 @@ pub async fn get_memories_by_dtags(db: &Surreal<Db>, d_tags: &[String]) -> Resul
 /// Get a single memory by topic field (raw topic, not d-tag).
 pub async fn get_memory_by_topic(db: &Surreal<Db>, topic: &str) -> Result<Option<MemoryRecord>> {
     let mut results: Vec<MemoryRecord> = db
-        .query("SELECT content, summary, detail, tier, scope, topic, confidence, source, model, version, nostr_id, d_tag, created_at, updated_at, ephemeral, consolidated_from, consolidated_at, last_accessed, access_count, importance, pinned, embedding IS NOT NONE AS embedded FROM memory WHERE topic = $topic LIMIT 1")
+        .query("SELECT search_text, detail, visibility, scope, topic, source, model, version, nostr_id, d_tag, created_at, updated_at, ephemeral, consolidated_from, consolidated_at, last_accessed, access_count, importance, pinned, embedding IS NOT NONE AS embedded FROM memory WHERE topic = $topic LIMIT 1")
         .bind(("topic", topic.to_string()))
         .await?
         .check()?
@@ -1293,11 +1254,9 @@ pub struct GraphNeighbor {
     pub edge_type: String,
     /// The relation field on references edges (e.g. "contradicts", "supersedes")
     pub relation: Option<String>,
-    pub tier: String,
+    pub visibility: String,
     pub topic: String,
-    pub confidence: Option<f64>,
-    pub content: String,
-    pub summary: Option<String>,
+    pub search_text: String,
     #[serde(default)]
     pub detail: Option<String>,
     pub created_at: String,
@@ -1347,7 +1306,7 @@ pub async fn get_graph_neighbors_simple(
 
     for edge in &out_edges {
         let mems: Vec<GraphNeighbor> = db
-            .query("SELECT $edge_type AS edge_type, $relation AS relation, tier, topic, confidence, content, summary, created_at, d_tag, importance, last_accessed FROM $target")
+            .query("SELECT $edge_type AS edge_type, $relation AS relation, visibility, topic, search_text, created_at, d_tag, importance, last_accessed FROM $target")
             .bind(("target", edge.out.clone()))
             .bind(("edge_type", "references".to_string()))
             .bind(("relation", edge.relation.clone().unwrap_or_default()))
@@ -1374,7 +1333,7 @@ pub async fn get_graph_neighbors_simple(
 
     for edge in &in_edges {
         let mems: Vec<GraphNeighbor> = db
-            .query("SELECT $edge_type AS edge_type, $relation AS relation, tier, topic, confidence, content, summary, created_at, d_tag, importance, last_accessed FROM $target")
+            .query("SELECT $edge_type AS edge_type, $relation AS relation, visibility, topic, search_text, created_at, d_tag, importance, last_accessed FROM $target")
             .bind(("target", edge.in_node.clone()))
             .bind(("edge_type", "references".to_string()))
             .bind(("relation", edge.relation.clone().unwrap_or_default()))
@@ -1414,7 +1373,7 @@ pub async fn get_graph_neighbors_simple(
 
         for back in &back_edges {
             let mems: Vec<GraphNeighbor> = db
-                .query("SELECT $edge_type AS edge_type, NONE AS relation, tier, topic, confidence, content, summary, created_at, d_tag, importance, last_accessed FROM $target")
+                .query("SELECT $edge_type AS edge_type, NONE AS relation, visibility, topic, search_text, created_at, d_tag, importance, last_accessed FROM $target")
                 .bind(("target", back.in_node.clone()))
                 .bind(("edge_type", "mentions".to_string()))
                 .await?
@@ -1453,7 +1412,7 @@ pub async fn get_graph_neighbors_simple(
 
         for back in &back_edges {
             let mems: Vec<GraphNeighbor> = db
-                .query("SELECT $edge_type AS edge_type, NONE AS relation, tier, topic, confidence, content, summary, created_at, d_tag, importance, last_accessed FROM $target")
+                .query("SELECT $edge_type AS edge_type, NONE AS relation, visibility, topic, search_text, created_at, d_tag, importance, last_accessed FROM $target")
                 .bind(("target", back.in_node.clone()))
                 .bind(("edge_type", "consolidated_from".to_string()))
                 .await?
@@ -1562,19 +1521,19 @@ pub async fn get_detailed_stats(db: &Surreal<Db>) -> Result<DetailedStats> {
     // ── Memories by tier ────────────────────────────────────────
     #[derive(Deserialize, SurrealValue)]
     struct TierRow {
-        tier: String,
+        visibility: String,
         count: usize,
     }
 
     let tier_rows: Vec<TierRow> = db
-        .query("SELECT tier, count() AS count FROM memory GROUP BY tier ORDER BY count DESC")
+        .query("SELECT visibility, count() AS count FROM memory GROUP BY visibility ORDER BY count DESC")
         .await?
         .check()?
         .take(0)?;
 
     let memories_by_tier: Vec<(String, usize)> = tier_rows
         .into_iter()
-        .map(|r| (r.tier, r.count))
+        .map(|r| (r.visibility, r.count))
         .collect();
 
     // ── Messages by channel (consolidated vs not) ───────────────
@@ -1767,7 +1726,6 @@ pub struct PrunableMemory {
     #[serde(default, deserialize_with = "deserialize_option_string")]
     pub d_tag: Option<String>,
     pub topic: String,
-    pub confidence: Option<f64>,
     pub access_count: Option<i64>,
     pub created_at: String,
     #[serde(default, deserialize_with = "deserialize_option_string")]
@@ -1776,28 +1734,22 @@ pub struct PrunableMemory {
 
 /// Find memories eligible for pruning based on age and access patterns.
 ///
-/// Pruning rules (from spec):
+/// Pruning rules:
 /// - access_count = 0 AND age > max_days
-/// - confidence < 0.3 AND age > 30 days
-/// - access_count = 0 AND confidence < 0.5 AND age > 30 days
 pub async fn find_prunable_memories(
     db: &Surreal<Db>,
     max_days: u64,
 ) -> Result<Vec<PrunableMemory>> {
     let cutoff = chrono::Utc::now() - chrono::Duration::days(max_days as i64);
     let cutoff_str = cutoff.to_rfc3339();
-    let cutoff_30d = (chrono::Utc::now() - chrono::Duration::days(30)).to_rfc3339();
 
-    let sql = "SELECT d_tag, topic, confidence, access_count, created_at, last_accessed \
+    let sql = "SELECT d_tag, topic, access_count, created_at, last_accessed \
                FROM memory WHERE \
-               (access_count = 0 AND created_at < $cutoff) OR \
-               (confidence IS NOT NONE AND confidence < 0.3 AND created_at < $cutoff_30d) OR \
-               (access_count = 0 AND confidence IS NOT NONE AND confidence < 0.5 AND created_at < $cutoff_30d)";
+               (access_count = 0 AND created_at < $cutoff)";
 
     let results: Vec<PrunableMemory> = db
         .query(sql)
         .bind(("cutoff", cutoff_str))
-        .bind(("cutoff_30d", cutoff_30d))
         .await?
         .check()?
         .take(0)?;
@@ -1876,7 +1828,7 @@ pub async fn get_unpublished_memories(
     db: &Surreal<Db>,
     limit: usize,
 ) -> Result<Vec<MemoryRecord>> {
-    let fields = "content, summary, detail, tier, scope, topic, confidence, source, model, version, nostr_id, d_tag, created_at, updated_at, ephemeral, consolidated_from, consolidated_at, last_accessed, access_count, importance, pinned, embedding IS NOT NONE AS embedded";
+    let fields = "search_text, detail, visibility, scope, topic, source, model, version, nostr_id, d_tag, created_at, updated_at, ephemeral, consolidated_from, consolidated_at, last_accessed, access_count, importance, pinned, embedding IS NOT NONE AS embedded";
     let sql = format!(
         "SELECT {fields} FROM memory \
          WHERE nostr_id IS NONE OR nostr_id = '' OR string::len(nostr_id) != 64 \

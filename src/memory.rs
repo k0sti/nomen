@@ -13,17 +13,23 @@ pub struct MemoryContent {
 }
 
 pub struct ParsedMemory {
-    pub tier: String,
+    pub visibility: String,
     pub topic: String,
     pub version: String,
-    pub confidence: String,
     pub model: String,
-    pub summary: String,
     pub created_at: Timestamp,
     pub d_tag: String,
     pub source: String,
     pub content_raw: String,
     pub detail: String,
+}
+
+/// Return the first non-empty line of `detail` for display purposes.
+pub fn first_line(detail: &str) -> &str {
+    detail
+        .lines()
+        .find(|l| !l.trim().is_empty())
+        .unwrap_or(detail)
 }
 
 /// Parse a d-tag into a normalized string.
@@ -142,7 +148,16 @@ pub fn build_v2_dtag(visibility: &str, context: &str, topic: &str) -> String {
     }
 }
 
-/// Build a d-tag from tier string and author pubkey hex.
+/// Build a d-tag from visibility, scope, and topic.
+///
+/// - `("public", "", "topic")` → `public/topic`
+/// - `("group", "techteam", "topic")` → `group/techteam/topic`
+/// - `("personal", "{pubkey}", "topic")` → `personal/{pubkey}/topic`
+pub fn build_dtag(visibility: &str, scope: &str, topic: &str) -> String {
+    build_v2_dtag(visibility, scope, topic)
+}
+
+/// Build a d-tag from tier string and author pubkey hex (legacy helper).
 ///
 /// Derives visibility and context from the tier:
 /// - `"public"` → `public/topic`
@@ -316,12 +331,11 @@ pub fn parse_event(event: &Event, signer: &dyn NomenSigner) -> ParsedMemory {
     let tags = &event.tags;
     let d_tag_raw = get_tag_value(tags, "d").unwrap_or_default();
     let topic = parse_d_tag(&d_tag_raw);
-    let tier = parse_tier(tags);
+    let visibility = parse_tier(tags);
     let version = get_tag_value(tags, "version").unwrap_or_else(|| "?".to_string());
-    let confidence = get_tag_value(tags, "confidence").unwrap_or_else(|| "?".to_string());
     let model = get_tag_value(tags, "model").unwrap_or_else(|| "unknown".to_string());
 
-    let content_str = if tier == "personal" || tier == "internal" {
+    let content_str = if visibility == "personal" || visibility == "internal" {
         match try_decrypt_content(event, signer) {
             Some(decrypted) => decrypted,
             None => event.content.to_string(),
@@ -330,26 +344,23 @@ pub fn parse_event(event: &Event, signer: &dyn NomenSigner) -> ParsedMemory {
         event.content.to_string()
     };
 
-    let (summary, detail) = match serde_json::from_str::<MemoryContent>(&content_str) {
-        Ok(content) => (content.summary.clone(), content.detail),
-        Err(_) => {
-            let s = if content_str.len() > 80 {
-                format!("{}...", &content_str[..80])
+    let detail = match serde_json::from_str::<MemoryContent>(&content_str) {
+        Ok(content) => {
+            if content.detail.is_empty() {
+                content.summary
             } else {
-                content_str.clone()
-            };
-            (s.clone(), s)
+                content.detail
+            }
         }
+        Err(_) => content_str.clone(),
     };
 
     // Always normalize d_tag to clean topic for SurrealDB storage
     ParsedMemory {
-        tier,
+        visibility,
         topic: topic.clone(),
         version,
-        confidence,
         model,
-        summary,
         created_at: event.created_at,
         d_tag: topic,
         source: event.pubkey.to_hex(),

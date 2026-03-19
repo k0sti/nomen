@@ -19,10 +19,8 @@ const TIME_WINDOW_SECS: i64 = 4 * 3600;
 /// A memory extracted by the LLM from a batch of messages.
 #[derive(Debug, Clone)]
 pub struct ExtractedMemory {
-    pub summary: String,
     pub detail: String,
     pub topic: String,
-    pub confidence: f64,
     /// Importance score (1-10). Higher = more important to remember.
     pub importance: Option<i32>,
     /// Whether this memory contradicts existing information (set during merge).
@@ -39,12 +37,11 @@ pub trait LlmProvider: Send + Sync {
     /// Default implementation just returns the new extraction as-is.
     async fn merge(
         &self,
-        existing_summary: &str,
         existing_detail: &str,
         messages: &[RawMessageRecord],
     ) -> Result<Vec<ExtractedMemory>> {
         // Default: just consolidate the new messages (no merge logic)
-        let _ = (existing_summary, existing_detail);
+        let _ = existing_detail;
         self.consolidate(messages).await
     }
 }
@@ -67,26 +64,39 @@ impl LlmProvider for NoopLlmProvider {
             .iter()
             .map(|m| format!("[{}] {}: {}", m.created_at, m.sender, m.content))
             .collect();
-        let detail = content_lines.join("\n");
+        let transcript = content_lines.join("\n");
 
         let mut senders: Vec<&str> = messages.iter().map(|m| m.sender.as_str()).collect();
         senders.sort();
         senders.dedup();
 
-        let summary = format!(
+        let summary_line = format!(
             "{} messages from {} sender(s)",
             messages.len(),
             senders.len()
         );
+        let detail = format!("{summary_line}\n\n{transcript}");
 
         Ok(vec![ExtractedMemory {
-            summary,
             detail,
             topic,
-            confidence: 0.5,
             importance: Some(5),
             contradicts_existing: false,
         }])
+    }
+}
+
+/// Combine an LLM-returned summary and detail into a single detail field.
+///
+/// The summary becomes the first line, separated by a blank line from the rest.
+/// If either is empty, the other is used as-is.
+fn combine_summary_detail(summary: &str, detail: &str) -> String {
+    let summary = summary.trim();
+    let detail = detail.trim();
+    match (summary.is_empty(), detail.is_empty()) {
+        (true, _) => detail.to_string(),
+        (_, true) => summary.to_string(),
+        _ => format!("{summary}\n\n{detail}"),
     }
 }
 
@@ -151,12 +161,12 @@ fn sanitize_topic_component(s: &str) -> String {
     result.trim_matches('-').to_string()
 }
 
-/// Derive the memory tier from a group of source messages.
+/// Derive the memory visibility from a group of source messages.
 ///
 /// - DM messages (source "nostr" with sender npub, no group channel) → "personal"
 /// - Group messages (channel matches a group pattern) → "group"
 /// - Public/CLI/other → "public"
-fn derive_tier_from_messages(messages: &[RawMessageRecord]) -> String {
+fn derive_visibility_from_messages(messages: &[RawMessageRecord]) -> String {
     // Check sources — if any message is from a DM-like source, treat as personal
     let has_dm = messages.iter().any(|m| {
         // nostr DMs have source "nostr" and either empty channel or "dm" channel
@@ -183,30 +193,29 @@ fn derive_tier_from_messages(messages: &[RawMessageRecord]) -> String {
 }
 
 /// Enforce cross-group consolidation guard: personal/internal sources must never
-/// produce group or public tier memories. Returns the tier, potentially downgraded.
-fn enforce_tier_guard(derived_tier: &str, source_tier: &str) -> String {
-    match source_tier {
+/// produce group or public visibility memories. Returns the visibility, potentially downgraded.
+fn enforce_visibility_guard(derived: &str, source_visibility: &str) -> String {
+    match source_visibility {
         "personal" | "internal" | "private" => {
             // Personal/internal sources can only produce personal memories
-            if derived_tier != "personal" && derived_tier != "internal" && derived_tier != "private"
-            {
+            if derived != "personal" && derived != "internal" && derived != "private" {
                 warn!(
-                    derived = derived_tier,
-                    "Cross-group guard: downgrading tier to personal (source is {source_tier})"
+                    derived,
+                    "Cross-group guard: downgrading visibility to personal (source is {source_visibility})"
                 );
             }
             "personal".to_string()
         }
         "group" => {
             // Group sources can produce group or personal, but not public
-            if derived_tier == "public" {
-                warn!("Cross-group guard: downgrading tier to group (source is group)");
+            if derived == "public" {
+                warn!("Cross-group guard: downgrading visibility to group (source is group)");
                 "group".to_string()
             } else {
-                derived_tier.to_string()
+                derived.to_string()
             }
         }
-        _ => derived_tier.to_string(),
+        _ => derived.to_string(),
     }
 }
 
@@ -275,9 +284,11 @@ struct LlmExtracted {
 #[derive(Deserialize)]
 struct LlmMemory {
     topic: String,
+    /// Kept for backward compat with LLM responses — combined into detail.
+    #[serde(default)]
     summary: String,
+    #[serde(default)]
     detail: String,
-    confidence: f64,
     #[serde(default)]
     importance: Option<i32>,
     #[serde(default)]
@@ -288,7 +299,6 @@ struct LlmMemory {
 impl LlmProvider for OpenAiLlmProvider {
     async fn merge(
         &self,
-        existing_summary: &str,
         existing_detail: &str,
         messages: &[RawMessageRecord],
     ) -> Result<Vec<ExtractedMemory>> {
@@ -311,7 +321,7 @@ impl LlmProvider for OpenAiLlmProvider {
 
         let system_prompt = "You are a memory consolidation agent. You are merging new information \
 into an existing memory. Return JSON with this exact structure: {\"memories\": [{\"topic\": \"category/subcategory\", \
-\"summary\": \"one-line summary\", \"detail\": \"full detail\", \"confidence\": 0.8, \"importance\": 7, \
+\"summary\": \"one-line summary\", \"detail\": \"full detail\", \"importance\": 7, \
 \"contradicts_existing\": false}]}. \
 Merge the new information into the existing memory. Update what changed. Keep what's still true. \
 Set contradicts_existing to true if the new information directly contradicts facts in the existing memory. \
@@ -319,7 +329,7 @@ Set importance 1-10: 1=trivial, 5=normal, 8=important decision, 10=critical fact
 The topic should remain the same as the existing memory's topic.";
 
         let user_prompt = format!(
-            "Existing memory:\nSummary: {existing_summary}\nDetail: {existing_detail}\n\n\
+            "Existing memory:\n{existing_detail}\n\n\
              New messages:\n{transcript}\n\n\
              Merge the new information into the existing memory."
         );
@@ -365,13 +375,14 @@ The topic should remain the same as the existing memory's topic.";
         Ok(extracted
             .memories
             .into_iter()
-            .map(|m| ExtractedMemory {
-                summary: m.summary,
-                detail: m.detail,
-                topic: m.topic,
-                confidence: m.confidence.clamp(0.0, 1.0),
-                importance: m.importance.map(|i| i.clamp(1, 10)),
-                contradicts_existing: m.contradicts_existing.unwrap_or(false),
+            .map(|m| {
+                let detail = combine_summary_detail(&m.summary, &m.detail);
+                ExtractedMemory {
+                    detail,
+                    topic: m.topic,
+                    importance: m.importance.map(|i| i.clamp(1, 10)),
+                    contradicts_existing: m.contradicts_existing.unwrap_or(false),
+                }
             })
             .collect())
     }
@@ -449,13 +460,14 @@ Return an empty memories array if nothing significant is found.";
         Ok(extracted
             .memories
             .into_iter()
-            .map(|m| ExtractedMemory {
-                summary: m.summary,
-                detail: m.detail,
-                topic: m.topic,
-                confidence: m.confidence.clamp(0.0, 1.0),
-                importance: m.importance.map(|i| i.clamp(1, 10)),
-                contradicts_existing: false,
+            .map(|m| {
+                let detail = combine_summary_detail(&m.summary, &m.detail);
+                ExtractedMemory {
+                    detail,
+                    topic: m.topic,
+                    importance: m.importance.map(|i| i.clamp(1, 10)),
+                    contradicts_existing: false,
+                }
             })
             .collect())
     }
@@ -760,7 +772,7 @@ pub async fn prepare(
             continue;
         }
 
-        let derived_tier = derive_tier_from_messages(group_msgs);
+        let derived_visibility = derive_visibility_from_messages(group_msgs);
         let most_restrictive = if group_msgs.iter().any(|m| {
             m.source == "dm"
                 || m.source == "telegram_dm"
@@ -775,7 +787,7 @@ pub async fn prepare(
         } else {
             "public"
         };
-        let visibility = enforce_tier_guard(&derived_tier, most_restrictive);
+        let visibility = enforce_visibility_guard(&derived_visibility, most_restrictive);
 
         let timestamps: Vec<&str> = group_msgs.iter().map(|m| m.created_at.as_str()).collect();
         let start = timestamps.iter().min().unwrap_or(&"").to_string();
@@ -910,12 +922,13 @@ pub async fn commit(
             let existing = get_existing_memory(db, &d_tag).await;
             let is_merge = existing.as_ref().ok().map(|r| r.is_some()).unwrap_or(false);
 
+            let detail = combine_summary_detail(&memory.summary, &memory.detail);
+            let (vis, scope) = crate::memory::extract_visibility_scope(&d_tag);
             let mem = crate::NewMemory {
                 topic: d_tag.clone(),
-                summary: memory.summary.clone(),
-                detail: memory.detail.clone(),
-                tier: batch.visibility.clone(),
-                confidence: 0.8,
+                detail,
+                visibility: vis,
+                scope,
                 source: Some("consolidation".to_string()),
                 model: Some("agent/consolidation".to_string()),
             };
@@ -961,7 +974,7 @@ pub async fn commit(
 
             // Entity extraction (heuristic)
             {
-                let entity_text = format!("{} {}", memory.summary, memory.detail);
+                let entity_text = combine_summary_detail(&memory.summary, &memory.detail);
                 if let Ok((entities, relationships)) = config.entity_extractor.extract(&entity_text, &[]).await {
                     if let Ok(record_id) = get_memory_record_id(db, &stored_dtag).await {
                         for entity in &entities {
@@ -1090,9 +1103,9 @@ pub async fn consolidate(
 
         let extracted = config.llm_provider.consolidate(group_msgs).await?;
 
-        // Derive tier from source messages
-        let derived_tier = derive_tier_from_messages(group_msgs);
-        // Apply cross-group consolidation guard (scope partitioning in GroupKey + tier guard)
+        // Derive visibility from source messages
+        let derived_visibility = derive_visibility_from_messages(group_msgs);
+        // Apply cross-group consolidation guard (scope partitioning in GroupKey + visibility guard)
         let most_restrictive_source = if group_msgs.iter().any(|m| {
             m.source == "dm"
                 || m.source == "telegram_dm"
@@ -1107,7 +1120,7 @@ pub async fn consolidate(
         } else {
             "public"
         };
-        let tier = enforce_tier_guard(&derived_tier, most_restrictive_source);
+        let visibility = enforce_visibility_guard(&derived_visibility, most_restrictive_source);
 
         // Compute time range from message timestamps
         let (time_start, time_end) = {
@@ -1144,35 +1157,29 @@ pub async fn consolidate(
 
             // Build v0.2 d-tag: {visibility}:{context}:{topic}
             let author_hex = config.author_pubkey.as_deref().unwrap_or("");
-            let d_tag = crate::memory::build_dtag_from_tier(&tier, author_hex, &memory.topic);
+            let d_tag = crate::memory::build_dtag_from_tier(&visibility, author_hex, &memory.topic);
 
             // Check if a memory with this d-tag already exists (for merge)
             let existing = get_existing_memory(db, &d_tag).await;
 
             let (
-                final_summary,
                 final_detail,
-                final_confidence,
                 final_importance,
                 contradicts,
                 is_merge,
             ) = if let Ok(Some(existing_mem)) = existing {
                 // Merge: re-prompt LLM with existing + new
                 debug!(topic = %memory.topic, "Merging into existing memory");
-                let existing_summary = existing_mem.summary.as_deref().unwrap_or("");
-                let existing_detail = &existing_mem.content;
 
                 match config
                     .llm_provider
-                    .merge(existing_summary, existing_detail, group_msgs)
+                    .merge(&existing_mem.content, group_msgs)
                     .await
                 {
                     Ok(merged) if !merged.is_empty() => {
                         let m = &merged[0];
                         (
-                            m.summary.clone(),
                             m.detail.clone(),
-                            m.confidence,
                             m.importance,
                             m.contradicts_existing,
                             true,
@@ -1181,9 +1188,7 @@ pub async fn consolidate(
                     Ok(_) => {
                         // Merge returned empty, use extracted as-is
                         (
-                            memory.summary.clone(),
                             memory.detail.clone(),
-                            memory.confidence,
                             memory.importance,
                             false,
                             true,
@@ -1192,9 +1197,7 @@ pub async fn consolidate(
                     Err(e) => {
                         warn!("LLM merge failed, using extracted memory: {e}");
                         (
-                            memory.summary.clone(),
                             memory.detail.clone(),
-                            memory.confidence,
                             memory.importance,
                             false,
                             true,
@@ -1205,8 +1208,7 @@ pub async fn consolidate(
                 // No existing memory — check for near-duplicates via embedding (TODO #6)
                 let mut is_dedup_merge = false;
                 if embedder.dimensions() > 0 {
-                    let text = format!("{} {}", memory.summary, memory.detail);
-                    if let Ok(emb) = embedder.embed_one(&text).await {
+                    if let Ok(emb) = embedder.embed_one(&memory.detail).await {
                         if let Ok(similar) = find_similar_memory(db, &emb, 0.92).await {
                             if let Some(sim_dtag) = similar {
                                 debug!(
@@ -1217,22 +1219,21 @@ pub async fn consolidate(
                                 // Fetch the similar memory and merge
                                 if let Ok(Some(sim_mem)) = get_existing_memory(db, &sim_dtag).await
                                 {
-                                    let sim_summary = sim_mem.summary.as_deref().unwrap_or("");
                                     match config
                                         .llm_provider
-                                        .merge(sim_summary, &sim_mem.content, group_msgs)
+                                        .merge(&sim_mem.content, group_msgs)
                                         .await
                                     {
                                         Ok(merged) if !merged.is_empty() => {
                                             let m = &merged[0];
                                             is_dedup_merge = true;
                                             // Store using the similar memory's d_tag
+                                            let (vis, scope) = crate::memory::extract_visibility_scope(&sim_dtag);
                                             let mem = crate::NewMemory {
                                                 topic: sim_dtag.clone(),
-                                                summary: m.summary.clone(),
                                                 detail: m.detail.clone(),
-                                                tier: tier.clone(),
-                                                confidence: m.confidence,
+                                                visibility: vis,
+                                                scope,
                                                 source: Some("consolidation".to_string()),
                                                 model: Some("nomen/consolidation".to_string()),
                                             };
@@ -1272,24 +1273,21 @@ pub async fn consolidate(
                 }
 
                 (
-                    memory.summary.clone(),
                     memory.detail.clone(),
-                    memory.confidence,
                     memory.importance,
                     false,
                     false,
                 )
             };
 
-            let summary_for_entities = final_summary.clone();
             let detail_for_entities = final_detail.clone();
 
+            let (vis, scope) = crate::memory::extract_visibility_scope(&d_tag);
             let mem = crate::NewMemory {
                 topic: d_tag.clone(),
-                summary: final_summary,
                 detail: final_detail,
-                tier: tier.clone(),
-                confidence: final_confidence,
+                visibility: vis,
+                scope,
                 source: Some("consolidation".to_string()),
                 model: Some("nomen/consolidation".to_string()),
             };
@@ -1357,7 +1355,7 @@ pub async fn consolidate(
 
             // Entity extraction from consolidated memory (trait-based)
             {
-                let entity_text = format!("{} {}", summary_for_entities, detail_for_entities);
+                let entity_text = detail_for_entities.clone();
                 match config.entity_extractor.extract(&entity_text, &[]).await {
                     Ok((extracted_entities, extracted_relationships)) => {
                         if let Ok(record_id) = get_memory_record_id(db, &d_tag).await {
@@ -1457,13 +1455,12 @@ pub async fn consolidate(
             // Publish consolidated memory to relay as kind 31234
             if let Some(relay) = relay {
                 let content_json = serde_json::json!({
-                    "summary": summary_for_entities,
                     "detail": detail_for_entities,
                 });
                 let content_str = content_json.to_string();
 
-                // Encrypt if personal/internal tier
-                let base = crate::memory::base_tier(&tier);
+                // Encrypt if personal/internal visibility
+                let base = crate::memory::base_tier(&visibility);
                 let final_content = if base == "personal" || base == "internal" {
                     match relay.signer().encrypt(&content_str) {
                         Ok(encrypted) => encrypted,
@@ -1487,10 +1484,6 @@ pub async fn consolidate(
                     Tag::custom(
                         TagKind::Custom("model".into()),
                         vec!["nomen/consolidation".to_string()],
-                    ),
-                    Tag::custom(
-                        TagKind::Custom("confidence".into()),
-                        vec![format!("{:.2}", final_confidence)],
                     ),
                     Tag::custom(
                         TagKind::Custom("version".into()),
@@ -1517,8 +1510,8 @@ pub async fn consolidate(
                 }
 
                 // Add h tag for group-scoped memories (NIP-29)
-                if tier.starts_with("group:") {
-                    if let Some(group_id) = tier.strip_prefix("group:") {
+                if visibility.starts_with("group:") {
+                    if let Some(group_id) = visibility.strip_prefix("group:") {
                         event_tags.push(Tag::custom(
                             TagKind::Custom("h".into()),
                             vec![group_id.to_string()],
@@ -1651,13 +1644,11 @@ async fn get_existing_memory(db: &Surreal<Db>, d_tag: &str) -> Result<Option<Exi
     #[derive(Deserialize, SurrealValue)]
     struct Row {
         content: String,
-        summary: Option<String>,
         version: i64,
-        confidence: Option<f64>,
     }
     let rows: Vec<Row> = db
         .query(
-            "SELECT content, summary, version, confidence FROM memory WHERE d_tag = $d_tag LIMIT 1",
+            "SELECT search_text AS content, version FROM memory WHERE d_tag = $d_tag LIMIT 1",
         )
         .bind(("d_tag", d_tag.to_string()))
         .await?
@@ -1665,20 +1656,15 @@ async fn get_existing_memory(db: &Surreal<Db>, d_tag: &str) -> Result<Option<Exi
         .take(0)?;
     Ok(rows.into_iter().next().map(|r| ExistingMemory {
         content: r.content,
-        summary: r.summary,
         version: r.version,
-        confidence: r.confidence,
     }))
 }
 
 /// Existing memory data for merge operations.
 struct ExistingMemory {
     content: String,
-    summary: Option<String>,
     #[allow(dead_code)]
     version: i64,
-    #[allow(dead_code)]
-    confidence: Option<f64>,
 }
 
 /// Bump the version field on a memory record.

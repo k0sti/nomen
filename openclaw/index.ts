@@ -67,21 +67,17 @@ async function nomenRequest(
 
 type NomenSearchResult = {
   topic: string;
-  summary: string;
   detail: string;
   visibility: string;
-  confidence: string;
   match_type: string;
   created_at: string;
 };
 
 type NomenMemoryRecord = {
   topic?: string;
-  summary?: string;
   detail?: string;
   visibility?: string;
   scope?: string;
-  confidence?: string | number;
   version?: number;
   created_at?: string;
   d_tag?: string;
@@ -91,8 +87,8 @@ function formatSearchResults(results: NomenSearchResult[]) {
   return {
     results: results.map((r) => ({
       path: `nomen:${r.topic}`,
-      snippet: r.detail || r.summary,
-      score: parseFloat(r.confidence) || 0.5,
+      snippet: r.detail,
+      score: 0.5,
       topic: r.topic,
       visibility: r.visibility,
       matchType: r.match_type,
@@ -131,8 +127,9 @@ async function resolveRoomsByProvider(
 }
 
 function formatRoomSection(title: string, record: NomenMemoryRecord): string {
-  const body = record.detail || record.summary || "";
-  return `# ${title}${record.summary ? ` (${record.summary})` : ""}\n\n${body}`;
+  const body = record.detail || "";
+  const label = body ? (body.split("\n")[0] ?? "") : "";
+  return `# ${title}${label ? ` (${label})` : ""}\n\n${body}`;
 }
 
 // ── Session key → provider ID extraction ─────────────────────────────
@@ -335,10 +332,9 @@ const memoryNomenPlugin = {
             const r = resp.result as Record<string, unknown>;
             return jsonResult({
               path: `nomen:${r.topic}`,
-              text: (r.detail as string) || (r.summary as string) || "",
+              text: (r.detail as string) || "",
               topic: r.topic,
               visibility: r.visibility,
-              confidence: r.confidence,
             });
           }
 
@@ -354,10 +350,9 @@ const memoryNomenPlugin = {
             const r = resp2.result as Record<string, unknown>;
             return jsonResult({
               path: `nomen:${r.topic}`,
-              text: (r.detail as string) || (r.summary as string) || "",
+              text: (r.detail as string) || "",
               topic: r.topic,
               visibility: r.visibility,
-              confidence: r.confidence,
             });
           }
 
@@ -387,10 +382,6 @@ const memoryNomenPlugin = {
               description:
                 "Memory topic path (e.g. 'projects/myapp', 'lessons/debugging', 'k0/preferences')",
             },
-            summary: {
-              type: "string",
-              description: "Brief one-line summary of the memory",
-            },
             detail: {
               type: "string",
               description: "Full detail content (markdown supported)",
@@ -405,14 +396,14 @@ const memoryNomenPlugin = {
               description: "Pin this memory so it is always injected into the system prompt (optional)",
             },
           },
-          required: ["topic", "summary"],
+          required: ["topic", "detail"],
         },
         async execute(_toolCallId: string, params: any) {
           const topic = params?.topic;
-          const summary = params?.summary;
+          const detail = params?.detail;
 
-          if (!topic || !summary) {
-            return jsonResult({ error: "topic and summary are required" });
+          if (!topic || !detail) {
+            return jsonResult({ error: "topic and detail are required" });
           }
 
           const resp = await nomenRequest(
@@ -420,9 +411,8 @@ const memoryNomenPlugin = {
             "memory.put",
             {
               topic,
-              summary,
               detail: params?.detail || "",
-              tier: params?.visibility || cfg.visibility,
+              visibility: params?.visibility || cfg.visibility,
               ...(params?.pinned != null ? { pinned: params.pinned } : {}),
             },
             cfg.timeoutMs,
@@ -649,11 +639,10 @@ const memoryNomenPlugin = {
                       type: "object",
                       properties: {
                         topic: { type: "string" },
-                        summary: { type: "string" },
                         detail: { type: "string" },
                         importance: { type: "number" },
                       },
-                      required: ["topic", "summary", "importance"],
+                      required: ["topic", "detail", "importance"],
                     },
                   },
                 },
@@ -709,12 +698,12 @@ const memoryNomenPlugin = {
             const memories = ((pinnedResp.result as any)?.memories ?? []) as NomenMemoryRecord[];
             if (memories.length > 0) {
               const pinnedLines = memories.map((m) => {
-                const summary = m.summary ?? "";
                 const detail = m.detail ?? "";
-                // Include detail only if it's short enough to be useful
-                const body = detail && detail.length < 500 && detail !== summary
-                  ? `${summary}\n${detail}`
-                  : summary;
+                const label = (detail).split("\n")[0] ?? "";
+                // Include full detail only if it's short enough to be useful
+                const body = detail && detail.length < 500
+                  ? detail
+                  : label;
                 return `## ${m.topic}\n${body}`;
               });
               sections.push(`# Pinned Memories\n\n${pinnedLines.join("\n\n")}`);
@@ -903,9 +892,9 @@ const memoryNomenPlugin = {
             }
             for (const r of results) {
               console.log(
-                `[${r.visibility}] ${r.topic} (${r.match_type}, ${r.confidence})`,
+                `[${r.visibility}] ${r.topic} (${r.match_type})`,
               );
-              console.log(`  ${r.summary}`);
+              console.log(`  ${(r.detail ?? "").split("\n")[0]}`);
               console.log();
             }
           });
