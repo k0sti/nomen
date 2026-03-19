@@ -206,7 +206,7 @@ fn db_path() -> std::path::PathBuf {
 pub const SCHEMA: &str = SCHEMA_BASE;
 const SCHEMA_BASE: &str = r#"
 DEFINE TABLE IF NOT EXISTS memory SCHEMAFULL;
-DEFINE FIELD IF NOT EXISTS search_text ON memory TYPE string;
+DEFINE FIELD IF NOT EXISTS search_text ON memory TYPE string DEFAULT '';
 DEFINE FIELD IF NOT EXISTS detail     ON memory TYPE option<string>;
 DEFINE FIELD IF NOT EXISTS embedding  ON memory TYPE option<array<float>>;
 DEFINE FIELD IF NOT EXISTS visibility ON memory TYPE string;
@@ -343,6 +343,20 @@ pub async fn init_db_with_dimensions(dimensions: usize) -> Result<Surreal<Db>> {
     db.query(SCHEMA_BASE)
         .await
         .context("Failed to apply base schema")?;
+
+    // Migrate: ensure search_text is populated (FTS index field)
+    // Rebuild from topic + detail for any records where search_text is missing
+    db.query("UPDATE memory SET search_text = string::concat(topic, ' ', detail) WHERE (search_text IS NONE OR search_text = '') AND detail IS NOT NONE")
+        .await
+        .context("Failed to rebuild search_text from detail")?;
+    // Fallback: set empty string for any remaining nulls (required by SCHEMAFULL)
+    db.query("UPDATE memory SET search_text = topic WHERE search_text IS NONE OR search_text = ''")
+        .await
+        .context("Failed to set fallback search_text")?;
+    // Remove deprecated fields
+    db.query("REMOVE FIELD IF EXISTS content ON TABLE memory; REMOVE FIELD IF EXISTS summary ON TABLE memory; REMOVE FIELD IF EXISTS tier ON TABLE memory; REMOVE FIELD IF EXISTS confidence ON TABLE memory")
+        .await
+        .context("Failed to remove deprecated fields")?;
 
     // Apply HNSW index with configurable dimensions
     let hnsw_sql = format!(

@@ -280,3 +280,25 @@ pub async fn prune(
         "dry_run": report.dry_run,
     }))
 }
+
+pub async fn migrate_dtags(
+    nomen: &Nomen,
+    _default_channel: &str,
+    params: &Value,
+) -> Result<Value, ApiError> {
+    let dry_run = params
+        .get("dry_run")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+
+    let (migrated, skipped) = nomen
+        .migrate_dtags(dry_run)
+        .await
+        .map_err(|e| ApiError::internal(format!("Migration failed: {e}")))?;
+
+    Ok(serde_json::json!({
+        "migrated": migrated,
+        "skipped": skipped,
+        "dry_run": dry_run,
+    }))
+}

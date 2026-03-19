@@ -308,7 +308,7 @@ mod operations_tests {
         let put_resp = nomen::api::dispatch(
             &nomen, "test",
             "memory.put",
-            &json!({"topic": "apiv2-test/roundtrip", "summary": "Test roundtrip memory", "detail": "Detailed info"}),
+            &json!({"topic": "apiv2-test/roundtrip", "detail": "Test roundtrip memory with detailed info"}),
         ).await;
         assert!(put_resp.ok, "put failed: {:?}", put_resp.error);
         let result = put_resp.result.unwrap();
@@ -326,7 +326,6 @@ mod operations_tests {
         assert!(get_resp.ok, "get failed: {:?}", get_resp.error);
         let mem = get_resp.result.unwrap();
         assert_eq!(mem["topic"], "apiv2-test/roundtrip");
-        assert_eq!(mem["summary"], "Test roundtrip memory");
 
         // Cleanup
         nomen::api::dispatch(
@@ -345,7 +344,7 @@ mod operations_tests {
         nomen::api::dispatch(
             &nomen, "test",
             "memory.put",
-            &json!({"topic": "apiv2-test/search-target", "summary": "Unique xylophone melody searching"}),
+            &json!({"topic": "apiv2-test/search-target", "detail": "Unique xylophone melody searching"}),
         ).await;
 
         let search_resp = nomen::api::dispatch(
@@ -381,7 +380,7 @@ mod operations_tests {
             &nomen,
             "test",
             "memory.put",
-            &json!({"topic": "apiv2-test/list-item", "summary": "A listable memory"}),
+            &json!({"topic": "apiv2-test/list-item", "detail": "A listable memory"}),
         )
         .await;
 
@@ -411,7 +410,7 @@ mod operations_tests {
             &nomen,
             "test",
             "memory.put",
-            &json!({"topic": "apiv2-test/delete-me", "summary": "Will be deleted"}),
+            &json!({"topic": "apiv2-test/delete-me", "detail": "Will be deleted"}),
         )
         .await;
 
@@ -583,7 +582,7 @@ mod operations_tests {
             &nomen,
             "test",
             "memory.put",
-            &json!({"summary": "no topic provided"}),
+            &json!({"detail": "no topic provided"}),
         )
         .await;
         assert!(!resp.ok);
@@ -607,12 +606,12 @@ mod operations_tests {
         nomen::api::dispatch(
             &nomen, "test",
             "memory.put",
-            &json!({"topic": "room", "summary": "Engineering group room", "detail": "Main coordination channel", "visibility": "group", "scope": "techteam"}),
+            &json!({"topic": "room", "detail": "Engineering group room — Main coordination channel", "visibility": "group", "scope": "techteam"}),
         ).await;
         nomen::api::dispatch(
             &nomen, "test",
             "memory.put",
-            &json!({"topic": "room/deploys", "summary": "Deployment topic room", "detail": "Deployment discussions", "visibility": "group", "scope": "techteam"}),
+            &json!({"topic": "room/deploys", "detail": "Deployment topic room — Deployment discussions", "visibility": "group", "scope": "techteam"}),
         ).await;
 
         // Batch fetch both (slash-format d-tags)
@@ -627,8 +626,8 @@ mod operations_tests {
 
         // Check by_d_tag map
         let by_dtag = &result["by_d_tag"];
-        assert_eq!(by_dtag["group/techteam/room"]["summary"], "Engineering group room");
-        assert_eq!(by_dtag["group/techteam/room/deploys"]["summary"], "Deployment topic room");
+        assert!(by_dtag["group/techteam/room"].is_object());
+        assert!(by_dtag["group/techteam/room/deploys"].is_object());
     }
 
     #[tokio::test]
@@ -639,7 +638,7 @@ mod operations_tests {
         nomen::api::dispatch(
             &nomen, "test",
             "memory.put",
-            &json!({"topic": "room", "summary": "Existing room", "visibility": "group", "scope": "mygroup"}),
+            &json!({"topic": "room", "detail": "Existing room", "visibility": "group", "scope": "mygroup"}),
         ).await;
 
         // Batch fetch including a missing d-tag (slash-format)

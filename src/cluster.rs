@@ -482,37 +482,32 @@ mod tests {
             ClusterableMemory {
                 topic: "user/k0/preferences".to_string(),
                 d_tag: "d1".to_string(),
-                summary: "prefs".to_string(),
-                detail: "detail".to_string(),
-                tier: "public".to_string(),
+                detail: "prefs detail".to_string(),
+                visibility: "public".to_string(),
             },
             ClusterableMemory {
                 topic: "user/k0/timezone".to_string(),
                 d_tag: "d2".to_string(),
-                summary: "tz".to_string(),
-                detail: "detail".to_string(),
-                tier: "public".to_string(),
+                detail: "tz detail".to_string(),
+                visibility: "public".to_string(),
             },
             ClusterableMemory {
                 topic: "user/k0/projects".to_string(),
                 d_tag: "d3".to_string(),
-                summary: "projects".to_string(),
-                detail: "detail".to_string(),
-                tier: "public".to_string(),
+                detail: "projects detail".to_string(),
+                visibility: "public".to_string(),
             },
             ClusterableMemory {
                 topic: "project/nomen/architecture".to_string(),
                 d_tag: "d4".to_string(),
-                summary: "arch".to_string(),
-                detail: "detail".to_string(),
-                tier: "public".to_string(),
+                detail: "arch detail".to_string(),
+                visibility: "public".to_string(),
             },
             ClusterableMemory {
                 topic: "shallow".to_string(),
                 d_tag: "d5".to_string(),
-                summary: "shallow".to_string(),
-                detail: "detail".to_string(),
-                tier: "public".to_string(),
+                detail: "shallow detail".to_string(),
+                visibility: "public".to_string(),
             },
         ];
 
@@ -530,23 +525,20 @@ mod tests {
             ClusterableMemory {
                 topic: "user/k0/preferences".to_string(),
                 d_tag: "d1".to_string(),
-                summary: "prefs".to_string(),
-                detail: "detail".to_string(),
-                tier: "public".to_string(),
+                detail: "prefs detail".to_string(),
+                visibility: "public".to_string(),
             },
             ClusterableMemory {
                 topic: "user/k0/timezone".to_string(),
                 d_tag: "d2".to_string(),
-                summary: "tz".to_string(),
-                detail: "detail".to_string(),
-                tier: "public".to_string(),
+                detail: "tz detail".to_string(),
+                visibility: "public".to_string(),
             },
             ClusterableMemory {
                 topic: "project/nomen/architecture".to_string(),
                 d_tag: "d3".to_string(),
-                summary: "arch".to_string(),
-                detail: "detail".to_string(),
-                tier: "public".to_string(),
+                detail: "arch detail".to_string(),
+                visibility: "public".to_string(),
             },
         ];
 
@@ -557,30 +549,29 @@ mod tests {
     }
 
     #[test]
-    fn test_derive_cluster_tier() {
+    fn test_derive_cluster_visibility() {
         let public = ClusterableMemory {
             topic: "t".to_string(),
             d_tag: "d".to_string(),
-            summary: "s".to_string(),
             detail: "d".to_string(),
-            tier: "public".to_string(),
+            visibility: "public".to_string(),
         };
         let personal = ClusterableMemory {
-            tier: "personal".to_string(),
+            visibility: "personal".to_string(),
             ..public.clone()
         };
         let internal = ClusterableMemory {
-            tier: "internal".to_string(),
+            visibility: "internal".to_string(),
             ..public.clone()
         };
 
         // All public → public
-        assert_eq!(derive_cluster_tier(&[&public, &public]), "public");
+        assert_eq!(derive_cluster_visibility(&[&public, &public]), "public");
         // Mixed with personal → personal
-        assert_eq!(derive_cluster_tier(&[&public, &personal]), "personal");
+        assert_eq!(derive_cluster_visibility(&[&public, &personal]), "personal");
         // Mixed with internal → internal (most restrictive)
         assert_eq!(
-            derive_cluster_tier(&[&public, &personal, &internal]),
+            derive_cluster_visibility(&[&public, &personal, &internal]),
             "internal"
         );
     }

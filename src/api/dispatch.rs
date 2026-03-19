@@ -67,6 +67,7 @@ async fn dispatch_inner(
         "memory.sync" => operations::maintenance::sync(nomen, default_channel, params).await,
         "memory.embed" => operations::maintenance::embed(nomen, default_channel, params).await,
         "memory.publish" => operations::maintenance::publish(nomen, default_channel, params).await,
+        "memory.migrate_dtags" => operations::maintenance::migrate_dtags(nomen, default_channel, params).await,
         "memory.prune" => operations::maintenance::prune(nomen, default_channel, params).await,
 
         // Group domain
@@ -112,6 +113,7 @@ pub fn mcp_tool_to_action(tool_name: &str) -> Option<String> {
             | "memory.sync"
             | "memory.embed"
             | "memory.publish"
+            | "memory.migrate_dtags"
             | "memory.prune"
             | "entity.list"
             | "entity.relationships"

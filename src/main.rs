@@ -894,10 +894,16 @@ async fn main() -> Result<()> {
             cmd_migrate_lessons(&nomen, &resolved).await?;
         }
         Command::MigrateDtags { dry_run } => {
-            let nomen = build_nomen(&config).await?;
+            let nomen = if matches!(backend, Backend::Direct) {
+                Some(build_nomen(&config).await?)
+            } else {
+                None
+            };
             let prefix = if dry_run { "[dry-run] " } else { "" };
             println!("{prefix}Migrating d-tags from colon to slash format...");
-            let (migrated, skipped) = nomen.migrate_dtags(dry_run).await?;
+            let result = cli_dispatch(&backend, nomen.as_ref(), "memory.migrate_dtags", &serde_json::json!({"dry_run": dry_run})).await?;
+            let migrated = result["migrated"].as_u64().unwrap_or(0);
+            let skipped = result["skipped"].as_u64().unwrap_or(0);
             println!("{prefix}Done: {migrated} migrated, {skipped} skipped");
         }
         Command::Fs { action } => {

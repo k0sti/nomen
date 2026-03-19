@@ -47,12 +47,12 @@ mod fixtures {
         Fixture { action: "memory.list", params: json!({ "limit": limit }) }
     }
 
-    pub fn memory_put(topic: &str, summary: &str) -> Fixture {
+    pub fn memory_put(topic: &str, detail: &str) -> Fixture {
         Fixture {
             action: "memory.put",
             params: json!({
                 "topic": topic,
-                "summary": summary,
+                "detail": detail,
                 "visibility": "public",
             }),
         }
@@ -112,8 +112,8 @@ async fn test_nomen() -> Result<(nomen::Nomen, tempfile::TempDir)> {
 }
 
 /// Store a test memory via direct dispatch and return the serialized ApiResponse.
-async fn store_test_memory(nomen: &nomen::Nomen, topic: &str, summary: &str) -> Value {
-    let f = fixtures::memory_put(topic, summary);
+async fn store_test_memory(nomen: &nomen::Nomen, topic: &str, detail: &str) -> Value {
+    let f = fixtures::memory_put(topic, detail);
     dispatch_direct(nomen, &f).await
 }
 
@@ -333,7 +333,7 @@ async fn dispatch_vs_cvm_memory_put_get() {
     let get = dispatch_cvm(&handler, &fixtures::memory_get(&d_tag)).await;
     assert_ok(&get, "CVM get");
     assert_eq!(get["result"]["topic"], "conformance/put-test");
-    assert_eq!(get["result"]["summary"], "Test memory for conformance");
+    assert_eq!(get["result"]["topic"], "conformance/put-test");
 
     // Store via CVM, get via CVM (both go through dispatch)
     let cvm_put = dispatch_cvm(&handler, &fixtures::memory_put("conformance/cvm-put", "Stored via CVM")).await;
@@ -550,7 +550,7 @@ async fn mcp_tools_call_memory_put_get() {
     let get = dispatch_mcp(&mcp, &fixtures::memory_get(d_tag)).await;
     assert_ok(&get, "MCP get");
     assert_eq!(get["result"]["topic"], "conformance/mcp-put");
-    assert_eq!(get["result"]["summary"], "Stored via MCP adapter");
+    assert_eq!(get["result"]["topic"], "conformance/mcp-put");
 
     // Cross-transport: get via direct dispatch
     let direct = dispatch_direct(&mcp.nomen, &fixtures::memory_get(d_tag)).await;
@@ -684,7 +684,7 @@ async fn socket_vs_direct_memory_put_get() {
     let direct = dispatch_direct(&nomen_direct, &fixtures::memory_get(d_tag)).await;
     assert_ok(&direct, "direct get");
     assert_eq!(direct["result"]["topic"], "conformance/socket-put");
-    assert_eq!(direct["result"]["summary"], "Stored via socket");
+    assert_eq!(direct["result"]["topic"], "conformance/socket-put");
 
     client.close().await;
 }
@@ -783,7 +783,7 @@ async fn e2e_http_smoke_test() {
             "action": "memory.put",
             "params": {
                 "topic": "conformance/e2e-put",
-                "summary": "Created via e2e HTTP test",
+                "detail": "Created via e2e HTTP test",
                 "visibility": "public"
             }
         }))

@@ -60,14 +60,12 @@ mod tests {
 
     fn make_memory(tier: &str, scope: &str, source: &str) -> MemoryRecord {
         MemoryRecord {
-            content: String::new(),
-            summary: None,
+            search_text: String::new(),
             detail: None,
             embedding: None,
-            tier: tier.to_string(),
+            visibility: tier.to_string(),
             scope: scope.to_string(),
             topic: "test".to_string(),
-            confidence: None,
             source: source.to_string(),
             model: None,
             version: 1,
