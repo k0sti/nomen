@@ -1178,7 +1178,7 @@ async fn cmd_cleanup_relay(relay_url: &str, nsecs: &[String], dry_run: bool) -> 
         .filter(|e| {
             e.tags.iter().any(|t| {
                 let tag_vec = t.as_slice();
-                tag_vec.len() >= 2 && tag_vec[0] == "d" && is_colon_format(&tag_vec[1])
+                tag_vec.len() >= 2 && tag_vec[0] == "d" && (is_colon_format(&tag_vec[1]) || tag_vec[1].contains("//"))
             })
         })
         .collect();
