@@ -970,8 +970,19 @@ impl Nomen {
                 }
                 Ok(false) => skipped += 1,
                 Err(e) => {
-                    tracing::warn!("Failed to migrate {old_dtag}: {e}");
-                    skipped += 1;
+                    let msg = e.to_string();
+                    if msg.contains("already contains") {
+                        // New d_tag exists (from fs push), delete the old duplicate
+                        tracing::info!("Deleting duplicate old record: {old_dtag}");
+                        if let Err(del_e) = db::delete_memory_by_dtag(&self.db, &old_dtag).await {
+                            tracing::warn!("Failed to delete old duplicate {old_dtag}: {del_e}");
+                        } else {
+                            migrated += 1;
+                        }
+                    } else {
+                        tracing::warn!("Failed to migrate {old_dtag}: {e}");
+                        skipped += 1;
+                    }
                 }
             }
         }

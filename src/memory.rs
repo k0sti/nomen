@@ -198,17 +198,18 @@ pub fn migrate_dtag_to_slash(d_tag: &str) -> String {
         return d_tag.to_string();
     }
 
-    // Find the separator after visibility
-    let vis_end = match d_tag.find(|c: char| c == ':' || c == '/') {
-        Some(i) => i,
-        None => return d_tag.to_string(),
-    };
-
-    // Already slash format
-    if d_tag.as_bytes()[vis_end] == b'/' {
+    // No colons = already fully migrated
+    if !d_tag.contains(':') {
         return d_tag.to_string();
     }
 
+    // Simple approach: replace all colons with slashes
+    // This works because the d_tag structure is visibility/pubkey/scope/topic
+    // and colons were the old separators
+    let migrated = d_tag.replace(':', "/");
+    return migrated;
+
+    // Legacy code below kept for reference
     // Parse colon format and rebuild as slash
     let (visibility, scope) = extract_visibility_scope(d_tag);
     let topic = match v2_dtag_topic(d_tag) {
@@ -224,11 +225,8 @@ pub fn is_colon_format(d_tag: &str) -> bool {
     if !is_v2_dtag(d_tag) {
         return false;
     }
-    let vis_end = match d_tag.find(|c: char| c == ':' || c == '/') {
-        Some(i) => i,
-        None => return false,
-    };
-    d_tag.as_bytes()[vis_end] == b':'
+    // Any colon in the d_tag means it needs migration
+    d_tag.contains(':')
 }
 
 /// Parse tier from event tags.

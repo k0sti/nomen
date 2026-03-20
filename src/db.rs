@@ -344,11 +344,81 @@ pub async fn init_db_with_dimensions(dimensions: usize) -> Result<Surreal<Db>> {
         .await
         .context("Failed to apply base schema")?;
 
-    // Migrate: fix null search_text fields (caused by content→search_text rename)
-    // Use NONE-safe concatenation: coalesce nulls to empty strings
-    db.query("UPDATE memory SET search_text = string::concat(topic ?? '', ' ', detail ?? '') WHERE search_text IS NONE OR search_text = ''")
+    // Temporarily relax all string field schemas and define deprecated fields to allow fixing null values
+    db.query("DEFINE FIELD search_text ON memory TYPE option<string> DEFAULT ''; \
+              DEFINE FIELD detail ON memory TYPE option<string>; \
+              DEFINE FIELD visibility ON memory TYPE option<string>; \
+              DEFINE FIELD scope ON memory TYPE option<string>; \
+              DEFINE FIELD topic ON memory TYPE option<string>; \
+              DEFINE FIELD source ON memory TYPE option<string>; \
+              DEFINE FIELD confidence ON memory TYPE option<float>; \
+              DEFINE FIELD content ON memory TYPE option<string>; \
+              DEFINE FIELD summary ON memory TYPE option<string>; \
+              DEFINE FIELD tier ON memory TYPE option<string>")
         .await
-        .context("Failed to populate search_text")?;
+        .context("Failed to relax schema")?;
+
+    // Fix null fields: first find records with null search_text, then fix each
+    let broken: Vec<serde_json::Value> = db
+        .query("SELECT meta::id(id) AS rid, topic, detail FROM memory WHERE search_text IS NONE")
+        .await?
+        .check()?
+        .take(0)?;
+    tracing::info!("Found {} records with null search_text", broken.len());
+    for rec in &broken {
+        let rid = rec.get("rid").and_then(|v| v.as_str()).unwrap_or("");
+        let topic = rec.get("topic").and_then(|v| v.as_str()).unwrap_or("");
+        let detail = rec.get("detail").and_then(|v| v.as_str()).unwrap_or("");
+        let search_text = format!("{topic} {detail}");
+        if !rid.is_empty() {
+            let sql = format!("UPDATE memory:`{rid}` SET search_text = $st, visibility = visibility ?? 'personal', scope = scope ?? '', source = source ?? '', confidence = NONE, content = NONE, summary = NONE, tier = NONE");
+            match db.query(&sql).bind(("st", search_text)).await {
+                Ok(mut res) => match res.check() {
+                    Ok(_) => tracing::debug!("Fixed record {rid}"),
+                    Err(e) => tracing::warn!("Check failed for {rid}: {e}"),
+                },
+                Err(e) => tracing::warn!("Failed to fix record {rid}: {e}"),
+            }
+        }
+    }
+
+    // Clean deprecated fields from ALL records (not just null search_text ones)
+    let deprecated: Vec<serde_json::Value> = db
+        .query("SELECT meta::id(id) AS rid FROM memory WHERE confidence IS NOT NONE OR content IS NOT NONE OR summary IS NOT NONE OR tier IS NOT NONE")
+        .await?
+        .check()?
+        .take(0)?;
+    if !deprecated.is_empty() {
+        tracing::info!("Cleaning deprecated fields from {} records", deprecated.len());
+        for rec in &deprecated {
+            let rid = rec.get("rid").and_then(|v| v.as_str()).unwrap_or("");
+            if !rid.is_empty() {
+                let sql = format!("UPDATE memory:`{rid}` SET confidence = NONE, content = NONE, summary = NONE, tier = NONE");
+                let _ = db.query(&sql).await;
+            }
+        }
+    }
+
+    // Restore strict schema and remove deprecated fields
+    db.query("DEFINE FIELD search_text ON memory TYPE string DEFAULT ''; \
+              DEFINE FIELD visibility ON memory TYPE string; \
+              DEFINE FIELD scope ON memory TYPE string; \
+              DEFINE FIELD topic ON memory TYPE string; \
+              DEFINE FIELD source ON memory TYPE string; \
+              REMOVE FIELD IF EXISTS confidence ON TABLE memory; \
+              REMOVE FIELD IF EXISTS content ON TABLE memory; \
+              REMOVE FIELD IF EXISTS summary ON TABLE memory; \
+              REMOVE FIELD IF EXISTS tier ON TABLE memory")
+        .await
+        .context("Failed to restore schema")?;
+
+    // Rebuild fulltext index to ensure it's consistent after bulk operations
+    db.query("REMOVE INDEX IF EXISTS memory_fulltext ON memory")
+        .await
+        .context("Failed to remove fulltext index")?;
+    db.query("DEFINE INDEX memory_fulltext ON memory FIELDS search_text FULLTEXT ANALYZER memory_analyzer BM25")
+        .await
+        .context("Failed to rebuild fulltext index")?;
     // Remove deprecated fields
     db.query("REMOVE FIELD IF EXISTS content ON TABLE memory; REMOVE FIELD IF EXISTS summary ON TABLE memory; REMOVE FIELD IF EXISTS tier ON TABLE memory; REMOVE FIELD IF EXISTS confidence ON TABLE memory")
         .await
@@ -551,7 +621,7 @@ pub async fn list_memories(
     pinned: Option<bool>,
 ) -> Result<Vec<MemoryRecord>> {
     // Exclude embedding from SELECT to avoid SurrealDB HNSW index deserialization issues
-    let fields = "search_text, detail, visibility, scope, topic, source, model, version, nostr_id, d_tag, created_at, updated_at, ephemeral, consolidated_from, consolidated_at, last_accessed, access_count, importance, pinned, embedding IS NOT NONE AS embedded";
+    let fields = "search_text ?? '' AS search_text, detail ?? '' AS detail, visibility ?? 'personal' AS visibility, scope ?? '' AS scope, topic ?? '' AS topic, source ?? '' AS source, model, version, nostr_id, d_tag, created_at, updated_at, ephemeral, consolidated_from, consolidated_at, last_accessed, access_count, importance, pinned, embedding IS NOT NONE AS embedded";
     let mut conditions = Vec::new();
     if tier.is_some() {
         conditions.push("visibility = $tier".to_string());
@@ -1316,7 +1386,7 @@ pub async fn get_graph_neighbors_simple(
 
     for edge in &out_edges {
         let mems: Vec<GraphNeighbor> = db
-            .query("SELECT $edge_type AS edge_type, $relation AS relation, visibility, topic, search_text, created_at, d_tag, importance, last_accessed FROM $target")
+            .query("SELECT $edge_type AS edge_type, $relation AS relation, visibility ?? 'personal' AS visibility, topic ?? '' AS topic, search_text ?? '' AS search_text, created_at, d_tag, importance, last_accessed FROM $target")
             .bind(("target", edge.out.clone()))
             .bind(("edge_type", "references".to_string()))
             .bind(("relation", edge.relation.clone().unwrap_or_default()))
@@ -1343,7 +1413,7 @@ pub async fn get_graph_neighbors_simple(
 
     for edge in &in_edges {
         let mems: Vec<GraphNeighbor> = db
-            .query("SELECT $edge_type AS edge_type, $relation AS relation, visibility, topic, search_text, created_at, d_tag, importance, last_accessed FROM $target")
+            .query("SELECT $edge_type AS edge_type, $relation AS relation, visibility ?? 'personal' AS visibility, topic ?? '' AS topic, search_text ?? '' AS search_text, created_at, d_tag, importance, last_accessed FROM $target")
             .bind(("target", edge.in_node.clone()))
             .bind(("edge_type", "references".to_string()))
             .bind(("relation", edge.relation.clone().unwrap_or_default()))
@@ -1383,7 +1453,7 @@ pub async fn get_graph_neighbors_simple(
 
         for back in &back_edges {
             let mems: Vec<GraphNeighbor> = db
-                .query("SELECT $edge_type AS edge_type, NONE AS relation, visibility, topic, search_text, created_at, d_tag, importance, last_accessed FROM $target")
+                .query("SELECT $edge_type AS edge_type, NONE AS relation, visibility ?? 'personal' AS visibility, topic ?? '' AS topic, search_text ?? '' AS search_text, created_at, d_tag, importance, last_accessed FROM $target")
                 .bind(("target", back.in_node.clone()))
                 .bind(("edge_type", "mentions".to_string()))
                 .await?
@@ -1422,7 +1492,7 @@ pub async fn get_graph_neighbors_simple(
 
         for back in &back_edges {
             let mems: Vec<GraphNeighbor> = db
-                .query("SELECT $edge_type AS edge_type, NONE AS relation, visibility, topic, search_text, created_at, d_tag, importance, last_accessed FROM $target")
+                .query("SELECT $edge_type AS edge_type, NONE AS relation, visibility ?? 'personal' AS visibility, topic ?? '' AS topic, search_text ?? '' AS search_text, created_at, d_tag, importance, last_accessed FROM $target")
                 .bind(("target", back.in_node.clone()))
                 .bind(("edge_type", "consolidated_from".to_string()))
                 .await?
@@ -2227,14 +2297,18 @@ pub async fn update_memory_dtag(
     new_scope: &str,
     new_topic: &str,
 ) -> Result<bool> {
-    let result: Option<MemoryRecord> = db
-        .query("SELECT * FROM memory WHERE d_tag = $old LIMIT 1")
+    let count: Option<serde_json::Value> = db
+        .query("SELECT count() AS total FROM memory WHERE d_tag = $old GROUP ALL")
         .bind(("old", old_dtag.to_string()))
         .await?
         .check()?
         .take(0)?;
 
-    if result.is_none() {
+    let exists = count
+        .and_then(|v| v.get("total").and_then(|t| t.as_u64()))
+        .unwrap_or(0) > 0;
+
+    if !exists {
         return Ok(false);
     }
 
