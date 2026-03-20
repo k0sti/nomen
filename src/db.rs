@@ -322,6 +322,21 @@ DEFINE INDEX IF NOT EXISTS cons_session_sid ON consolidation_session FIELDS sess
 
 /// Initialize (or open) the SurrealDB database and apply schema.
 /// Uses default embedding dimensions (1536).
+/// Normalize d_tag slashes: collapse // and remove dup visibility prefix
+fn normalize_dtag_slashes(s: &str) -> String {
+    let mut result = s.to_string();
+    while result.contains("//") {
+        result = result.replace("//", "/");
+    }
+    for vis in &["personal", "internal", "public", "group"] {
+        let dup = format!("{vis}/{vis}/");
+        if result.starts_with(&dup) {
+            result = result.replacen(&dup, &format!("{vis}/"), 1);
+        }
+    }
+    result
+}
+
 pub async fn init_db() -> Result<Surreal<Db>> {
     init_db_with_dimensions(1536).await
 }
@@ -395,6 +410,86 @@ pub async fn init_db_with_dimensions(dimensions: usize) -> Result<Surreal<Db>> {
             if !rid.is_empty() {
                 let sql = format!("UPDATE memory:`{rid}` SET confidence = NONE, content = NONE, summary = NONE, tier = NONE");
                 let _ = db.query(&sql).await;
+            }
+        }
+    }
+
+    // Fix double-slash d_tags from naive colon→slash migration
+    let double_slash: Vec<serde_json::Value> = db
+        .query("SELECT meta::id(id) AS rid, d_tag, topic, scope FROM memory WHERE d_tag CONTAINS '//'")
+        .await?
+        .check()?
+        .take(0)?;
+    if !double_slash.is_empty() {
+        tracing::info!("Fixing {} d_tags with double slashes", double_slash.len());
+        for rec in &double_slash {
+            let rid = rec.get("rid").and_then(|v| v.as_str()).unwrap_or("");
+            let dtag = rec.get("d_tag").and_then(|v| v.as_str()).unwrap_or("");
+            if rid.is_empty() || dtag.is_empty() { continue; }
+
+            let fixed_dtag = normalize_dtag_slashes(dtag);
+
+            // Check if clean version already exists
+            let exists: Option<serde_json::Value> = db
+                .query("SELECT count() AS total FROM memory WHERE d_tag = $dtag GROUP ALL")
+                .bind(("dtag", fixed_dtag.clone()))
+                .await?
+                .check()?
+                .take(0)?;
+            let clean_exists = exists
+                .and_then(|v| v.get("total").and_then(|t| t.as_u64()))
+                .unwrap_or(0) > 0;
+
+            if clean_exists {
+                // Delete duplicate — clean version exists
+                let sql = format!("DELETE memory:`{rid}`");
+                let _ = db.query(&sql).await;
+                tracing::info!("Deleted duplicate: {dtag}");
+            } else {
+                // Fix in place
+                let fixed_topic = normalize_dtag_slashes(
+                    rec.get("topic").and_then(|v| v.as_str()).unwrap_or("")
+                );
+                let fixed_scope = normalize_dtag_slashes(
+                    rec.get("scope").and_then(|v| v.as_str()).unwrap_or("")
+                );
+                let sql = format!("UPDATE memory:`{rid}` SET d_tag = $dtag, topic = $topic, scope = $scope");
+                let _ = db.query(&sql)
+                    .bind(("dtag", fixed_dtag))
+                    .bind(("topic", fixed_topic))
+                    .bind(("scope", fixed_scope))
+                    .await;
+            }
+        }
+    }
+
+    // Fix duplicated path segments in d_tags (e.g. group/x/y/x/y/topic)
+    let all_dtags: Vec<serde_json::Value> = db
+        .query("SELECT meta::id(id) AS rid, d_tag FROM memory")
+        .await?
+        .check()?
+        .take(0)?;
+    for rec in &all_dtags {
+        let rid = rec.get("rid").and_then(|v| v.as_str()).unwrap_or("");
+        let dtag = rec.get("d_tag").and_then(|v| v.as_str()).unwrap_or("");
+        if rid.is_empty() || dtag.is_empty() { continue; }
+        // Check for repeated segments like "group/project/nomen/project/nomen/..."
+        let parts: Vec<&str> = dtag.split('/').collect();
+        if parts.len() >= 4 {
+            // Look for a repeated 2-segment subsequence
+            for i in 1..parts.len().saturating_sub(2) {
+                let seg = format!("{}/{}", parts[i], parts[i+1]);
+                let rest = parts[i+2..].join("/");
+                if rest.starts_with(&seg) {
+                    // Found duplicate — remove the repeated segment
+                    let mut fixed_parts = parts[..i+2].to_vec();
+                    fixed_parts.extend_from_slice(&parts[i+4..]);
+                    let fixed = fixed_parts.join("/");
+                    tracing::info!("Fixing dup segments: {dtag} -> {fixed}");
+                    let sql = format!("UPDATE memory:`{rid}` SET d_tag = $dtag");
+                    let _ = db.query(&sql).bind(("dtag", fixed)).await;
+                    break;
+                }
             }
         }
     }

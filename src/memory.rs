@@ -203,10 +203,19 @@ pub fn migrate_dtag_to_slash(d_tag: &str) -> String {
         return d_tag.to_string();
     }
 
-    // Simple approach: replace all colons with slashes
-    // This works because the d_tag structure is visibility/pubkey/scope/topic
-    // and colons were the old separators
-    let migrated = d_tag.replace(':', "/");
+    // Replace all colons with slashes, then clean up
+    let mut migrated = d_tag.replace(':', "/");
+    // Collapse multiple slashes
+    while migrated.contains("//") {
+        migrated = migrated.replace("//", "/");
+    }
+    // Remove duplicate visibility prefix (e.g. group/group/ -> group/)
+    for vis in &["personal", "internal", "public", "group"] {
+        let dup = format!("{vis}/{vis}/");
+        if migrated.starts_with(&dup) {
+            migrated = migrated.replacen(&dup, &format!("{vis}/"), 1);
+        }
+    }
     return migrated;
 
     // Legacy code below kept for reference
