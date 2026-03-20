@@ -24,7 +24,7 @@ export const api = derived(apiBaseUrl, ($url) => new NomenApi($url));
 export const profile = writable<NostrProfile | null>(null);
 export const signer = writable<NostrSigner | null>(null);
 
-// Keep relay layer in sync with signer changes
+// Keep relay layer and API layer in sync with signer changes
 signer.subscribe((s) => {
   if (s) {
     setRelaySigner({
@@ -34,6 +34,8 @@ signer.subscribe((s) => {
   } else {
     setRelaySigner(null);
   }
+  // Wire signer into API for NIP-98 auth headers
+  get(api).setSigner(s);
 });
 export const isLoggedIn = derived(profile, ($p) => $p !== null);
 export const showLoginModal = writable(false);

@@ -124,21 +124,28 @@ async fn store_test_memory(nomen: &nomen::Nomen, topic: &str, detail: &str) -> V
 
 /// Direct `api::dispatch()`.
 async fn dispatch_direct(nomen: &nomen::Nomen, f: &Fixture) -> Value {
-    let resp = nomen::api::dispatch(nomen, "test", f.action, &f.params).await;
+    let caller = nomen::auth::CallerContext::owner(String::new());
+    let resp = nomen::api::dispatch(nomen, "test", f.action, &f.params, &caller).await;
     serde_json::to_value(&resp).unwrap()
 }
 
 /// HTTP dispatch via test router (in-process, no TCP).
+/// Injects ConnectInfo with loopback address so the NIP-98 local bypass kicks in.
 async fn dispatch_http(router: axum::Router, f: &Fixture) -> Value {
     use tower::ServiceExt;
 
     let body = json!({ "action": f.action, "params": f.params });
-    let req = http::Request::builder()
+    let mut req = http::Request::builder()
         .method("POST")
         .uri("/memory/api/dispatch")
         .header("content-type", "application/json")
         .body(axum::body::Body::from(serde_json::to_string(&body).unwrap()))
         .unwrap();
+
+    // Simulate localhost connection for local bypass
+    req.extensions_mut().insert(axum::extract::ConnectInfo(
+        std::net::SocketAddr::from(([127, 0, 0, 1], 0)),
+    ));
 
     let resp = router.oneshot(req).await.unwrap();
     let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
@@ -742,9 +749,14 @@ async fn e2e_http_smoke_test() {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
 
-    // Spawn the HTTP server
+    // Spawn the HTTP server (with ConnectInfo for NIP-98 local bypass)
     let server_handle = tokio::spawn(async move {
-        axum::serve(listener, router).await.unwrap();
+        axum::serve(
+            listener,
+            router.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+        )
+        .await
+        .unwrap();
     });
 
     // Give the server a moment to start

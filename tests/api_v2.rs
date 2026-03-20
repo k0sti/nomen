@@ -6,6 +6,10 @@ use surrealdb::Surreal;
 
 // ── Test helpers ────────────────────────────────────────────────────
 
+fn owner_caller() -> nomen::auth::CallerContext {
+    nomen::auth::CallerContext::owner(String::new())
+}
+
 async fn init_test_db() -> Result<(Surreal<Db>, tempfile::TempDir)> {
     let tmp = tempfile::tempdir()?;
     let db = Surreal::new::<SurrealKv>(tmp.path()).await?;
@@ -285,6 +289,7 @@ mod dispatch_tests {
             "default",
             "nonexistent.action",
             &serde_json::json!({}),
+            &super::owner_caller(),
         )
         .await;
         assert!(!resp.ok);
@@ -309,6 +314,7 @@ mod operations_tests {
             &nomen, "test",
             "memory.put",
             &json!({"topic": "apiv2-test/roundtrip", "detail": "Test roundtrip memory with detailed info"}),
+            &super::owner_caller(),
         ).await;
         assert!(put_resp.ok, "put failed: {:?}", put_resp.error);
         let result = put_resp.result.unwrap();
@@ -321,6 +327,7 @@ mod operations_tests {
             "test",
             "memory.get",
             &json!({"topic": "apiv2-test/roundtrip"}),
+            &super::owner_caller(),
         )
         .await;
         assert!(get_resp.ok, "get failed: {:?}", get_resp.error);
@@ -333,6 +340,7 @@ mod operations_tests {
             "test",
             "memory.delete",
             &json!({"topic": "apiv2-test/roundtrip"}),
+            &super::owner_caller(),
         )
         .await;
     }
@@ -345,6 +353,7 @@ mod operations_tests {
             &nomen, "test",
             "memory.put",
             &json!({"topic": "apiv2-test/search-target", "detail": "Unique xylophone melody searching"}),
+            &super::owner_caller(),
         ).await;
 
         let search_resp = nomen::api::dispatch(
@@ -352,6 +361,7 @@ mod operations_tests {
             "test",
             "memory.search",
             &json!({"query": "xylophone melody"}),
+            &super::owner_caller(),
         )
         .await;
         assert!(search_resp.ok, "search failed: {:?}", search_resp.error);
@@ -368,6 +378,7 @@ mod operations_tests {
             "test",
             "memory.delete",
             &json!({"topic": "apiv2-test/search-target"}),
+            &super::owner_caller(),
         )
         .await;
     }
@@ -381,10 +392,11 @@ mod operations_tests {
             "test",
             "memory.put",
             &json!({"topic": "apiv2-test/list-item", "detail": "A listable memory"}),
+            &super::owner_caller(),
         )
         .await;
 
-        let list_resp = nomen::api::dispatch(&nomen, "test", "memory.list", &json!({})).await;
+        let list_resp = nomen::api::dispatch(&nomen, "test", "memory.list", &json!({}), &super::owner_caller()).await;
         assert!(list_resp.ok, "list failed: {:?}", list_resp.error);
         let result = list_resp.result.unwrap();
         let memories = result["memories"].as_array().unwrap();
@@ -398,6 +410,7 @@ mod operations_tests {
             "test",
             "memory.delete",
             &json!({"topic": "apiv2-test/list-item"}),
+            &super::owner_caller(),
         )
         .await;
     }
@@ -411,6 +424,7 @@ mod operations_tests {
             "test",
             "memory.put",
             &json!({"topic": "apiv2-test/delete-me", "detail": "Will be deleted"}),
+            &super::owner_caller(),
         )
         .await;
 
@@ -420,6 +434,7 @@ mod operations_tests {
             "test",
             "memory.get",
             &json!({"topic": "apiv2-test/delete-me"}),
+            &super::owner_caller(),
         )
         .await;
         assert!(get_resp.ok);
@@ -431,6 +446,7 @@ mod operations_tests {
             "test",
             "memory.delete",
             &json!({"topic": "apiv2-test/delete-me"}),
+            &super::owner_caller(),
         )
         .await;
         assert!(del_resp.ok, "delete failed: {:?}", del_resp.error);
@@ -442,6 +458,7 @@ mod operations_tests {
             "test",
             "memory.get",
             &json!({"topic": "apiv2-test/delete-me"}),
+            &super::owner_caller(),
         )
         .await;
         assert!(get_resp2.ok);
@@ -462,6 +479,7 @@ mod operations_tests {
                 "sender": "test-user",
                 "channel": "test-channel"
             }),
+            &super::owner_caller(),
         )
         .await;
         assert!(ingest_resp.ok, "ingest failed: {:?}", ingest_resp.error);
@@ -472,6 +490,7 @@ mod operations_tests {
             "test",
             "message.list",
             &json!({"source": "test-apiv2"}),
+            &super::owner_caller(),
         )
         .await;
         assert!(list_resp.ok, "message.list failed: {:?}", list_resp.error);
@@ -493,6 +512,7 @@ mod operations_tests {
             "test",
             "group.create",
             &json!({"id": group_id, "name": "Test Group", "members": ["npub1test"]}),
+            &super::owner_caller(),
         )
         .await;
         assert!(
@@ -502,7 +522,7 @@ mod operations_tests {
         );
 
         // List
-        let list_resp = nomen::api::dispatch(&nomen, "test", "group.list", &json!({})).await;
+        let list_resp = nomen::api::dispatch(&nomen, "test", "group.list", &json!({}), &super::owner_caller()).await;
         assert!(list_resp.ok);
         let groups = list_resp.result.unwrap()["groups"]
             .as_array()
@@ -512,7 +532,7 @@ mod operations_tests {
 
         // Members
         let members_resp =
-            nomen::api::dispatch(&nomen, "test", "group.members", &json!({"id": group_id})).await;
+            nomen::api::dispatch(&nomen, "test", "group.members", &json!({"id": group_id}), &super::owner_caller()).await;
         assert!(members_resp.ok);
         let members = members_resp.result.unwrap();
         assert_eq!(members["count"], 1);
@@ -523,13 +543,14 @@ mod operations_tests {
             "test",
             "group.add_member",
             &json!({"id": group_id, "npub": "npub1new"}),
+            &super::owner_caller(),
         )
         .await;
         assert!(add_resp.ok, "group.add_member failed: {:?}", add_resp.error);
 
         // Verify added
         let members_resp2 =
-            nomen::api::dispatch(&nomen, "test", "group.members", &json!({"id": group_id})).await;
+            nomen::api::dispatch(&nomen, "test", "group.members", &json!({"id": group_id}), &super::owner_caller()).await;
         assert_eq!(members_resp2.result.unwrap()["count"], 2);
 
         // Remove member
@@ -538,6 +559,7 @@ mod operations_tests {
             "test",
             "group.remove_member",
             &json!({"id": group_id, "npub": "npub1new"}),
+            &super::owner_caller(),
         )
         .await;
         assert!(
@@ -548,7 +570,7 @@ mod operations_tests {
 
         // Verify removed
         let members_resp3 =
-            nomen::api::dispatch(&nomen, "test", "group.members", &json!({"id": group_id})).await;
+            nomen::api::dispatch(&nomen, "test", "group.members", &json!({"id": group_id}), &super::owner_caller()).await;
         assert_eq!(members_resp3.result.unwrap()["count"], 1);
     }
 
@@ -556,7 +578,7 @@ mod operations_tests {
     async fn entity_list_empty() {
         let (nomen, _tmp) = super::test_nomen().await.unwrap();
 
-        let resp = nomen::api::dispatch(&nomen, "test", "entity.list", &json!({})).await;
+        let resp = nomen::api::dispatch(&nomen, "test", "entity.list", &json!({}), &super::owner_caller()).await;
         assert!(resp.ok, "entity.list failed: {:?}", resp.error);
         let result = resp.result.unwrap();
         assert_eq!(result["count"], 0);
@@ -567,7 +589,7 @@ mod operations_tests {
     async fn unknown_action_error_response() {
         let (nomen, _tmp) = super::test_nomen().await.unwrap();
 
-        let resp = nomen::api::dispatch(&nomen, "test", "bogus.action", &json!({})).await;
+        let resp = nomen::api::dispatch(&nomen, "test", "bogus.action", &json!({}), &super::owner_caller()).await;
         assert!(!resp.ok);
         let err = resp.error.unwrap();
         assert_eq!(err.code, "unknown_action");
@@ -583,6 +605,7 @@ mod operations_tests {
             "test",
             "memory.put",
             &json!({"detail": "no topic provided"}),
+            &super::owner_caller(),
         )
         .await;
         assert!(!resp.ok);
@@ -593,7 +616,7 @@ mod operations_tests {
     async fn memory_search_without_query_returns_invalid_params() {
         let (nomen, _tmp) = super::test_nomen().await.unwrap();
 
-        let resp = nomen::api::dispatch(&nomen, "test", "memory.search", &json!({})).await;
+        let resp = nomen::api::dispatch(&nomen, "test", "memory.search", &json!({}), &super::owner_caller()).await;
         assert!(!resp.ok);
         assert_eq!(resp.error.unwrap().code, "invalid_params");
     }
@@ -607,11 +630,13 @@ mod operations_tests {
             &nomen, "test",
             "memory.put",
             &json!({"topic": "room", "detail": "Engineering group room — Main coordination channel", "visibility": "group", "scope": "techteam"}),
+            &super::owner_caller(),
         ).await;
         nomen::api::dispatch(
             &nomen, "test",
             "memory.put",
             &json!({"topic": "room/deploys", "detail": "Deployment topic room — Deployment discussions", "visibility": "group", "scope": "techteam"}),
+            &super::owner_caller(),
         ).await;
 
         // Batch fetch both (slash-format d-tags)
@@ -619,6 +644,7 @@ mod operations_tests {
             &nomen, "test",
             "memory.get_batch",
             &json!({"d_tags": ["group/techteam/room", "group/techteam/room/deploys"]}),
+            &super::owner_caller(),
         ).await;
         assert!(resp.ok, "get_batch failed: {:?}", resp.error);
         let result = resp.result.unwrap();
@@ -639,6 +665,7 @@ mod operations_tests {
             &nomen, "test",
             "memory.put",
             &json!({"topic": "room", "detail": "Existing room", "visibility": "group", "scope": "mygroup"}),
+            &super::owner_caller(),
         ).await;
 
         // Batch fetch including a missing d-tag (slash-format)
@@ -646,6 +673,7 @@ mod operations_tests {
             &nomen, "test",
             "memory.get_batch",
             &json!({"d_tags": ["group/mygroup/room", "group/mygroup/room/nonexistent"]}),
+            &super::owner_caller(),
         ).await;
         assert!(resp.ok);
         let result = resp.result.unwrap();
@@ -662,6 +690,7 @@ mod operations_tests {
             &nomen, "test",
             "memory.get_batch",
             &json!({"d_tags": []}),
+            &super::owner_caller(),
         ).await;
         assert!(!resp.ok);
         assert_eq!(resp.error.unwrap().code, "invalid_params");
@@ -758,6 +787,7 @@ mod message_search_tests {
             "test",
             "message.search",
             &json!({"query": "lazy"}),
+            &super::owner_caller(),
         )
         .await;
         assert!(resp.ok, "search failed: {:?}", resp.error);
@@ -789,6 +819,7 @@ mod message_search_tests {
             "test",
             "message.search",
             &json!({"query": ""}),
+            &super::owner_caller(),
         )
         .await;
         assert!(!resp.ok);
@@ -804,6 +835,7 @@ mod message_search_tests {
             "test",
             "message.search",
             &json!({}),
+            &super::owner_caller(),
         )
         .await;
         assert!(!resp.ok);
@@ -819,6 +851,7 @@ mod message_search_tests {
             "test",
             "message.search",
             &json!({"query": "Rust", "sender": "bob"}),
+            &super::owner_caller(),
         )
         .await;
         assert!(resp.ok, "search failed: {:?}", resp.error);
@@ -843,6 +876,7 @@ mod message_search_tests {
             "test",
             "message.search",
             &json!({"query": "Rust", "room": "room-beta"}),
+            &super::owner_caller(),
         )
         .await;
         assert!(resp.ok, "search failed: {:?}", resp.error);
@@ -870,6 +904,7 @@ mod message_search_tests {
             "test",
             "message.search",
             &json!({"query": "Rust", "source": "other-source"}),
+            &super::owner_caller(),
         )
         .await;
         assert!(resp.ok, "search failed: {:?}", resp.error);
@@ -906,6 +941,7 @@ mod message_search_tests {
             "test",
             "message.search",
             &json!({"query": "lazy", "limit": 2}),
+            &super::owner_caller(),
         )
         .await;
         assert!(resp.ok, "search failed: {:?}", resp.error);
@@ -928,6 +964,7 @@ mod message_search_tests {
             "test",
             "message.search",
             &json!({"query": "lazy"}),
+            &super::owner_caller(),
         )
         .await;
         assert!(resp.ok, "search failed: {:?}", resp.error);
@@ -958,6 +995,7 @@ mod message_search_tests {
             "test",
             "message.search",
             &json!({"query": "docker"}),
+            &super::owner_caller(),
         )
         .await;
         assert!(resp.ok, "search failed: {:?}", resp.error);
@@ -977,6 +1015,7 @@ mod message_search_tests {
             "test",
             "message.search",
             &json!({"query": "xylophone"}),
+            &super::owner_caller(),
         )
         .await;
         assert!(resp.ok, "search failed: {:?}", resp.error);
@@ -1000,6 +1039,7 @@ mod message_search_tests {
                 "sender": "bob",
                 "room": "room-beta"
             }),
+            &super::owner_caller(),
         )
         .await;
         assert!(resp.ok, "search failed: {:?}", resp.error);
@@ -1013,5 +1053,200 @@ mod message_search_tests {
         );
         assert_eq!(messages[0]["sender"].as_str().unwrap(), "bob");
         assert_eq!(messages[0]["room"].as_str().unwrap(), "room-beta");
+    }
+}
+
+// ════════════════════════════════════════════════════════════════════
+// 7. Visibility filtering tests — verify non-owner callers can't see private data
+// ════════════════════════════════════════════════════════════════════
+
+mod visibility_filter_tests {
+    use serde_json::json;
+
+    /// Store memories at different visibility tiers for testing.
+    async fn store_tiered_memories(nomen: &nomen::Nomen) {
+        let tiers = [
+            ("public-fact", "public", "A public fact"),
+            ("group-process", "group", "A group process"),
+            ("personal-secret", "personal", "A personal secret"),
+            ("internal-reasoning", "internal", "Agent reasoning"),
+        ];
+        for (topic, vis, detail) in tiers {
+            nomen::api::dispatch(
+                nomen,
+                "default",
+                "memory.put",
+                &json!({ "topic": topic, "detail": detail, "visibility": vis }),
+                &super::owner_caller(),
+            )
+            .await;
+        }
+    }
+
+    #[tokio::test]
+    async fn anonymous_only_sees_public_memories_in_list() {
+        let (nomen, _tmp) = super::test_nomen().await.unwrap();
+        store_tiered_memories(&nomen).await;
+
+        let anon = nomen::auth::CallerContext::anonymous();
+        let resp = nomen::api::dispatch(
+            &nomen,
+            "default",
+            "memory.list",
+            &json!({ "limit": 100 }),
+            &anon,
+        )
+        .await;
+        assert!(resp.ok);
+        let result = resp.result.unwrap();
+        let memories = result["memories"].as_array().unwrap();
+
+        // Anonymous should only see public memories
+        for m in memories {
+            assert_eq!(
+                m["visibility"].as_str().unwrap(),
+                "public",
+                "Anonymous saw non-public memory: {}",
+                m["topic"]
+            );
+        }
+        assert!(
+            memories.len() >= 1,
+            "Should see at least 1 public memory"
+        );
+    }
+
+    #[tokio::test]
+    async fn anonymous_only_sees_public_memories_in_search() {
+        let (nomen, _tmp) = super::test_nomen().await.unwrap();
+        store_tiered_memories(&nomen).await;
+
+        let anon = nomen::auth::CallerContext::anonymous();
+        let resp = nomen::api::dispatch(
+            &nomen,
+            "default",
+            "memory.search",
+            &json!({ "query": "fact secret reasoning process" }),
+            &anon,
+        )
+        .await;
+        assert!(resp.ok);
+        let result = resp.result.unwrap();
+        let results = result["results"].as_array().unwrap();
+
+        for r in results {
+            assert_eq!(
+                r["visibility"].as_str().unwrap(),
+                "public",
+                "Anonymous saw non-public search result: {:?}",
+                r["topic"]
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn anonymous_cannot_get_personal_memory() {
+        let (nomen, _tmp) = super::test_nomen().await.unwrap();
+        store_tiered_memories(&nomen).await;
+
+        let anon = nomen::auth::CallerContext::anonymous();
+
+        // Try to get personal memory by topic
+        let resp = nomen::api::dispatch(
+            &nomen,
+            "default",
+            "memory.get",
+            &json!({ "topic": "personal-secret", "visibility": "personal" }),
+            &anon,
+        )
+        .await;
+        assert!(resp.ok);
+        // Result should be null — filtered out
+        assert!(
+            resp.result.unwrap().is_null(),
+            "Anonymous should not be able to read personal memories"
+        );
+    }
+
+    #[tokio::test]
+    async fn member_sees_public_and_group_but_not_personal() {
+        let (nomen, _tmp) = super::test_nomen().await.unwrap();
+        store_tiered_memories(&nomen).await;
+
+        let member = nomen::auth::CallerContext::member("abc123".to_string());
+        let resp = nomen::api::dispatch(
+            &nomen,
+            "default",
+            "memory.list",
+            &json!({ "limit": 100 }),
+            &member,
+        )
+        .await;
+        assert!(resp.ok);
+        let result = resp.result.unwrap();
+        let memories = result["memories"].as_array().unwrap();
+
+        let visibilities: Vec<&str> = memories
+            .iter()
+            .map(|m| m["visibility"].as_str().unwrap())
+            .collect();
+
+        // Members should see public and group, but not personal or internal
+        for vis in &visibilities {
+            assert!(
+                *vis == "public" || *vis == "group",
+                "Member saw restricted visibility: {vis}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn owner_sees_personal_and_internal() {
+        let (nomen, _tmp) = super::test_nomen().await.unwrap();
+        store_tiered_memories(&nomen).await;
+
+        let resp = nomen::api::dispatch(
+            &nomen,
+            "default",
+            "memory.list",
+            &json!({ "limit": 100 }),
+            &super::owner_caller(),
+        )
+        .await;
+        assert!(resp.ok);
+        let result = resp.result.unwrap();
+        let memories = result["memories"].as_array().unwrap();
+
+        let visibilities: std::collections::HashSet<&str> = memories
+            .iter()
+            .filter_map(|m| m["visibility"].as_str())
+            .collect();
+
+        // Owner should see personal and internal (which anonymous cannot)
+        assert!(visibilities.contains("public"), "Owner missing public");
+        assert!(visibilities.contains("personal"), "Owner missing personal");
+        assert!(visibilities.contains("internal"), "Owner missing internal");
+        // Owner must see strictly more than anonymous
+        assert!(
+            memories.len() > 1,
+            "Owner should see more than just public memories"
+        );
+    }
+
+    #[tokio::test]
+    async fn anonymous_write_is_blocked() {
+        let (nomen, _tmp) = super::test_nomen().await.unwrap();
+
+        let anon = nomen::auth::CallerContext::anonymous();
+        let resp = nomen::api::dispatch(
+            &nomen,
+            "default",
+            "memory.put",
+            &json!({ "topic": "hack", "detail": "injected", "visibility": "public" }),
+            &anon,
+        )
+        .await;
+        assert!(!resp.ok, "Anonymous should not be able to write");
+        assert_eq!(resp.error.unwrap().code, "unauthorized");
     }
 }

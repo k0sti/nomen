@@ -1,5 +1,6 @@
 //! HTTP server: REST API + static file serving for the web UI.
 
+use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -7,13 +8,14 @@ use anyhow::Result;
 use axum::extract::State;
 use axum::response::{IntoResponse, Json, Redirect};
 use axum::routing::{get, post};
-use axum::Router;
+use axum::{Extension, Router};
 use serde_json::{json, Value};
 use tokio::sync::RwLock;
 use tower_http::cors::CorsLayer;
 use tower_http::services::ServeDir;
 use tracing::info;
 
+use crate::auth::CallerContext;
 use crate::config::Config;
 
 // ── Shared state ─────────────────────────────────────────────────
@@ -41,6 +43,11 @@ pub fn build_router(
         .route("/stats", get(api_stats))
         .route("/config", get(api_get_config))
         .route("/config/reload", post(api_reload_config))
+        .route("/auth/info", get(api_auth_info))
+        .layer(axum::middleware::from_fn_with_state(
+            shared.clone(),
+            crate::auth::nip98_middleware,
+        ))
         .layer(CorsLayer::permissive())
         .with_state(shared.clone());
 
@@ -94,7 +101,11 @@ pub async fn serve(
 
     let listener = tokio::net::TcpListener::bind(addr).await?;
     info!("HTTP server listening on {addr}");
-    axum::serve(listener, app).await?;
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .await?;
     Ok(())
 }
 
@@ -102,13 +113,19 @@ pub async fn serve(
 
 async fn api_dispatch(
     State(state): State<SharedState>,
+    Extension(caller): Extension<CallerContext>,
     Json(req): Json<crate::api::types::ApiRequest>,
 ) -> impl IntoResponse {
     let request_id = req.meta.as_ref().and_then(|m| m.request_id.clone());
-    let resp =
-        crate::api::dispatch(&state.nomen, &state.default_channel, &req.action, &req.params)
-            .await
-            .with_request_id(request_id);
+    let resp = crate::api::dispatch(
+        &state.nomen,
+        &state.default_channel,
+        &req.action,
+        &req.params,
+        &caller,
+    )
+    .await
+    .with_request_id(request_id);
     Json(serde_json::to_value(&resp).unwrap_or_default())
 }
 
@@ -119,6 +136,16 @@ async fn api_health(State(state): State<SharedState>) -> impl IntoResponse {
         "status": "ok",
         "version": env!("CARGO_PKG_VERSION"),
         "memory_count": total,
+    }))
+}
+
+/// Auth info endpoint — lets the UI know the caller's role and pubkey.
+async fn api_auth_info(Extension(caller): Extension<CallerContext>) -> impl IntoResponse {
+    Json(json!({
+        "role": format!("{:?}", caller.role).to_lowercase(),
+        "pubkey": caller.pubkey,
+        "can_write": caller.can_write(),
+        "allowed_visibilities": caller.allowed_visibilities(),
     }))
 }
 

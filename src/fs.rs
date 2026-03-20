@@ -541,6 +541,404 @@ pub async fn status(dispatch: &DispatchFn, dir: &Path) -> Result<()> {
     Ok(())
 }
 
+// ── Daemon: real-time bidirectional sync ─────────────────────────────
+
+const PID_FILE: &str = "daemon.pid";
+const DEBOUNCE_MS: u64 = 500;
+const WRITE_SUPPRESS_MS: u64 = 1500;
+
+/// Start the real-time bidirectional sync daemon.
+///
+/// Watches the filesystem for changes (inotify) and polls the DB for remote updates.
+/// File changes are debounced (500ms) before pushing. Conflicts are saved to
+/// `.nomen-fs/conflicts/`.
+pub async fn start(dispatch: &DispatchFn, dir: &Path, poll_secs: u64) -> Result<()> {
+    use notify::{EventKind, RecursiveMode, Watcher};
+    use std::time::{Duration, Instant};
+
+    let pid_path = dir.join(SYNC_META_DIR).join(PID_FILE);
+
+    // Check if already running
+    if pid_path.exists() {
+        let existing = std::fs::read_to_string(&pid_path)
+            .unwrap_or_default()
+            .trim()
+            .to_string();
+        let alive = std::process::Command::new("kill")
+            .args(["-0", &existing])
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false);
+        if alive {
+            bail!("Daemon already running (PID {existing}). Use `nomen fs stop` first.");
+        }
+        let _ = std::fs::remove_file(&pid_path);
+    }
+
+    // Write PID file
+    std::fs::write(&pid_path, std::process::id().to_string())?;
+
+    // Initial pull
+    let count = pull(dispatch, dir).await?;
+    if count > 0 {
+        println!("Initial pull: {count} files");
+    }
+
+    // Channel to receive filesystem events in the async runtime
+    let (fs_tx, mut fs_rx) = tokio::sync::mpsc::channel::<PathBuf>(256);
+
+    // Set up filesystem watcher
+    let dir_for_watcher = dir.to_path_buf();
+    let mut watcher = notify::RecommendedWatcher::new(
+        move |res: Result<notify::Event, notify::Error>| {
+            if let Ok(event) = res {
+                match event.kind {
+                    EventKind::Create(_) | EventKind::Modify(_) => {
+                        for path in event.paths {
+                            if is_watched_path(&dir_for_watcher, &path) {
+                                let _ = fs_tx.blocking_send(path);
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        },
+        notify::Config::default(),
+    )
+    .context("Failed to create filesystem watcher")?;
+    watcher
+        .watch(dir, RecursiveMode::Recursive)
+        .context("Failed to watch directory")?;
+
+    // Daemon state
+    let mut pending: HashMap<PathBuf, Instant> = HashMap::new();
+    let mut recently_written: HashMap<PathBuf, Instant> = HashMap::new();
+    let mut poll_interval = tokio::time::interval(Duration::from_secs(poll_secs));
+    let mut debounce_tick = tokio::time::interval(Duration::from_millis(100));
+
+    println!(
+        "Daemon started (PID {}), watching {}",
+        std::process::id(),
+        dir.display()
+    );
+    println!("Press Ctrl+C to stop.");
+
+    loop {
+        tokio::select! {
+            // Filesystem event from watcher
+            Some(path) = fs_rx.recv() => {
+                // Suppress echo from our own writes
+                let suppressed = recently_written
+                    .get(&path)
+                    .map(|t| t.elapsed() < Duration::from_millis(WRITE_SUPPRESS_MS))
+                    .unwrap_or(false);
+                if !suppressed {
+                    pending.insert(path, Instant::now());
+                }
+            }
+            // Debounce tick: flush changes that have been quiet for DEBOUNCE_MS
+            _ = debounce_tick.tick() => {
+                let now = Instant::now();
+                let ready: Vec<PathBuf> = pending
+                    .iter()
+                    .filter(|(_, t)| now.duration_since(**t) >= Duration::from_millis(DEBOUNCE_MS))
+                    .map(|(p, _)| p.clone())
+                    .collect();
+
+                if !ready.is_empty() {
+                    for p in &ready {
+                        pending.remove(p);
+                    }
+                    match push_changed_files(dispatch, dir, &ready).await {
+                        Ok(n) if n > 0 => info!(n, "Pushed file changes"),
+                        Err(e) => warn!("Push error: {e}"),
+                        _ => {}
+                    }
+                }
+
+                // Expire old suppress entries
+                recently_written.retain(|_, t| t.elapsed() < Duration::from_millis(WRITE_SUPPRESS_MS * 2));
+            }
+            // DB poll: check for remote changes
+            _ = poll_interval.tick() => {
+                match pull_incremental(dispatch, dir, &mut recently_written).await {
+                    Ok(n) if n > 0 => info!(n, "Pulled remote changes"),
+                    Err(e) => warn!("Pull error: {e}"),
+                    _ => {}
+                }
+            }
+            // Graceful shutdown
+            _ = tokio::signal::ctrl_c() => {
+                println!("\nShutting down...");
+                break;
+            }
+        }
+    }
+
+    // Cleanup
+    let _ = std::fs::remove_file(&pid_path);
+    info!("Daemon stopped");
+    Ok(())
+}
+
+/// Stop a running sync daemon by PID file.
+pub fn stop(dir: &Path) -> Result<()> {
+    let pid_path = dir.join(SYNC_META_DIR).join(PID_FILE);
+    if !pid_path.exists() {
+        bail!(
+            "No daemon PID file found at {}. Is the daemon running?",
+            pid_path.display()
+        );
+    }
+
+    let pid_str = std::fs::read_to_string(&pid_path)?.trim().to_string();
+    let _pid: u32 = pid_str.parse().context("Invalid PID in daemon.pid")?;
+
+    let status = std::process::Command::new("kill")
+        .arg(&pid_str)
+        .status()
+        .context("Failed to send signal")?;
+
+    let _ = std::fs::remove_file(&pid_path);
+
+    if status.success() {
+        println!("Stopped daemon (PID {pid_str})");
+    } else {
+        println!("Daemon not running (cleaned up stale PID file)");
+    }
+    Ok(())
+}
+
+/// Pull changes from DB with conflict detection. Returns count of files updated.
+///
+/// Unlike `pull()`, this detects when both local and remote have changed since last
+/// sync. In that case, the local version is saved to `.nomen-fs/conflicts/` and the
+/// remote version overwrites the file (last-write-wins, matching Nostr semantics).
+async fn pull_incremental(
+    dispatch: &DispatchFn,
+    dir: &Path,
+    recently_written: &mut HashMap<PathBuf, std::time::Instant>,
+) -> Result<usize> {
+    let result = dispatch(
+        "memory.list".to_string(),
+        serde_json::json!({"limit": 10000}),
+    )
+    .await?;
+
+    let memories = result["memories"]
+        .as_array()
+        .context("memory.list did not return memories array")?;
+
+    let mut state = SyncState::load(dir)?;
+    let mut count = 0;
+
+    for mem in memories {
+        let d_tag = match mem["d_tag"].as_str() {
+            Some(d) if !d.is_empty() => d.to_string(),
+            _ => continue,
+        };
+
+        let rel_path = dtag_to_path(&d_tag);
+        let abs_path = dir.join(&rel_path);
+        let rel_key = rel_path.to_str().unwrap_or("").to_string();
+
+        let markdown = json_memory_to_markdown(mem);
+        let remote_hash = content_hash(&markdown);
+        let version = mem["version"].as_i64().unwrap_or(0);
+
+        // Check if unchanged since last sync
+        if let Some(entry) = state.files.get(&rel_key) {
+            if entry.content_hash == remote_hash && entry.version == version {
+                continue;
+            }
+
+            // Remote changed — check if local also changed (conflict)
+            if abs_path.exists() {
+                let local_content = std::fs::read_to_string(&abs_path).unwrap_or_default();
+                let local_hash = content_hash(&local_content);
+
+                if local_hash != entry.content_hash {
+                    // Both changed: save local version to conflicts
+                    let conflict_path = dir
+                        .join(SYNC_META_DIR)
+                        .join("conflicts")
+                        .join(&rel_key);
+                    if let Some(parent) = conflict_path.parent() {
+                        std::fs::create_dir_all(parent)?;
+                    }
+                    std::fs::write(&conflict_path, &local_content)?;
+                    warn!(
+                        path = %rel_key,
+                        "Conflict: local and remote both changed. Local saved to conflicts/"
+                    );
+                }
+            }
+        }
+
+        // Write remote version
+        if let Some(parent) = abs_path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::write(&abs_path, &markdown)
+            .with_context(|| format!("Failed to write {}", abs_path.display()))?;
+
+        // Suppress watcher echo for this write
+        recently_written.insert(abs_path, std::time::Instant::now());
+
+        state.files.insert(
+            rel_key,
+            SyncEntry {
+                d_tag,
+                content_hash: remote_hash,
+                version,
+                synced_at: chrono::Utc::now().to_rfc3339(),
+            },
+        );
+        count += 1;
+    }
+
+    if count > 0 {
+        state.save(dir)?;
+    }
+    Ok(count)
+}
+
+/// Push specific changed files to the DB. Returns count of memories updated.
+async fn push_changed_files(
+    dispatch: &DispatchFn,
+    dir: &Path,
+    paths: &[PathBuf],
+) -> Result<usize> {
+    let mut state = SyncState::load(dir)?;
+    let mut count = 0;
+
+    for abs_path in paths {
+        if !abs_path.exists() {
+            debug!(path = %abs_path.display(), "File deleted, skipping");
+            continue;
+        }
+
+        let rel_path = abs_path
+            .strip_prefix(dir)
+            .unwrap_or(abs_path)
+            .to_path_buf();
+        let rel_key = rel_path.to_str().unwrap_or("").to_string();
+
+        let content = match std::fs::read_to_string(abs_path) {
+            Ok(c) => c,
+            Err(e) => {
+                warn!(path = %abs_path.display(), "Cannot read: {e}");
+                continue;
+            }
+        };
+        let hash = content_hash(&content);
+
+        // Skip if unchanged since last sync
+        if let Some(entry) = state.files.get(&rel_key) {
+            if entry.content_hash == hash {
+                continue;
+            }
+        }
+
+        let parsed = match parse_markdown(&content) {
+            Ok(p) => p,
+            Err(e) => {
+                warn!(path = %abs_path.display(), "Skipping invalid file: {e}");
+                continue;
+            }
+        };
+
+        let d_tag = if !parsed.frontmatter.d_tag.is_empty() {
+            parsed.frontmatter.d_tag.clone()
+        } else {
+            match path_to_dtag(&rel_path) {
+                Some(dt) => dt,
+                None => {
+                    warn!(path = %abs_path.display(), "Cannot resolve d-tag, skipping");
+                    continue;
+                }
+            }
+        };
+
+        let topic = if !d_tag.is_empty() {
+            memory::v2_dtag_topic(&d_tag)
+                .unwrap_or(&parsed.frontmatter.topic)
+                .to_string()
+        } else {
+            parsed.frontmatter.topic.clone()
+        };
+
+        let (visibility, scope) = if !d_tag.is_empty() {
+            memory::extract_visibility_scope(&d_tag)
+        } else {
+            (
+                parsed.frontmatter.visibility.clone(),
+                parsed.frontmatter.scope.clone(),
+            )
+        };
+
+        let mut params = serde_json::json!({
+            "topic": topic,
+            "detail": parsed.detail,
+            "visibility": visibility,
+            "scope": scope,
+            "source": "fs-daemon",
+        });
+
+        if parsed.frontmatter.pinned {
+            params["pinned"] = serde_json::json!(true);
+        }
+
+        match dispatch("memory.put".to_string(), params).await {
+            Ok(result) => {
+                let stored_dtag = result["d_tag"]
+                    .as_str()
+                    .unwrap_or(&d_tag)
+                    .to_string();
+                info!(d_tag = %stored_dtag, path = %rel_key, "Pushed file change");
+
+                state.files.insert(
+                    rel_key,
+                    SyncEntry {
+                        d_tag: stored_dtag,
+                        content_hash: hash,
+                        version: parsed.frontmatter.version + 1,
+                        synced_at: chrono::Utc::now().to_rfc3339(),
+                    },
+                );
+                count += 1;
+            }
+            Err(e) => {
+                warn!(path = %abs_path.display(), "Push failed: {e}");
+            }
+        }
+    }
+
+    if count > 0 {
+        state.save(dir)?;
+    }
+    Ok(count)
+}
+
+/// Check if a path should be watched (is an .md file, not in meta/hidden dirs).
+fn is_watched_path(base: &Path, path: &Path) -> bool {
+    let rel = match path.strip_prefix(base) {
+        Ok(r) => r,
+        Err(_) => return false,
+    };
+
+    // Skip .nomen-fs/, .obsidian/, and other hidden dirs/files
+    for component in rel.components() {
+        let s = component.as_os_str().to_str().unwrap_or("");
+        if s.starts_with('.') || s == SYNC_META_DIR {
+            return false;
+        }
+    }
+
+    path.extension().map(|e| e == "md").unwrap_or(false)
+}
+
 // ── Helpers ──────────────────────────────────────────────────────────
 
 /// Walk all .md files in dir, excluding .nomen-fs/ and .obsidian/.

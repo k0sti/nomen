@@ -1,6 +1,7 @@
 // Nomen API Client — REST calls for server-side operations
 
 import { normalizeVisibility } from './dtag';
+import type { NostrSigner } from './nostr';
 
 export interface SearchResult {
   topic: string;
@@ -187,17 +188,66 @@ export interface NomenConfig {
   config_path: string;
 }
 
+// ── NIP-98 HTTP Auth ──────────────────────────────────────────────
+
+/** Create a NIP-98 Authorization header value for an HTTP request. */
+export async function createNip98Auth(
+  url: string,
+  method: string,
+  signer: NostrSigner,
+): Promise<string> {
+  const event = {
+    kind: 27235,
+    created_at: Math.floor(Date.now() / 1000),
+    tags: [
+      ['u', url],
+      ['method', method.toUpperCase()],
+    ],
+    content: '',
+  };
+  const signed = await signer.signEvent(event);
+  return `Nostr ${btoa(JSON.stringify(signed))}`;
+}
+
+export interface AuthInfo {
+  role: string;
+  pubkey: string | null;
+  can_write: boolean;
+  allowed_visibilities: string[];
+}
+
 export class NomenApi {
   private baseUrl: string;
+  private signer: NostrSigner | null = null;
 
   constructor(baseUrl: string = '/memory/api') {
     this.baseUrl = baseUrl.replace(/\/$/, '');
   }
 
+  /** Set the signer for NIP-98 authenticated requests. Pass null to clear. */
+  setSigner(signer: NostrSigner | null) {
+    this.signer = signer;
+  }
+
+  /** Build auth headers if a signer is available. */
+  private async authHeaders(url: string, method: string): Promise<Record<string, string>> {
+    if (!this.signer) return {};
+    try {
+      const auth = await createNip98Auth(url, method, this.signer);
+      return { Authorization: auth };
+    } catch {
+      // If signing fails (e.g. extension denied), proceed without auth
+      return {};
+    }
+  }
+
   private async postJson<T>(path: string, body: Record<string, unknown>): Promise<T> {
-    const resp = await fetch(`${this.baseUrl}${path}`, {
+    const url = `${this.baseUrl}${path}`;
+    const fullUrl = new URL(url, window.location.origin).toString();
+    const auth = await this.authHeaders(fullUrl, 'POST');
+    const resp = await fetch(url, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...auth },
       body: JSON.stringify(body),
     });
     if (!resp.ok) {
@@ -214,7 +264,9 @@ export class NomenApi {
         if (v !== undefined && v !== '') url.searchParams.set(k, v);
       }
     }
-    const resp = await fetch(url.toString());
+    const fullUrl = url.toString();
+    const auth = await this.authHeaders(fullUrl, 'GET');
+    const resp = await fetch(fullUrl, { headers: auth });
     if (!resp.ok) {
       const text = await resp.text().catch(() => '');
       throw new Error(`${resp.status}: ${text}`);
@@ -225,9 +277,18 @@ export class NomenApi {
   private async dispatch<T = unknown>(action: string, params: Record<string, unknown> = {}): Promise<T> {
     const envelope = await this.postJson<{ ok: boolean; result: T; error?: { code: string; message: string } }>('/dispatch', { action, params });
     if (!envelope.ok) {
-      throw new Error(envelope.error?.message ?? 'Unknown error');
+      const err = envelope.error;
+      if (err?.code === 'unauthorized') {
+        throw new AuthError(err.message);
+      }
+      throw new Error(err?.message ?? 'Unknown error');
     }
     return envelope.result;
+  }
+
+  /** Check the caller's auth state on the server. */
+  async getAuthInfo(): Promise<AuthInfo> {
+    return this.getJson('/auth/info');
   }
 
   async search(query: string, opts?: SearchOpts): Promise<SearchResult[]> {
@@ -339,4 +400,13 @@ function mapSearchResult(r: RawSearchResult): SearchResult {
     match_type: r.match_type,
     created_at: r.created_at || '',
   };
+}
+
+// ── Auth error ──────────────────────────────────────────────────
+
+export class AuthError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'AuthError';
+  }
 }

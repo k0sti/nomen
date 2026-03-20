@@ -366,6 +366,21 @@ enum FsAction {
         #[arg(long)]
         dir: Option<PathBuf>,
     },
+    /// Start real-time bidirectional sync daemon
+    Start {
+        /// Directory path (overrides config [fs].dir)
+        #[arg(long)]
+        dir: Option<PathBuf>,
+        /// DB poll interval in seconds (default: 5)
+        #[arg(long, default_value = "5")]
+        poll_secs: u64,
+    },
+    /// Stop the running sync daemon
+    Stop {
+        /// Directory path (overrides config [fs].dir)
+        #[arg(long)]
+        dir: Option<PathBuf>,
+    },
 }
 
 // ── Resolve keys + relay from CLI + config ──────────────────────────
@@ -541,7 +556,8 @@ async fn cli_dispatch(
         Backend::Http(base_url) => dispatch_http(base_url, action, params).await,
         Backend::Direct => {
             let nomen = nomen.expect("Direct backend requires a Nomen instance");
-            let resp = nomen::api::dispatch(nomen, CLI_CHANNEL, action, params).await;
+            let caller = nomen::auth::CallerContext::owner(String::new());
+            let resp = nomen::api::dispatch(nomen, CLI_CHANNEL, action, params, &caller).await;
             if resp.ok {
                 Ok(resp.result.unwrap_or(serde_json::Value::Null))
             } else {
@@ -576,7 +592,8 @@ async fn make_dispatch_fn(
             Ok(Box::new(move |action: String, params: serde_json::Value| {
                 let nomen = nomen.clone();
                 Box::pin(async move {
-                    let resp = nomen::api::dispatch(&nomen, CLI_CHANNEL, &action, &params).await;
+                    let caller = nomen::auth::CallerContext::owner(String::new());
+                    let resp = nomen::api::dispatch(&nomen, CLI_CHANNEL, &action, &params, &caller).await;
                     if resp.ok {
                         Ok(resp.result.unwrap_or(serde_json::Value::Null))
                     } else {
@@ -985,6 +1002,18 @@ async fn main() -> Result<()> {
                     let dir = resolve_dir(dir);
                     let dispatch = make_dispatch_fn(&backend, &config).await?;
                     nomen::fs::status(&dispatch, &dir).await?;
+                }
+                FsAction::Start { dir, poll_secs } => {
+                    let dir = resolve_dir(dir);
+                    let dispatch = make_dispatch_fn(&backend, &config).await?;
+                    if !dir.join(".nomen-fs").exists() {
+                        nomen::fs::init_sync_dir(&dir)?;
+                    }
+                    nomen::fs::start(&dispatch, &dir, poll_secs).await?;
+                }
+                FsAction::Stop { dir } => {
+                    let dir = resolve_dir(dir);
+                    nomen::fs::stop(&dir)?;
                 }
             }
         }
@@ -2205,7 +2234,9 @@ async fn cmd_serve(
         // HTTP (± CVM): build HTTP state, run concurrently if CVM enabled
         (Some(addr), cvm_opt) => {
             let bind_addr = if addr.starts_with(':') {
-                format!("0.0.0.0{addr}")
+                format!("127.0.0.1{addr}")
+            } else if !addr.contains(':') {
+                format!("127.0.0.1:{addr}")
             } else {
                 addr
             };
@@ -2543,6 +2574,7 @@ async fn cmd_init(force: bool, non_interactive: bool) -> Result<()> {
         contextvm: None,
         socket: None,
         fs: None,
+        auth: None,
     };
 
     // Write config
@@ -2633,6 +2665,7 @@ async fn cmd_init_non_interactive() -> Result<()> {
         contextvm: None,
         socket: None,
         fs: None,
+        auth: None,
     };
 
     let config_path = Config::path();

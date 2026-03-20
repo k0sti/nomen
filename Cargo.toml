@@ -45,6 +45,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 # Crypto
 hex = "0.4"
+base64 = "0.22"
 
 # Time formatting
 chrono = "0.4"
@@ -69,6 +70,9 @@ tower-http = { version = "0.6", features = ["fs", "cors"] }
 
 # Async trait support
 async-trait = "0.1"
+
+# Filesystem watching
+notify = "8"
 
 # Socket protocol
 nomen-wire = { path = "nomen-wire" }

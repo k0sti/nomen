@@ -261,12 +261,15 @@ impl CvmServer {
                     }
                     _ => {
                         // Direct v2 action dispatch (e.g. "memory.search", "group.list")
+                        // CVM is authenticated via Nostr event signatures — owner access
                         info!(action = %method, "CVM: direct action dispatch");
+                        let caller = crate::auth::CallerContext::owner(String::new());
                         let api_resp = crate::api::dispatch(
                             &self.nomen,
                             &self.default_channel,
                             method,
                             &params,
+                            &caller,
                         )
                         .await;
                         let result = serde_json::to_value(&api_resp)
@@ -314,8 +317,9 @@ impl CvmServer {
 
         debug!(tool = %tool_name, action = %action, "CVM: tool_call → action dispatch");
 
+        let caller = crate::auth::CallerContext::owner(String::new());
         let api_resp =
-            crate::api::dispatch(&self.nomen, &self.default_channel, &action, &arguments).await;
+            crate::api::dispatch(&self.nomen, &self.default_channel, &action, &arguments, &caller).await;
 
         if api_resp.ok {
             debug!(tool = %tool_name, action = %action, "CVM: tool call succeeded");
@@ -391,11 +395,13 @@ impl CvmHandler {
                     "tools/call" => self.handle_tool_call(id, &params).await,
                     "ping" => make_success_response(id, json!({})),
                     _ => {
+                        let caller = crate::auth::CallerContext::owner(String::new());
                         let api_resp = crate::api::dispatch(
                             &self.nomen,
                             &self.default_channel,
                             method,
                             &params,
+                            &caller,
                         )
                         .await;
                         let result = serde_json::to_value(&api_resp)
@@ -429,8 +435,9 @@ impl CvmHandler {
             }
         };
 
+        let caller = crate::auth::CallerContext::owner(String::new());
         let api_resp =
-            crate::api::dispatch(&self.nomen, &self.default_channel, &action, &arguments).await;
+            crate::api::dispatch(&self.nomen, &self.default_channel, &action, &arguments, &caller).await;
 
         let result_json = serde_json::to_value(&api_resp).unwrap_or_else(|_| json!({"ok": false}));
 

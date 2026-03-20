@@ -1,22 +1,26 @@
 //! Action name → handler routing for the canonical API v2.
 
-use serde_json::Value;
+use serde_json::{json, Value};
 
 use super::errors::ApiError;
 use super::operations;
 use super::types::ApiResponse;
+use crate::auth::CallerContext;
 use crate::Nomen;
 
 /// Dispatch a canonical API v2 action.
 ///
 /// This is the single entry point for both CVM and MCP transports.
+/// The `caller` parameter gates access: write actions require owner,
+/// read actions filter by the caller's visibility permissions.
 pub async fn dispatch(
     nomen: &Nomen,
     default_channel: &str,
     action: &str,
     params: &Value,
+    caller: &CallerContext,
 ) -> ApiResponse {
-    let result = dispatch_inner(nomen, default_channel, action, params).await;
+    let result = dispatch_inner(nomen, default_channel, action, params, caller).await;
     match result {
         Ok(value) => ApiResponse::success(value),
         Err(err) => ApiResponse::error(err),
@@ -28,8 +32,13 @@ async fn dispatch_inner(
     default_channel: &str,
     action: &str,
     params: &Value,
+    caller: &CallerContext,
 ) -> Result<Value, ApiError> {
-    match action {
+    // Check action-level permissions
+    crate::auth::check_action_permission(action, caller)
+        .map_err(ApiError::unauthorized)?;
+
+    let mut result = match action {
         // Memory domain
         "memory.search" => operations::memory::search(nomen, default_channel, params).await,
         "memory.put" => operations::memory::put(nomen, default_channel, params).await,
@@ -80,6 +89,84 @@ async fn dispatch_inner(
         }
 
         _ => Err(ApiError::unknown_action(action)),
+    }?;
+
+    // Enforce visibility-tier access control on read results for non-owner callers.
+    if !caller.is_owner() {
+        filter_by_visibility(action, &mut result, caller);
+    }
+
+    Ok(result)
+}
+
+/// Post-filter read results to enforce visibility-tier access control.
+/// Owners see everything; members see public+group; anonymous sees public only.
+fn filter_by_visibility(action: &str, result: &mut Value, caller: &CallerContext) {
+    let allowed = caller.allowed_visibilities();
+
+    match action {
+        "memory.list" => {
+            if let Some(memories) = result.get_mut("memories").and_then(|v| v.as_array_mut()) {
+                memories.retain(|m| {
+                    m.get("visibility")
+                        .and_then(|v| v.as_str())
+                        .map(|vis| allowed.contains(&vis))
+                        .unwrap_or(false)
+                });
+                result["count"] = json!(memories.len());
+            }
+            // Filter stats.by_tier to only show allowed tiers
+            if let Some(stats) = result.get_mut("stats") {
+                if let Some(by_tier) = stats.get_mut("by_tier").and_then(|v| v.as_array_mut()) {
+                    by_tier.retain(|entry| {
+                        entry
+                            .get("tier")
+                            .and_then(|v| v.as_str())
+                            .map(|tier| allowed.contains(&tier))
+                            .unwrap_or(false)
+                    });
+                }
+            }
+        }
+        "memory.search" => {
+            if let Some(results) = result.get_mut("results").and_then(|v| v.as_array_mut()) {
+                results.retain(|r| {
+                    r.get("visibility")
+                        .and_then(|v| v.as_str())
+                        .map(|vis| allowed.contains(&vis))
+                        .unwrap_or(false)
+                });
+                result["count"] = json!(results.len());
+            }
+        }
+        "memory.get" => {
+            // Single result: if visibility not allowed, return null
+            if let Some(vis) = result.get("visibility").and_then(|v| v.as_str()) {
+                if !allowed.contains(&vis) {
+                    *result = Value::Null;
+                }
+            }
+        }
+        "memory.get_batch" => {
+            if let Some(results) = result.get_mut("results").and_then(|v| v.as_array_mut()) {
+                results.retain(|r| {
+                    r.get("visibility")
+                        .and_then(|v| v.as_str())
+                        .map(|vis| allowed.contains(&vis))
+                        .unwrap_or(false)
+                });
+                result["count"] = json!(results.len());
+            }
+            if let Some(by_dtag) = result.get_mut("by_d_tag").and_then(|v| v.as_object_mut()) {
+                by_dtag.retain(|_, v| {
+                    v.get("visibility")
+                        .and_then(|v| v.as_str())
+                        .map(|vis| allowed.contains(&vis))
+                        .unwrap_or(false)
+                });
+            }
+        }
+        _ => {}
     }
 }
 

@@ -34,7 +34,8 @@ src/
 ├── consolidate.rs    (1839) Raw messages → named memories, two-phase, merge, dedup
 ├── mcp.rs             (552) MCP server (JSON-RPC stdio, 24+ tools)
 ├── cvm.rs             (500) ContextVM server (CvmServer + CvmHandler) via NIP-44
-├── http.rs            (376) HTTP server + web UI serving
+├── auth.rs            (440) NIP-98 HTTP auth middleware, CallerContext, role resolution
+├── http.rs            (376) HTTP server + web UI serving + NIP-98 middleware
 ├── socket.rs          (323) Unix/TCP socket transport + push events
 ├── groups.rs          (373) Group management (hierarchical, NIP-29 mapping)
 ├── search.rs          (574) Hybrid vector + BM25 search + graph expansion + scoring
@@ -119,9 +120,23 @@ name = "Engineering"
 members = ["npub1abc..."]
 nostr_group = "techteam"
 relay = "wss://zooid.atlantislabs.space"
+
+[auth]
+owner_pubkey = "hex-or-npub1..."  # owner gets full access
+local_bypass = true                # localhost = owner (default: true)
+auth_window_secs = 60              # max NIP-98 event age (default: 60)
 ```
 
 ## Key Implementation Notes
+
+### NIP-98 HTTP Auth (`src/auth.rs`)
+
+All HTTP API requests go through NIP-98 middleware. Clients sign kind 27235 events with `u` (URL) and `method` tags, base64-encode them, and send as `Authorization: Nostr <base64>`. The server verifies the signature, checks kind/URL/method/timestamp, extracts the pubkey, and resolves the caller's role.
+
+**Roles:** Owner (full access), Member (public + group read), Anonymous (public only).
+**Local bypass:** Requests from 127.0.0.1/::1 get owner access (configurable).
+**Write operations** (put, delete, sync, consolidate, etc.) require owner role.
+**Other transports** (MCP, CVM, Socket) are trusted and always get owner access.
 
 ### NomenSigner Trait
 

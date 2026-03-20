@@ -474,8 +474,10 @@ impl McpServer {
             }
         };
 
+        // MCP is a trusted local transport (stdio) — always owner access
+        let caller = crate::auth::CallerContext::owner(String::new());
         let api_resp =
-            crate::api::dispatch(&self.nomen, &self.default_channel, &action, &arguments).await;
+            crate::api::dispatch(&self.nomen, &self.default_channel, &action, &arguments, &caller).await;
 
         let result_json = serde_json::to_value(&api_resp).unwrap_or_else(|_| json!({"ok": false}));
 

@@ -67,6 +67,9 @@ pub struct Config {
     /// Filesystem sync configuration
     #[serde(default)]
     pub fs: Option<FsSyncConfig>,
+    /// HTTP auth configuration
+    #[serde(default)]
+    pub auth: Option<crate::auth::AuthConfig>,
 }
 
 /// The [fs] config section for filesystem sync.
