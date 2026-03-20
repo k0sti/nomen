@@ -140,7 +140,8 @@ pub async fn nip98_middleware(
     }
     drop(config);
 
-    // Local bypass: localhost connections get owner access
+    // Local bypass: localhost connections get owner access,
+    // but NOT when traffic arrives via reverse proxy (Cloudflare tunnel etc.)
     if auth_config.local_bypass {
         let is_local = req
             .extensions()
@@ -148,7 +149,11 @@ pub async fn nip98_middleware(
             .map(|ci| ci.0.ip().is_loopback())
             .unwrap_or(false);
 
-        if is_local {
+        // If a proxy header is present, the request is forwarded — not truly local
+        let is_proxied = req.headers().contains_key("cf-connecting-ip")
+            || req.headers().contains_key("x-forwarded-for");
+
+        if is_local && !is_proxied {
             let owner_pk = auth_config
                 .owner_pubkey_hex()
                 .or_else(|| state.nomen.signer().map(|s| s.public_key().to_hex()))
