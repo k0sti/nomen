@@ -100,9 +100,9 @@ async function mirrorProfileToZooid(pubkey: string, signerInstance: import('./no
 }
 
 // ── Navigation ───────────────────────────────────────────────────
-export type Page = 'landing' | 'memories' | 'search' | 'messages' | 'members' | 'groups' | 'agents' | 'settings';
+export type Page = 'landing' | 'memories' | 'events' | 'search' | 'messages' | 'members' | 'groups' | 'agents' | 'settings';
 
-const validPages: Page[] = ['memories', 'search', 'messages', 'members', 'groups', 'agents', 'settings'];
+const validPages: Page[] = ['memories', 'events', 'search', 'messages', 'members', 'groups', 'agents', 'settings'];
 
 function getPageFromHash(): Page {
   const hash = window.location.hash.replace('#/', '').replace('#', '');

@@ -62,6 +62,12 @@ enum Command {
     Config,
     /// Sync memory events from relay to local SurrealDB
     Sync,
+    /// Clean up old colon-format events from relay (NIP-09 deletion)
+    Cleanup {
+        /// Preview what would be deleted without actually deleting
+        #[arg(long)]
+        dry_run: bool,
+    },
     /// Store a new memory
     Store {
         /// Topic/namespace for the memory
@@ -661,6 +667,12 @@ async fn main() -> Result<()> {
             };
             cmd_sync(&backend, nomen.as_ref()).await?;
         }
+        Command::Cleanup { dry_run } => {
+            if resolved.nsecs.is_empty() {
+                bail!("No nsec provided");
+            }
+            cmd_cleanup_relay(&resolved.relay, &resolved.nsecs, dry_run).await?;
+        }
         Command::Store {
             topic,
             summary,
@@ -1152,6 +1164,53 @@ fn cmd_config(relay: &str, nsecs: &[String]) {
 }
 
 // ── Command: sync ───────────────────────────────────────────────────
+
+async fn cmd_cleanup_relay(relay_url: &str, nsecs: &[String], dry_run: bool) -> Result<()> {
+    use nomen::memory::is_colon_format;
+
+    let (all_keys, pubkeys) = parse_keys(nsecs)?;
+    let manager = build_relay_manager(relay_url, &all_keys[0]);
+    manager.connect().await?;
+    let events = manager.fetch_memories(&pubkeys).await?;
+
+    let old_events: Vec<_> = events
+        .iter()
+        .filter(|e| {
+            e.tags.iter().any(|t| {
+                let tag_vec = t.as_slice();
+                tag_vec.len() >= 2 && tag_vec[0] == "d" && is_colon_format(&tag_vec[1])
+            })
+        })
+        .collect();
+
+    if old_events.is_empty() {
+        println!("No colon-format events found on relay. Nothing to clean up.");
+        return Ok(());
+    }
+
+    println!("Found {} colon-format events to delete", old_events.len());
+
+    if dry_run {
+        for e in &old_events {
+            let dtag = e.tags.iter()
+                .find_map(|t| {
+                    let s = t.as_slice();
+                    if s.len() >= 2 && s[0] == "d" { Some(&s[1]) } else { None }
+                })
+                .unwrap_or(&String::new())
+                .clone();
+            println!("  [DELETE] {dtag}");
+        }
+        println!("\n[DRY RUN] {} events would be deleted", old_events.len());
+    } else {
+        let ids: Vec<EventId> = old_events.iter().map(|e| e.id).collect();
+        let result = manager.delete_events(&ids, "Migrated to slash-format d_tags").await?;
+        println!("Deleted {} events ({})", ids.len(), result.summary());
+    }
+
+    manager.disconnect().await;
+    Ok(())
+}
 
 async fn cmd_sync(backend: &Backend, nomen: Option<&Nomen>) -> Result<()> {
     println!("Connecting to relay...");

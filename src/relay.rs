@@ -233,6 +233,45 @@ impl RelayManager {
         Ok(rx)
     }
 
+    /// Delete events from the relay using NIP-09 (event deletion).
+    /// Publishes a kind 5 deletion event referencing the given event IDs.
+    pub async fn delete_events(&self, event_ids: &[EventId], reason: &str) -> Result<PublishResult> {
+        let builder = EventBuilder::delete(
+            EventDeletionRequest::new()
+                .ids(event_ids.to_vec())
+                .reason(reason)
+        );
+
+        info!(
+            count = event_ids.len(),
+            reason = %reason,
+            "Publishing NIP-09 deletion event"
+        );
+
+        self.publish(builder).await
+    }
+
+    /// Delete events matching a filter (fetch then delete).
+    /// Returns the number of events deleted.
+    pub async fn delete_matching(&self, filter: Filter, reason: &str) -> Result<usize> {
+        let events = self
+            .client
+            .fetch_events(filter, self.config.timeout)
+            .await
+            .context("Failed to fetch events for deletion")?;
+
+        if events.is_empty() {
+            return Ok(0);
+        }
+
+        let ids: Vec<EventId> = events.iter().map(|e| e.id).collect();
+        let count = ids.len();
+
+        self.delete_events(&ids, reason).await?;
+
+        Ok(count)
+    }
+
     /// Disconnect from the relay.
     pub async fn disconnect(&self) {
         self.client.disconnect().await;
