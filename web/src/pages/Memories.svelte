@@ -1,6 +1,6 @@
 <script lang="ts">
   import MemoryCard from '../components/MemoryCard.svelte';
-  import { api, memories, visibilityFilter, loading, showError, showInfo } from '../lib/stores';
+  import { api, memories, visibilityFilter, loading, showError, showInfo, profile } from '../lib/stores';
   import type { Memory, MemoryListStats } from '../lib/api';
   import { ALL_VISIBILITIES } from '../lib/dtag';
 
@@ -49,6 +49,7 @@
 
   async function loadMemories() {
     loading.set(true);
+    stats = null;
     try {
       const result = await $api.listMemories({ limit: 500, stats: true });
       memories.set(result.memories);
@@ -60,9 +61,16 @@
     }
   }
 
+  // Track the logged-in pubkey so we reload when auth state changes
+  let lastPubkey = $state<string | null>(null);
+
   $effect(() => {
     void $api;
-    if ($memories.length === 0) loadMemories();
+    const currentPubkey = $profile?.pubkey ?? null;
+    if ($memories.length === 0 || currentPubkey !== lastPubkey) {
+      lastPubkey = currentPubkey;
+      loadMemories();
+    }
   });
 
   async function handleDelete(memory: Memory) {
