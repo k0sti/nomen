@@ -340,11 +340,13 @@ pub async fn pull(dispatch: &DispatchFn, dir: &Path) -> Result<usize> {
         let hash = content_hash(&markdown);
         let version = mem["version"].as_i64().unwrap_or(0);
 
-        // Check if file already exists with same content
-        if let Some(entry) = state.files.get(rel_path.to_str().unwrap_or("")) {
-            if entry.content_hash == hash && entry.version == version {
-                debug!(d_tag = %d_tag, "Skipping (unchanged)");
-                continue;
+        // Skip if file exists on disk and matches last sync
+        if abs_path.exists() {
+            if let Some(entry) = state.files.get(rel_path.to_str().unwrap_or("")) {
+                if entry.content_hash == hash && entry.version == version {
+                    debug!(d_tag = %d_tag, "Skipping (unchanged)");
+                    continue;
+                }
             }
         }
 
@@ -361,6 +363,31 @@ pub async fn pull(dispatch: &DispatchFn, dir: &Path) -> Result<usize> {
                 synced_at: chrono::Utc::now().to_rfc3339(),
             },
         );
+        count += 1;
+    }
+
+    // Delete local files for memories removed from DB
+    let remote_dtags: std::collections::HashSet<String> = memories
+        .iter()
+        .filter_map(|m| m["d_tag"].as_str())
+        .filter(|d| !d.is_empty())
+        .map(|d| d.to_string())
+        .collect();
+
+    let stale: Vec<String> = state
+        .files
+        .iter()
+        .filter(|(_, entry)| !remote_dtags.contains(&entry.d_tag))
+        .map(|(key, _)| key.clone())
+        .collect();
+
+    for rel_key in &stale {
+        let abs_path = dir.join(rel_key);
+        if abs_path.exists() {
+            std::fs::remove_file(&abs_path)?;
+            info!(path = %rel_key, "Deleted (memory removed from DB)");
+        }
+        state.files.remove(rel_key);
         count += 1;
     }
 
@@ -396,11 +423,11 @@ pub async fn push(dispatch: &DispatchFn, dir: &Path) -> Result<usize> {
             }
         }
 
-        // Parse the markdown file
+        // Parse the markdown file — files without valid frontmatter are silently ignored
         let parsed = match parse_markdown(&content) {
             Ok(p) => p,
             Err(e) => {
-                warn!(path = %abs_path.display(), "Skipping invalid file: {e}");
+                debug!(path = %abs_path.display(), "Skipping file without valid frontmatter: {e}");
                 continue;
             }
         };
@@ -552,7 +579,7 @@ const WRITE_SUPPRESS_MS: u64 = 1500;
 /// Watches the filesystem for changes (inotify) and polls the DB for remote updates.
 /// File changes are debounced (500ms) before pushing. Conflicts are saved to
 /// `.nomen-fs/conflicts/`.
-pub async fn start(dispatch: &DispatchFn, dir: &Path, poll_secs: u64) -> Result<()> {
+pub async fn start(dispatch: &DispatchFn, dir: &Path, poll_secs: u64, verbose: bool) -> Result<()> {
     use notify::{EventKind, RecursiveMode, Watcher};
     use std::time::{Duration, Instant};
 
@@ -578,29 +605,41 @@ pub async fn start(dispatch: &DispatchFn, dir: &Path, poll_secs: u64) -> Result<
     // Write PID file
     std::fs::write(&pid_path, std::process::id().to_string())?;
 
-    // Initial pull
-    let count = pull(dispatch, dir).await?;
-    if count > 0 {
-        println!("Initial pull: {count} files");
+    // Initial sync: push local changes first, then pull remote
+    let pushed = push(dispatch, dir).await?;
+    if pushed > 0 {
+        println!("Initial push: {pushed} files");
+    }
+    let pulled = pull(dispatch, dir).await?;
+    if pulled > 0 {
+        println!("Initial pull: {pulled} files");
     }
 
     // Channel to receive filesystem events in the async runtime
-    let (fs_tx, mut fs_rx) = tokio::sync::mpsc::channel::<PathBuf>(256);
+    let (fs_tx, mut fs_rx) = tokio::sync::mpsc::channel::<(PathBuf, &'static str)>(256);
 
     // Set up filesystem watcher
     let dir_for_watcher = dir.to_path_buf();
     let mut watcher = notify::RecommendedWatcher::new(
         move |res: Result<notify::Event, notify::Error>| {
             if let Ok(event) = res {
-                match event.kind {
-                    EventKind::Create(_) | EventKind::Modify(_) => {
-                        for path in event.paths {
-                            if is_watched_path(&dir_for_watcher, &path) {
-                                let _ = fs_tx.blocking_send(path);
-                            }
-                        }
+                use notify::event::{AccessKind, AccessMode, DataChange, ModifyKind, RenameMode};
+                let label = match event.kind {
+                    EventKind::Create(_) => "created",
+                    EventKind::Modify(ModifyKind::Data(DataChange::Content)) => "written",
+                    EventKind::Modify(ModifyKind::Data(_)) => "written",
+                    EventKind::Modify(ModifyKind::Name(RenameMode::From)) => "rename from",
+                    EventKind::Modify(ModifyKind::Name(RenameMode::To)) => "rename to",
+                    EventKind::Modify(ModifyKind::Name(_)) => "renamed",
+                    EventKind::Modify(ModifyKind::Metadata(_)) => "metadata",
+                    EventKind::Modify(_) => "modified",
+                    EventKind::Access(AccessKind::Close(AccessMode::Write)) => "closed",
+                    _ => return,
+                };
+                for path in event.paths {
+                    if is_watched_path(&dir_for_watcher, &path) {
+                        let _ = fs_tx.blocking_send((path, label));
                     }
-                    _ => {}
                 }
             }
         },
@@ -614,6 +653,8 @@ pub async fn start(dispatch: &DispatchFn, dir: &Path, poll_secs: u64) -> Result<
     // Daemon state
     let mut pending: HashMap<PathBuf, Instant> = HashMap::new();
     let mut recently_written: HashMap<PathBuf, Instant> = HashMap::new();
+    // Track pending "rename from" events to pair with "rename to"
+    let mut rename_from: Option<(PathBuf, Instant)> = None;
     let mut poll_interval = tokio::time::interval(Duration::from_secs(poll_secs));
     let mut debounce_tick = tokio::time::interval(Duration::from_millis(100));
 
@@ -627,14 +668,49 @@ pub async fn start(dispatch: &DispatchFn, dir: &Path, poll_secs: u64) -> Result<
     loop {
         tokio::select! {
             // Filesystem event from watcher
-            Some(path) = fs_rx.recv() => {
+            Some((path, label)) = fs_rx.recv() => {
                 // Suppress echo from our own writes
                 let suppressed = recently_written
                     .get(&path)
                     .map(|t| t.elapsed() < Duration::from_millis(WRITE_SUPPRESS_MS))
                     .unwrap_or(false);
                 if !suppressed {
-                    pending.insert(path, Instant::now());
+                    if verbose {
+                        let rel = path.strip_prefix(dir).unwrap_or(&path);
+                        println!("[watch] {} ({label})", rel.display());
+                    }
+
+                    match label {
+                        "rename from" => {
+                            rename_from = Some((path.clone(), Instant::now()));
+                        }
+                        "rename to" => {
+                            if let Some((old_path, ts)) = rename_from.take() {
+                                // Pair found within 500ms — handle as rename
+                                if ts.elapsed() < Duration::from_millis(500) {
+                                    match handle_rename(dispatch, dir, &old_path, &path, verbose).await {
+                                        Ok(()) => {
+                                            if verbose {
+                                                let old_rel = old_path.strip_prefix(dir).unwrap_or(&old_path);
+                                                let new_rel = path.strip_prefix(dir).unwrap_or(&path);
+                                                println!("[rename] {} -> {}", old_rel.display(), new_rel.display());
+                                            }
+                                        }
+                                        Err(e) => warn!("Rename handling failed: {e}"),
+                                    }
+                                } else {
+                                    // Too old, treat rename-to as a new file change
+                                    pending.insert(path.clone(), Instant::now());
+                                }
+                            } else {
+                                // No matching rename-from, treat as new file
+                                pending.insert(path.clone(), Instant::now());
+                            }
+                        }
+                        _ => {
+                            pending.insert(path.clone(), Instant::now());
+                        }
+                    }
                 }
             }
             // Debounce tick: flush changes that have been quiet for DEBOUNCE_MS
@@ -650,8 +726,12 @@ pub async fn start(dispatch: &DispatchFn, dir: &Path, poll_secs: u64) -> Result<
                     for p in &ready {
                         pending.remove(p);
                     }
-                    match push_changed_files(dispatch, dir, &ready).await {
-                        Ok(n) if n > 0 => info!(n, "Pushed file changes"),
+                    match push_changed_files(dispatch, dir, &ready, verbose).await {
+                        Ok(n) if n > 0 => {
+                            if verbose {
+                                println!("[push] {n} file(s) synced to DB");
+                            }
+                        }
                         Err(e) => warn!("Push error: {e}"),
                         _ => {}
                     }
@@ -659,11 +739,26 @@ pub async fn start(dispatch: &DispatchFn, dir: &Path, poll_secs: u64) -> Result<
 
                 // Expire old suppress entries
                 recently_written.retain(|_, t| t.elapsed() < Duration::from_millis(WRITE_SUPPRESS_MS * 2));
+
+                // Expire stale rename-from (no matching rename-to within 500ms = file deleted)
+                if let Some((ref old_path, ts)) = rename_from {
+                    if ts.elapsed() >= Duration::from_millis(500) {
+                        if verbose {
+                            let rel = old_path.strip_prefix(dir).unwrap_or(old_path);
+                            println!("[watch] rename-from expired (file deleted?): {}", rel.display());
+                        }
+                        rename_from = None;
+                    }
+                }
             }
             // DB poll: check for remote changes
             _ = poll_interval.tick() => {
-                match pull_incremental(dispatch, dir, &mut recently_written).await {
-                    Ok(n) if n > 0 => info!(n, "Pulled remote changes"),
+                match pull_incremental(dispatch, dir, &mut recently_written, verbose).await {
+                    Ok(n) if n > 0 => {
+                        if verbose {
+                            println!("[pull] {n} file(s) updated from DB");
+                        }
+                    }
                     Err(e) => warn!("Pull error: {e}"),
                     _ => {}
                 }
@@ -719,6 +814,7 @@ async fn pull_incremental(
     dispatch: &DispatchFn,
     dir: &Path,
     recently_written: &mut HashMap<PathBuf, std::time::Instant>,
+    verbose: bool,
 ) -> Result<usize> {
     let result = dispatch(
         "memory.list".to_string(),
@@ -747,19 +843,21 @@ async fn pull_incremental(
         let remote_hash = content_hash(&markdown);
         let version = mem["version"].as_i64().unwrap_or(0);
 
-        // Check if unchanged since last sync
+        // Check if unchanged since last sync (and file still exists)
+        if abs_path.exists() {
         if let Some(entry) = state.files.get(&rel_key) {
             if entry.content_hash == remote_hash && entry.version == version {
                 continue;
             }
 
-            // Remote changed — check if local also changed (conflict)
+            // Remote metadata changed (version/updated_at) but maybe not content.
+            // Compare detail body to avoid echo-pulling after a push.
             if abs_path.exists() {
                 let local_content = std::fs::read_to_string(&abs_path).unwrap_or_default();
                 let local_hash = content_hash(&local_content);
 
                 if local_hash != entry.content_hash {
-                    // Both changed: save local version to conflicts
+                    // Local also changed → conflict
                     let conflict_path = dir
                         .join(SYNC_META_DIR)
                         .join("conflicts")
@@ -772,9 +870,33 @@ async fn pull_incremental(
                         path = %rel_key,
                         "Conflict: local and remote both changed. Local saved to conflicts/"
                     );
+                    if verbose {
+                        println!("[conflict] {} (local saved to conflicts/)", rel_key);
+                    }
+                } else {
+                    // Local unchanged — check if remote detail actually differs
+                    let remote_detail = mem["detail"].as_str().unwrap_or("");
+                    let local_detail = parse_markdown(&local_content)
+                        .map(|p| p.detail)
+                        .unwrap_or_default();
+                    if local_detail == remote_detail {
+                        // Only metadata changed (version/updated_at), not content.
+                        // Update sync state silently, no file write needed.
+                        state.files.insert(
+                            rel_key,
+                            SyncEntry {
+                                d_tag,
+                                content_hash: remote_hash,
+                                version,
+                                synced_at: chrono::Utc::now().to_rfc3339(),
+                            },
+                        );
+                        continue;
+                    }
                 }
             }
         }
+        } // abs_path.exists
 
         // Write remote version
         if let Some(parent) = abs_path.parent() {
@@ -782,6 +904,10 @@ async fn pull_incremental(
         }
         std::fs::write(&abs_path, &markdown)
             .with_context(|| format!("Failed to write {}", abs_path.display()))?;
+
+        if verbose {
+            println!("[pull] {}", rel_key);
+        }
 
         // Suppress watcher echo for this write
         recently_written.insert(abs_path, std::time::Instant::now());
@@ -798,6 +924,33 @@ async fn pull_incremental(
         count += 1;
     }
 
+    // Delete local files for memories removed from DB
+    let remote_dtags: std::collections::HashSet<String> = memories
+        .iter()
+        .filter_map(|m| m["d_tag"].as_str())
+        .filter(|d| !d.is_empty())
+        .map(|d| d.to_string())
+        .collect();
+
+    let stale: Vec<String> = state
+        .files
+        .iter()
+        .filter(|(_, entry)| !remote_dtags.contains(&entry.d_tag))
+        .map(|(key, _)| key.clone())
+        .collect();
+
+    for rel_key in &stale {
+        let abs_path = dir.join(rel_key);
+        if abs_path.exists() {
+            std::fs::remove_file(&abs_path)?;
+            if verbose {
+                println!("[delete] {} (memory removed from DB)", rel_key);
+            }
+        }
+        state.files.remove(rel_key);
+        count += 1;
+    }
+
     if count > 0 {
         state.save(dir)?;
     }
@@ -805,10 +958,52 @@ async fn pull_incremental(
 }
 
 /// Push specific changed files to the DB. Returns count of memories updated.
+/// Handle a rename/move: delete old memory, push file from new location.
+async fn handle_rename(
+    dispatch: &DispatchFn,
+    dir: &Path,
+    old_path: &Path,
+    new_path: &Path,
+    verbose: bool,
+) -> Result<()> {
+    let mut state = SyncState::load(dir)?;
+
+    // Find the old d_tag from SyncState
+    let old_rel = old_path
+        .strip_prefix(dir)
+        .unwrap_or(old_path)
+        .to_str()
+        .unwrap_or("")
+        .to_string();
+
+    if let Some(old_entry) = state.files.remove(&old_rel) {
+        // Delete the old memory from DB
+        let params = serde_json::json!({ "d_tag": old_entry.d_tag });
+        match dispatch("memory.delete".to_string(), params).await {
+            Ok(_) => {
+                info!(d_tag = %old_entry.d_tag, "Deleted old memory after rename");
+                if verbose {
+                    println!("[rename] deleted old: {}", old_entry.d_tag);
+                }
+            }
+            Err(e) => {
+                warn!(d_tag = %old_entry.d_tag, "Failed to delete old memory: {e}");
+            }
+        }
+        state.save(dir)?;
+    }
+
+    // Push the new file (will create memory with new path-derived d_tag)
+    push_changed_files(dispatch, dir, &[new_path.to_path_buf()], verbose).await?;
+
+    Ok(())
+}
+
 async fn push_changed_files(
     dispatch: &DispatchFn,
     dir: &Path,
     paths: &[PathBuf],
+    verbose: bool,
 ) -> Result<usize> {
     let mut state = SyncState::load(dir)?;
     let mut count = 0;
@@ -844,7 +1039,7 @@ async fn push_changed_files(
         let parsed = match parse_markdown(&content) {
             Ok(p) => p,
             Err(e) => {
-                warn!(path = %abs_path.display(), "Skipping invalid file: {e}");
+                debug!(path = %abs_path.display(), "Skipping file without valid frontmatter: {e}");
                 continue;
             }
         };
@@ -897,6 +1092,9 @@ async fn push_changed_files(
                     .unwrap_or(&d_tag)
                     .to_string();
                 info!(d_tag = %stored_dtag, path = %rel_key, "Pushed file change");
+                if verbose {
+                    println!("[push] {} -> {}", rel_key, stored_dtag);
+                }
 
                 state.files.insert(
                     rel_key,
