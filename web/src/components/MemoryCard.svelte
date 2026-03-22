@@ -1,5 +1,6 @@
 <script lang="ts">
   import { marked } from 'marked';
+  import DOMPurify from 'dompurify';
   import TierBadge from './TierBadge.svelte';
   import type { Memory } from '../lib/api';
   import { expandedMemory } from '../lib/stores';
@@ -135,7 +136,7 @@
   {#if isExpanded}
     <div class="px-4 pb-4 border-t border-gray-800/50 pt-3 space-y-3">
       {#if cleanDetail}
-        <div class="text-sm text-gray-300 markdown-detail">{@html marked.parse(cleanDetail)}</div>
+        <div class="text-sm text-gray-300 markdown-detail">{@html DOMPurify.sanitize(marked.parse(cleanDetail) as string)}</div>
       {/if}
       <div class="flex flex-wrap gap-x-3 gap-y-1 text-xs text-gray-500">
         {#if memory.model}<span>Model: <span class="text-gray-400">{memory.model}</span></span>{/if}

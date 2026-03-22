@@ -11,7 +11,7 @@ use axum::routing::{get, post};
 use axum::{Extension, Router};
 use serde_json::{json, Value};
 use tokio::sync::RwLock;
-use tower_http::cors::CorsLayer;
+use tower_http::cors::{AllowOrigin, CorsLayer};
 use tower_http::services::ServeDir;
 use tracing::info;
 
@@ -48,7 +48,18 @@ pub fn build_router(
             shared.clone(),
             crate::auth::nip98_middleware,
         ))
-        .layer(CorsLayer::permissive())
+        .layer(
+            CorsLayer::new()
+                .allow_origin(AllowOrigin::predicate(|origin, _| {
+                    let o = origin.as_bytes();
+                    // Allow localhost (any port) for development
+                    o.starts_with(b"http://localhost:") || o.starts_with(b"http://127.0.0.1:")
+                    // Allow same-origin (requests from the served UI have no Origin or matching origin)
+                    || o.ends_with(b".atlantislabs.space") || o == b"https://nomen.atlantislabs.space"
+                }))
+                .allow_methods([axum::http::Method::GET, axum::http::Method::POST, axum::http::Method::OPTIONS])
+                .allow_headers([axum::http::header::CONTENT_TYPE, axum::http::header::AUTHORIZATION])
+        )
         .with_state(shared.clone());
 
     let mut app = Router::new().nest("/memory/api", api);
@@ -207,12 +218,24 @@ fn strip_config_secrets(config: &Config) -> Value {
     })
 }
 
-async fn api_get_config(State(state): State<SharedState>) -> impl IntoResponse {
+async fn api_get_config(
+    Extension(caller): Extension<CallerContext>,
+    State(state): State<SharedState>,
+) -> impl IntoResponse {
+    if !caller.is_owner() {
+        return Json(json!({"ok": false, "error": {"code": "unauthorized", "message": "Owner access required"}}));
+    }
     let config = state.config.read().await;
     Json(strip_config_secrets(&config))
 }
 
-async fn api_reload_config(State(state): State<SharedState>) -> impl IntoResponse {
+async fn api_reload_config(
+    Extension(caller): Extension<CallerContext>,
+    State(state): State<SharedState>,
+) -> impl IntoResponse {
+    if !caller.is_owner() {
+        return Json(json!({"ok": false, "error": {"code": "unauthorized", "message": "Owner access required"}}));
+    }
     match Config::load() {
         Ok(new_config) => {
             let stripped = strip_config_secrets(&new_config);
@@ -224,7 +247,13 @@ async fn api_reload_config(State(state): State<SharedState>) -> impl IntoRespons
     }
 }
 
-async fn api_stats(State(state): State<SharedState>) -> impl IntoResponse {
+async fn api_stats(
+    Extension(caller): Extension<CallerContext>,
+    State(state): State<SharedState>,
+) -> impl IntoResponse {
+    if !caller.is_owner() {
+        return Json(json!({"ok": false, "error": {"code": "unauthorized", "message": "Owner access required"}}));
+    }
     let (total, named, pending) = state
         .nomen
         .count_memories()

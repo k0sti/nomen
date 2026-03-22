@@ -374,6 +374,9 @@ enum FsAction {
         /// DB poll interval in seconds (default: 5)
         #[arg(long, default_value = "5")]
         poll_secs: u64,
+        /// Print each sync event to stdout
+        #[arg(long, short)]
+        verbose: bool,
     },
     /// Stop the running sync daemon
     Stop {
@@ -1003,13 +1006,13 @@ async fn main() -> Result<()> {
                     let dispatch = make_dispatch_fn(&backend, &config).await?;
                     nomen::fs::status(&dispatch, &dir).await?;
                 }
-                FsAction::Start { dir, poll_secs } => {
+                FsAction::Start { dir, poll_secs, verbose } => {
                     let dir = resolve_dir(dir);
                     let dispatch = make_dispatch_fn(&backend, &config).await?;
                     if !dir.join(".nomen-fs").exists() {
                         nomen::fs::init_sync_dir(&dir)?;
                     }
-                    nomen::fs::start(&dispatch, &dir, poll_secs).await?;
+                    nomen::fs::start(&dispatch, &dir, poll_secs, verbose).await?;
                 }
                 FsAction::Stop { dir } => {
                     let dir = resolve_dir(dir);
@@ -2149,6 +2152,7 @@ async fn cmd_serve(
                 &cvm_relay,
                 cvm_encryption,
                 cvm_allowed,
+                config.owner.clone(),
                 cvm_rate_limit,
                 default_channel.clone(),
                 cvm_announce,

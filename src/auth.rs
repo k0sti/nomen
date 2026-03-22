@@ -304,6 +304,7 @@ fn determine_role(
 }
 
 /// Reconstruct the full URL from the request for NIP-98 `u` tag comparison.
+/// Uses OriginalUri (if available) to get the pre-nest-strip path.
 fn reconstruct_url(req: &Request<Body>) -> String {
     let scheme = req
         .headers()
@@ -318,11 +319,21 @@ fn reconstruct_url(req: &Request<Body>) -> String {
         .and_then(|v| v.to_str().ok())
         .unwrap_or("localhost");
 
+    // Prefer OriginalUri (preserves full path before axum::Router::nest stripping)
     let path_and_query = req
-        .uri()
-        .path_and_query()
-        .map(|pq| pq.as_str())
-        .unwrap_or(req.uri().path());
+        .extensions()
+        .get::<axum::extract::OriginalUri>()
+        .map(|ou| {
+            ou.0.path_and_query()
+                .map(|pq| pq.as_str())
+                .unwrap_or(ou.0.path())
+        })
+        .unwrap_or_else(|| {
+            req.uri()
+                .path_and_query()
+                .map(|pq| pq.as_str())
+                .unwrap_or(req.uri().path())
+        });
 
     format!("{scheme}://{host}{path_and_query}")
 }
@@ -362,6 +373,9 @@ const OWNER_ONLY_ACTIONS: &[&str] = &[
     "memory.migrate_dtags",
     "memory.prune",
     "message.ingest",
+    "message.list",
+    "message.context",
+    "message.search",
     "message.send",
     "group.create",
     "group.add_member",

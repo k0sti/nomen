@@ -955,6 +955,177 @@ Unbind a provider ID from a memory d-tag.
 
 ---
 
+## Socket transport
+
+The socket server provides a persistent, bidirectional connection over Unix domain sockets for local agents and integrations. It is the only transport that supports push events via subscriptions.
+
+### Connection
+
+Connect to the Unix domain socket at the configured path (default: `$XDG_RUNTIME_DIR/nomen/nomen.sock`).
+
+Configuration (`config.toml`):
+
+```toml
+[socket]
+enabled = true
+path = "/run/user/1000/nomen/nomen.sock"   # default: $XDG_RUNTIME_DIR/nomen/nomen.sock
+max_connections = 64                         # default
+max_frame_size = 16777216                    # 16 MB default
+```
+
+Socket permissions are set to `0660`.
+
+### Wire format
+
+All frames use **length-delimited JSON**: a 4-byte big-endian length prefix followed by a JSON payload.
+
+```text
+┌──────────┬──────────────────────┐
+│ len: u32 │ payload: JSON bytes  │
+│ (BE)     │ (len bytes)          │
+└──────────┴──────────────────────┘
+```
+
+### Frame types
+
+Frames are distinguished by field presence (untagged):
+
+| Frame | Discriminator | Direction |
+|-------|--------------|-----------|
+| **Request** | Has `action` field | Agent → Nomen |
+| **Response** | Has `ok` + `id` fields | Nomen → Agent |
+| **Event** | Has `event` field | Nomen → Agent (push) |
+
+#### Request
+
+```json
+{
+  "id": "01JRQX...",
+  "action": "memory.search",
+  "params": { "query": "relay config", "limit": 10 }
+}
+```
+
+- `id` — Correlation ID (ULID recommended, UUID accepted).
+- `action` — Canonical action name (same as HTTP/MCP/CVM) or transport-specific action (`subscribe`, `unsubscribe`).
+- `params` — Action parameters. Defaults to `{}` if omitted.
+
+#### Response
+
+```json
+{
+  "id": "01JRQX...",
+  "ok": true,
+  "result": { "count": 3, "results": [...] },
+  "meta": { "version": "v2" }
+}
+```
+
+Error response:
+
+```json
+{
+  "id": "01JRQX...",
+  "ok": false,
+  "error": { "code": "not_found", "message": "No memory with that topic" },
+  "meta": { "version": "v2" }
+}
+```
+
+#### Event (push)
+
+```json
+{
+  "event": "memory.updated",
+  "ts": 1741860000,
+  "data": { "topic": "project/nomen" }
+}
+```
+
+Events are only delivered to connections that have an active subscription matching the event type.
+
+### Canonical dispatch
+
+All actions except `subscribe` and `unsubscribe` are routed through `api::dispatch()`, producing the same request/response envelope as HTTP, MCP, and CVM. The socket is a trusted local transport — all requests receive owner-level access.
+
+### Transport-specific actions
+
+#### `subscribe`
+
+Register to receive push events on this connection.
+
+```json
+{
+  "id": "sub1",
+  "action": "subscribe",
+  "params": { "events": ["memory.updated", "memory.deleted"] }
+}
+```
+
+Use `"events": ["*"]` to subscribe to all event types.
+
+Response:
+
+```json
+{
+  "id": "sub1",
+  "ok": true,
+  "result": { "subscribed": ["memory.updated", "memory.deleted"] }
+}
+```
+
+#### `unsubscribe`
+
+Remove event subscriptions for this connection.
+
+```json
+{
+  "id": "unsub1",
+  "action": "unsubscribe",
+  "params": { "events": ["memory.deleted"] }
+}
+```
+
+### Built-in events
+
+| Event type | Emitted when | Data |
+|-----------|-------------|------|
+| `agent.connected` | A new socket client connects | `{"agent_id": <conn_id>}` |
+| `agent.disconnected` | A socket client disconnects | `{"agent_id": <conn_id>}` |
+| `memory.updated` | A memory is created or modified | *(varies)* |
+
+Additional event types may be emitted by other Nomen components via the shared broadcast channel.
+
+### Client library
+
+The `nomen-wire` crate provides `NomenClient` (single connection) and `ReconnectingClient` (auto-reconnect) for Rust consumers:
+
+```rust
+use nomen_wire::NomenClient;
+
+let client = NomenClient::connect("/run/user/1000/nomen/nomen.sock").await?;
+
+// Search memories
+let results = client.request("memory.search", json!({"query": "test"})).await?;
+
+// Subscribe to events
+client.request("subscribe", json!({"events": ["*"]})).await?;
+let mut events = client.events();
+while let Ok(event) = events.recv().await {
+    println!("{}: {:?}", event.event, event.data);
+}
+```
+
+### Connection lifecycle
+
+1. Agent connects to Unix socket
+2. Server assigns a connection ID and emits `agent.connected`
+3. Agent sends Request frames, receives Response frames
+4. Agent optionally subscribes to push events
+5. On disconnect, server cleans up subscriptions and emits `agent.disconnected`
+
+---
+
 ## ContextVM transport mapping
 
 ContextVM is one of several transport adapters. It wraps the canonical API over Nostr:
