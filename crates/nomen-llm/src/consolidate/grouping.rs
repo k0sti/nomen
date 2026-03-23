@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use tracing::warn;
 
-use crate::ingest::RawMessageRecord;
+use nomen_db::RawMessageRecord;
 
 use super::types::{GroupKey, TIME_WINDOW_SECS};
 
@@ -69,9 +69,9 @@ pub(crate) fn sanitize_topic_component(s: &str) -> String {
 
 /// Derive the memory tier from a group of source messages.
 ///
-/// - DM messages (source "nostr" with sender npub, no group channel) → "personal"
-/// - Group messages (channel matches a group pattern) → "group"
-/// - Public/CLI/other → "public"
+/// - DM messages (source "nostr" with sender npub, no group channel) -> "personal"
+/// - Group messages (channel matches a group pattern) -> "group"
+/// - Public/CLI/other -> "public"
 pub(crate) fn derive_tier_from_messages(messages: &[RawMessageRecord]) -> String {
     // Check sources — if any message is from a DM-like source, treat as personal
     let has_dm = messages.iter().any(|m| {
@@ -147,9 +147,9 @@ fn extract_topic_suffix(sender: &str) -> Option<String> {
 /// Resolve the scope for a single raw message.
 ///
 /// Scope determines the privacy/group boundary:
-/// - DM sources → "personal"
-/// - Group sources with a specific channel → "group:{channel}"
-/// - Everything else → "public"
+/// - DM sources -> "personal"
+/// - Group sources with a specific channel -> "group:{channel}"
+/// - Everything else -> "public"
 ///
 /// This is used to partition messages so that different scopes are never
 /// consolidated together (cross-group guard, TODO #7).

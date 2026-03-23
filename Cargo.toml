@@ -1,5 +1,5 @@
 [workspace]
-members = [".", "nomen-wire", "crates/nomen-core", "crates/nomen-db", "crates/nomen-relay"]
+members = [".", "nomen-wire", "crates/nomen-core", "crates/nomen-db", "crates/nomen-relay", "crates/nomen-llm"]
 
 [package]
 name = "nomen"
@@ -77,6 +77,9 @@ nomen-db = { path = "crates/nomen-db" }
 
 # Relay layer (Nostr relay management, event parsing, key signing)
 nomen-relay = { path = "crates/nomen-relay" }
+
+# LLM layer (embeddings, consolidation, entity extraction, cluster fusion)
+nomen-llm = { path = "crates/nomen-llm" }
 
 # Socket protocol
 nomen-wire = { path = "nomen-wire" }

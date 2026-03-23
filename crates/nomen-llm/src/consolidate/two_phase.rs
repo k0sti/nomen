@@ -3,7 +3,8 @@ use surrealdb::engine::local::Db;
 use surrealdb::Surreal;
 use tracing::warn;
 
-use crate::relay::RelayManager;
+use nomen_core::embed::Embedder;
+use nomen_relay::RelayManager;
 
 use super::grouping::{derive_tier_from_messages, enforce_tier_guard, group_messages};
 use super::pipeline::{bump_memory_version, get_existing_memory, get_memory_record_id};
@@ -19,7 +20,7 @@ pub async fn prepare(
     ttl_minutes: u32,
 ) -> Result<PrepareResult> {
     // Clean up expired sessions first
-    crate::db::cleanup_expired_consolidation_sessions(db)
+    nomen_db::cleanup_expired_consolidation_sessions(db)
         .await
         .ok();
 
@@ -32,7 +33,7 @@ pub async fn prepare(
         None
     };
 
-    let messages = crate::db::get_unconsolidated_messages_filtered(
+    let messages = nomen_db::get_unconsolidated_messages_filtered(
         db,
         config.batch_size,
         cutoff.as_deref(),
@@ -122,7 +123,7 @@ pub async fn prepare(
     let now = chrono::Utc::now();
     let expires = now + chrono::Duration::minutes(ttl_minutes as i64);
 
-    crate::db::create_consolidation_session(
+    nomen_db::create_consolidation_session(
         db,
         &session_id,
         &batches_json,
@@ -144,14 +145,14 @@ pub async fn prepare(
 /// Run stages 4-6: store extracted memories, create edges, cleanup.
 pub async fn commit(
     db: &Surreal<Db>,
-    embedder: &dyn crate::embed::Embedder,
+    embedder: &dyn Embedder,
     config: &ConsolidationConfig,
     relay: Option<&RelayManager>,
     session_id: &str,
     extractions: &[BatchExtraction],
 ) -> Result<CommitResult> {
     // Validate session
-    let session = crate::db::get_consolidation_session(db, session_id)
+    let session = nomen_db::get_consolidation_session(db, session_id)
         .await?
         .ok_or_else(|| anyhow::anyhow!("consolidation session not found: {session_id}"))?;
 
@@ -161,7 +162,7 @@ pub async fn commit(
 
     let now_str = chrono::Utc::now().to_rfc3339();
     if session.expires_at < now_str {
-        crate::db::update_consolidation_session_status(db, session_id, "expired")
+        nomen_db::update_consolidation_session_status(db, session_id, "expired")
             .await
             .ok();
         anyhow::bail!("session expired: {session_id}");
@@ -204,7 +205,7 @@ pub async fn commit(
         let msg_ids: Vec<String> = batch.messages.iter().map(|m| m.id.clone()).collect();
 
         for memory in &extraction.memories {
-            let d_tag = crate::memory::build_dtag_from_tier(
+            let d_tag = nomen_core::memory::build_dtag_from_tier(
                 &batch.visibility,
                 author_hex,
                 &memory.topic,
@@ -218,7 +219,7 @@ pub async fn commit(
                 .map(|r| r.is_some())
                 .unwrap_or(false);
 
-            let mem = crate::NewMemory {
+            let mem = nomen_core::NewMemory {
                 topic: d_tag.clone(),
                 content: memory.content.clone(),
                 tier: batch.visibility.clone(),
@@ -227,7 +228,7 @@ pub async fn commit(
                 model: Some("agent/consolidation".to_string()),
             };
 
-            let stored_dtag = crate::Nomen::store_direct(db, embedder, mem).await?;
+            let stored_dtag = crate::store::store_direct(db, embedder, mem).await?;
 
             if is_merge {
                 bump_memory_version(db, &stored_dtag).await.ok();
@@ -237,7 +238,7 @@ pub async fn commit(
             }
 
             // Consolidation tags
-            crate::db::set_consolidation_tags(
+            nomen_db::set_consolidation_tags(
                 db,
                 &stored_dtag,
                 &batch.message_count.to_string(),
@@ -247,14 +248,14 @@ pub async fn commit(
             .ok();
 
             // Importance
-            crate::db::set_importance(db, &stored_dtag, memory.importance as i32)
+            nomen_db::set_importance(db, &stored_dtag, memory.importance as i32)
                 .await
                 .ok();
 
             // Consolidated_from edges
             if let Ok(record_id) = get_memory_record_id(db, &stored_dtag).await {
                 for msg_id in &msg_ids {
-                    crate::db::create_consolidated_edge(db, &record_id, msg_id)
+                    nomen_db::create_consolidated_edge(db, &record_id, msg_id)
                         .await
                         .ok();
                 }
@@ -269,7 +270,7 @@ pub async fn commit(
                     if let Ok(record_id) = get_memory_record_id(db, &stored_dtag).await {
                         for entity in &entities {
                             if let Ok(entity_id) =
-                                crate::db::store_entity(db, &entity.name, &entity.kind).await
+                                nomen_db::store_entity(db, &entity.name, &entity.kind).await
                             {
                                 let eid = entity_id
                                     .split_once(':')
@@ -279,11 +280,11 @@ pub async fn commit(
                                     .split_once(':')
                                     .map(|(_, id)| id)
                                     .unwrap_or(&record_id);
-                                crate::db::create_mention_edge(db, mid, eid, 1.0).await.ok();
+                                nomen_db::create_mention_edge(db, mid, eid, 1.0).await.ok();
                             }
                         }
                         for rel in &relationships {
-                            crate::db::create_typed_edge(
+                            nomen_db::create_typed_edge(
                                 db,
                                 &rel.from,
                                 &rel.to,
@@ -308,7 +309,7 @@ pub async fn commit(
 
     // Mark messages as consolidated
     if !all_msg_ids.is_empty() {
-        crate::db::mark_messages_consolidated(db, &all_msg_ids)
+        nomen_db::mark_messages_consolidated(db, &all_msg_ids)
             .await
             .ok();
     }
@@ -331,7 +332,7 @@ pub async fn commit(
     }
 
     // Mark session committed
-    crate::db::update_consolidation_session_status(db, session_id, "committed").await?;
+    nomen_db::update_consolidation_session_status(db, session_id, "committed").await?;
 
     Ok(result)
 }

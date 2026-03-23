@@ -41,7 +41,7 @@ impl ConfigExt for Config {
             return Box::new(crate::embed::NoopEmbedder);
         }
 
-        crate::embed::create_embedder(
+        nomen_llm::embed::create_embedder(
             &emb.provider,
             emb.base_url.as_deref(),
             &api_key,

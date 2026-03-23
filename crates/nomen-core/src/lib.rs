@@ -15,3 +15,17 @@ pub mod kinds;
 pub mod memory;
 pub mod session;
 pub mod signer;
+
+/// Options for creating a new memory directly (without relay event).
+pub struct NewMemory {
+    pub topic: String,
+    /// Plain-text content (the full memory body).
+    pub content: String,
+    pub tier: String,
+    /// Importance score (1-10). Optional.
+    pub importance: Option<i32>,
+    /// Source label (e.g. "api", "mcp", "contextvm"). Defaults to "api".
+    pub source: Option<String>,
+    /// Model label. Defaults to "nomen/api".
+    pub model: Option<String>,
+}

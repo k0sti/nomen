@@ -6,9 +6,9 @@ use surrealdb::types::SurrealValue;
 use surrealdb::Surreal;
 use tracing::{debug, info, warn};
 
-use crate::embed::Embedder;
-use crate::ingest::RawMessageRecord;
-use crate::relay::RelayManager;
+use nomen_core::embed::Embedder;
+use nomen_db::RawMessageRecord;
+use nomen_relay::RelayManager;
 
 use super::grouping::{derive_tier_from_messages, enforce_tier_guard, group_messages};
 use super::types::{
@@ -39,7 +39,7 @@ pub async fn consolidate(
         None
     };
 
-    let messages = crate::db::get_unconsolidated_messages_filtered(
+    let messages = nomen_db::get_unconsolidated_messages_filtered(
         db,
         config.batch_size,
         cutoff.as_deref(),
@@ -126,7 +126,7 @@ pub async fn consolidate(
 
             // Build v0.2 d-tag: {visibility}:{context}:{topic}
             let author_hex = config.author_pubkey.as_deref().unwrap_or("");
-            let d_tag = crate::memory::build_dtag_from_tier(&tier, author_hex, &memory.topic);
+            let d_tag = nomen_core::memory::build_dtag_from_tier(&tier, author_hex, &memory.topic);
 
             // Check if a memory with this d-tag already exists (for merge)
             let existing = get_existing_memory(db, &d_tag).await;
@@ -197,7 +197,7 @@ pub async fn consolidate(
                                             let m = &merged[0];
                                             is_dedup_merge = true;
                                             // Store using the similar memory's d_tag
-                                            let mem = crate::NewMemory {
+                                            let mem = nomen_core::NewMemory {
                                                 topic: sim_dtag.clone(),
                                                 content: m.content.clone(),
                                                 tier: tier.clone(),
@@ -206,11 +206,11 @@ pub async fn consolidate(
                                                 model: Some("nomen/consolidation".to_string()),
                                             };
                                             let stored_dtag =
-                                                crate::Nomen::store_direct(db, embedder, mem)
+                                                crate::store::store_direct(db, embedder, mem)
                                                     .await?;
                                             // Bump version
                                             bump_memory_version(db, &stored_dtag).await.ok();
-                                            crate::db::set_consolidation_tags(
+                                            nomen_db::set_consolidation_tags(
                                                 db,
                                                 &stored_dtag,
                                                 &group_msgs.len().to_string(),
@@ -250,7 +250,7 @@ pub async fn consolidate(
 
             let content_for_entities = final_content.clone();
 
-            let mem = crate::NewMemory {
+            let mem = nomen_core::NewMemory {
                 topic: d_tag.clone(),
                 content: final_content,
                 tier: tier.clone(),
@@ -263,7 +263,7 @@ pub async fn consolidate(
             let consolidated_from_count = group_msgs.len().to_string();
             let consolidated_at = now_timestamp.to_string();
 
-            let d_tag = crate::Nomen::store_direct(db, embedder, mem).await?;
+            let d_tag = crate::store::store_direct(db, embedder, mem).await?;
 
             if is_merge {
                 // Bump version for merged memories (TODO #2)
@@ -274,7 +274,7 @@ pub async fn consolidate(
             }
 
             // Update the memory record with consolidation tags
-            crate::db::set_consolidation_tags(
+            nomen_db::set_consolidation_tags(
                 db,
                 &d_tag,
                 &consolidated_from_count,
@@ -285,14 +285,14 @@ pub async fn consolidate(
 
             // Store importance score
             if let Some(imp) = final_importance {
-                crate::db::set_importance(db, &d_tag, imp).await.ok();
+                nomen_db::set_importance(db, &d_tag, imp).await.ok();
             }
 
             // Handle conflict detection: create contradicts edge
             if contradicts && is_merge {
                 let existing_d_tag = memory.topic.clone();
                 if let Err(e) =
-                    crate::db::create_references_edge(db, &d_tag, &existing_d_tag, "contradicts")
+                    nomen_db::create_references_edge(db, &d_tag, &existing_d_tag, "contradicts")
                         .await
                 {
                     warn!("Failed to create contradicts edge: {e}");
@@ -305,7 +305,7 @@ pub async fn consolidate(
             if let Ok(record_id) = get_memory_record_id(db, &d_tag).await {
                 for msg in group_msgs {
                     if let Err(e) =
-                        crate::db::create_consolidated_edge(db, &record_id, &msg.id).await
+                        nomen_db::create_consolidated_edge(db, &record_id, &msg.id).await
                     {
                         warn!("Failed to create consolidated_from edge: {e}");
                     }
@@ -320,7 +320,7 @@ pub async fn consolidate(
                         if let Ok(record_id) = get_memory_record_id(db, &d_tag).await {
                             // Store entities and create mention edges
                             for entity in &extracted_entities {
-                                match crate::db::store_entity(db, &entity.name, &entity.kind).await
+                                match nomen_db::store_entity(db, &entity.name, &entity.kind).await
                                 {
                                     Ok(entity_id) => {
                                         let eid = entity_id
@@ -331,7 +331,7 @@ pub async fn consolidate(
                                             .split_once(':')
                                             .map(|(_, id)| id)
                                             .unwrap_or(&record_id);
-                                        if let Err(e) = crate::db::create_mention_edge(
+                                        if let Err(e) = nomen_db::create_mention_edge(
                                             db,
                                             mid,
                                             eid,
@@ -354,16 +354,16 @@ pub async fn consolidate(
                             // Store typed relationships between entities
                             for rel in &extracted_relationships {
                                 // Ensure both entities exist first
-                                let from_id = crate::db::store_entity(
+                                let from_id = nomen_db::store_entity(
                                     db,
                                     &rel.from,
-                                    &crate::entities::EntityKind::Concept,
+                                    &nomen_core::entities::EntityKind::Concept,
                                 )
                                 .await;
-                                let to_id = crate::db::store_entity(
+                                let to_id = nomen_db::store_entity(
                                     db,
                                     &rel.to,
-                                    &crate::entities::EntityKind::Concept,
+                                    &nomen_core::entities::EntityKind::Concept,
                                 )
                                 .await;
 
@@ -374,7 +374,7 @@ pub async fn consolidate(
                                         .unwrap_or(&from_id);
                                     let tid =
                                         to_id.split_once(':').map(|(_, id)| id).unwrap_or(&to_id);
-                                    if let Err(e) = crate::db::create_typed_edge(
+                                    if let Err(e) = nomen_db::create_typed_edge(
                                         db,
                                         fid,
                                         tid,
@@ -416,7 +416,7 @@ pub async fn consolidate(
                 let content_str = content_for_entities.clone();
 
                 // Encrypt if personal/internal tier
-                let base = crate::memory::base_tier(&tier);
+                let base = nomen_core::memory::base_tier(&tier);
                 let final_content = if base == "personal" || base == "internal" {
                     match relay.signer().encrypt(&content_str) {
                         Ok(encrypted) => encrypted,
@@ -432,7 +432,7 @@ pub async fn consolidate(
                 // Build tags (v0.2: visibility + scope indexed tags)
                 let version_str = if is_merge { "2" } else { "1" };
                 // Extract visibility and scope from the d_tag for indexed tags
-                let (vis_tag, scope_tag) = crate::memory::extract_visibility_scope(&d_tag);
+                let (vis_tag, scope_tag) = nomen_core::memory::extract_visibility_scope(&d_tag);
                 let mut event_tags = vec![
                     Tag::custom(TagKind::Custom("d".into()), vec![d_tag.clone()]),
                     Tag::custom(TagKind::Custom("visibility".into()), vec![vis_tag]),
@@ -476,7 +476,7 @@ pub async fn consolidate(
                 }
 
                 let builder =
-                    EventBuilder::new(Kind::Custom(crate::kinds::MEMORY_KIND), final_content)
+                    EventBuilder::new(Kind::Custom(nomen_core::kinds::MEMORY_KIND), final_content)
                         .tags(event_tags);
 
                 match relay.publish(builder).await {
@@ -516,7 +516,7 @@ pub async fn consolidate(
 
     // Mark all processed messages as consolidated
     if !all_consumed_msg_ids.is_empty() {
-        crate::db::mark_messages_consolidated(db, &all_consumed_msg_ids).await?;
+        nomen_db::mark_messages_consolidated(db, &all_consumed_msg_ids).await?;
     }
 
     // Publish NIP-09 deletion events for consumed ephemerals
@@ -677,10 +677,10 @@ pub(crate) async fn get_memory_record_id(db: &Surreal<Db>, d_tag: &str) -> Resul
 /// Check if consolidation is due based on config interval and message count.
 pub async fn check_consolidation_due(
     db: &Surreal<Db>,
-    config: &crate::config::MemoryConsolidationConfig,
+    config: &nomen_core::config::MemoryConsolidationConfig,
 ) -> Result<ConsolidationStatus> {
-    let pending = crate::db::count_unconsolidated_messages(db).await?;
-    let last_run = crate::db::get_meta(db, META_KEY_LAST_CONSOLIDATION).await?;
+    let pending = nomen_db::count_unconsolidated_messages(db).await?;
+    let last_run = nomen_db::get_meta(db, META_KEY_LAST_CONSOLIDATION).await?;
 
     // Check if count threshold exceeded
     if pending >= config.max_ephemeral_count {
@@ -749,5 +749,5 @@ pub async fn check_consolidation_due(
 /// Record that a consolidation run just completed.
 pub async fn record_consolidation_run(db: &Surreal<Db>) -> Result<()> {
     let now = chrono::Utc::now().to_rfc3339();
-    crate::db::set_meta(db, META_KEY_LAST_CONSOLIDATION, &now).await
+    nomen_db::set_meta(db, META_KEY_LAST_CONSOLIDATION, &now).await
 }

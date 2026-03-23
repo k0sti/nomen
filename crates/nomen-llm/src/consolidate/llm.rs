@@ -3,7 +3,7 @@ use async_trait::async_trait;
 use serde::Deserialize;
 use tracing::warn;
 
-use crate::ingest::RawMessageRecord;
+use nomen_db::RawMessageRecord;
 
 use super::grouping::derive_topic_from_messages;
 use super::types::ExtractedMemory;
@@ -75,7 +75,7 @@ impl OpenAiLlmProvider {
     }
 
     /// Create from config, returning None if API key is missing.
-    pub fn from_config(config: &crate::config::ConsolidationLlmConfig) -> Option<Self> {
+    pub fn from_config(config: &nomen_core::config::ConsolidationLlmConfig) -> Option<Self> {
         let api_key = std::env::var(&config.api_key_env).unwrap_or_default();
         if api_key.is_empty() {
             warn!(

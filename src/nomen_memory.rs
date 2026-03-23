@@ -170,7 +170,7 @@ impl Nomen {
         embedder: &dyn Embedder,
         mem: NewMemory,
     ) -> Result<String> {
-        Self::store_direct_with_author(db, embedder, mem, "").await
+        nomen_llm::store::store_direct(db, embedder, mem).await
     }
 
     /// Store a new memory with explicit author pubkey for d-tag construction.
@@ -180,40 +180,7 @@ impl Nomen {
         mem: NewMemory,
         author_pubkey_hex: &str,
     ) -> Result<String> {
-        let d_tag = memory::build_dtag_from_tier(&mem.tier, author_pubkey_hex, &mem.topic);
-        let source = mem.source.as_deref().unwrap_or("api");
-        let model = mem.model.as_deref().unwrap_or("nomen/api");
-
-        let visibility = memory::base_tier(&mem.tier).to_string();
-        let parsed = memory::ParsedMemory {
-            tier: mem.tier,
-            visibility,
-            topic: mem.topic,
-            model: model.to_string(),
-            content: mem.content.clone(),
-            created_at: nostr_sdk::Timestamp::now(),
-            d_tag: d_tag.clone(),
-            source: source.to_string(),
-            importance: mem.importance,
-        };
-
-        db::store_memory_direct(db, &parsed, source).await?;
-
-        // Set importance if provided
-        if let Some(imp) = mem.importance {
-            let _ = db::set_importance(db, &d_tag, imp).await;
-        }
-
-        // Generate embedding if embedder is configured
-        if embedder.dimensions() > 0 {
-            if let Ok(embeddings) = embedder.embed(&[mem.content]).await {
-                if let Some(embedding) = embeddings.into_iter().next() {
-                    let _ = db::store_embedding(db, &d_tag, embedding).await;
-                }
-            }
-        }
-
-        Ok(d_tag)
+        nomen_llm::store::store_direct_with_author(db, embedder, mem, author_pubkey_hex).await
     }
 
     /// Delete a memory by topic or event ID.
