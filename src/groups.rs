@@ -1,3 +1,5 @@
+pub use nomen_core::groups::*;
+
 use anyhow::{bail, Result};
 use serde::{Deserialize, Serialize};
 use surrealdb::engine::local::Db;
@@ -7,14 +9,9 @@ use tracing::debug;
 
 use crate::config::GroupConfig;
 
-/// A group record as stored in SurrealDB.
-///
-/// Note: The `id` field doubles as both our custom group identifier and SurrealDB's
-/// record ID. We use `meta::id(id)` in SELECT queries to extract it as a plain string.
-/// All optional fields use String (not Option<String>) to avoid SurrealDB NONE
-/// serialization issues.
+/// DB-specific wrapper for Group with SurrealValue derive.
 #[derive(Debug, Clone, Serialize, Deserialize, SurrealValue)]
-pub struct Group {
+struct DbGroup {
     pub id: String,
     pub name: String,
     #[serde(default)]
@@ -27,128 +24,72 @@ pub struct Group {
     pub created_at: String,
 }
 
-/// GroupStore loads groups from config and DB, provides membership and scope queries.
-pub struct GroupStore {
-    groups: Vec<Group>,
+impl From<DbGroup> for Group {
+    fn from(g: DbGroup) -> Self {
+        Group {
+            id: g.id,
+            name: g.name,
+            parent: g.parent,
+            members: g.members,
+            relay: g.relay,
+            nostr_group: g.nostr_group,
+            created_at: g.created_at,
+        }
+    }
 }
 
-impl GroupStore {
-    /// Create an empty GroupStore (for testing).
-    pub fn empty() -> Self {
-        Self { groups: Vec::new() }
-    }
-
-    /// Load groups from config file entries and SurrealDB.
-    pub async fn load(config_groups: &[GroupConfig], db: &Surreal<Db>) -> Result<Self> {
-        let mut groups = Vec::new();
-
-        // Load from config
-        for cg in config_groups {
-            let parent = derive_parent(&cg.id).unwrap_or_default();
-            groups.push(Group {
-                id: cg.id.clone(),
-                name: cg.name.clone(),
-                parent,
-                members: cg.members.clone(),
-                relay: cg.relay.clone().unwrap_or_default(),
-                nostr_group: cg.nostr_group.clone().unwrap_or_default(),
-                created_at: chrono::Utc::now().to_rfc3339(),
-            });
+impl From<&Group> for DbGroup {
+    fn from(g: &Group) -> Self {
+        DbGroup {
+            id: g.id.clone(),
+            name: g.name.clone(),
+            parent: g.parent.clone(),
+            members: g.members.clone(),
+            relay: g.relay.clone(),
+            nostr_group: g.nostr_group.clone(),
+            created_at: g.created_at.clone(),
         }
+    }
+}
+
+/// Extension trait for GroupStore DB operations.
+pub trait GroupStoreExt {
+    fn load(config_groups: &[GroupConfig], db: &Surreal<Db>) -> impl std::future::Future<Output = Result<GroupStore>> + Send;
+}
+
+impl GroupStoreExt for GroupStore {
+    /// Load groups from config file entries and SurrealDB.
+    async fn load(config_groups: &[GroupConfig], db: &Surreal<Db>) -> Result<GroupStore> {
+        let mut store = GroupStore::from_config(config_groups);
 
         // Load from DB (these may overlap with config; DB wins for members)
-        let db_groups: Vec<Group> = db
+        let db_groups: Vec<DbGroup> = db
             .query("SELECT meta::id(id) AS id, name, parent, members, relay, nostr_group, created_at FROM nomen_group")
             .await?
             .take(0)?;
 
         for dbg in db_groups {
-            if let Some(existing) = groups.iter_mut().find(|g| g.id == dbg.id) {
+            let group: Group = dbg.into();
+            if let Some(existing) = store.groups_mut().iter_mut().find(|g| g.id == group.id) {
                 // DB overrides config for mutable fields
-                existing.members = dbg.members;
-                if !dbg.nostr_group.is_empty() {
-                    existing.nostr_group = dbg.nostr_group;
+                existing.members = group.members;
+                if !group.nostr_group.is_empty() {
+                    existing.nostr_group = group.nostr_group;
                 }
-                if !dbg.relay.is_empty() {
-                    existing.relay = dbg.relay;
+                if !group.relay.is_empty() {
+                    existing.relay = group.relay;
                 }
             } else {
-                groups.push(dbg);
+                store.groups_mut().push(group);
             }
         }
 
-        debug!("Loaded {} groups", groups.len());
-        Ok(Self { groups })
-    }
-
-    /// Load from config only (no DB).
-    pub fn from_config(config_groups: &[GroupConfig]) -> Self {
-        let groups = config_groups
-            .iter()
-            .map(|cg| Group {
-                id: cg.id.clone(),
-                name: cg.name.clone(),
-                parent: derive_parent(&cg.id).unwrap_or_default(),
-                members: cg.members.clone(),
-                relay: cg.relay.clone().unwrap_or_default(),
-                nostr_group: cg.nostr_group.clone().unwrap_or_default(),
-                created_at: chrono::Utc::now().to_rfc3339(),
-            })
-            .collect();
-        Self { groups }
-    }
-
-    /// Check if npub is a member of the given scope.
-    /// Does NOT walk up hierarchy — membership is explicit per level.
-    pub fn is_member(&self, scope: &str, npub: &str) -> bool {
-        if let Some(group) = self.groups.iter().find(|g| g.id == scope) {
-            group.members.iter().any(|m| m == npub)
-        } else {
-            false
-        }
-    }
-
-    /// Expand all scopes an npub can access.
-    /// Returns: all group scopes where the npub is an explicit member,
-    /// plus all child scopes of those groups where the npub is also a member.
-    pub fn expand_scopes(&self, npub: &str) -> Vec<String> {
-        let mut scopes = Vec::new();
-        for group in &self.groups {
-            if group.members.iter().any(|m| m == npub) {
-                scopes.push(group.id.clone());
-            }
-        }
-        scopes
-    }
-
-    /// Get all groups.
-    pub fn list(&self) -> &[Group] {
-        &self.groups
-    }
-
-    /// Get a group by id.
-    pub fn get(&self, id: &str) -> Option<&Group> {
-        self.groups.iter().find(|g| g.id == id)
-    }
-
-    /// Resolve a NIP-29 nostr_group (h-tag value) to a hierarchical scope.
-    pub fn resolve_nostr_group(&self, nostr_group: &str) -> Option<&str> {
-        self.groups
-            .iter()
-            .find(|g| !g.nostr_group.is_empty() && g.nostr_group == nostr_group)
-            .map(|g| g.id.as_str())
-    }
-
-    /// Resolve a hierarchical scope to a NIP-29 nostr_group (h-tag value).
-    pub fn resolve_scope_to_nostr_group(&self, scope: &str) -> Option<&str> {
-        self.groups
-            .iter()
-            .find(|g| g.id == scope && !g.nostr_group.is_empty())
-            .map(|g| g.nostr_group.as_str())
+        debug!("Loaded {} groups", store.list().len());
+        Ok(store)
     }
 }
 
-// ── Group CRUD (DB operations) ──────────────────────────────────────
+// -- Group CRUD (DB operations) --
 
 /// Create a new group in SurrealDB.
 pub async fn create_group(
@@ -181,7 +122,7 @@ pub async fn create_group(
     };
 
     // Check if exists
-    let existing: Option<Group> = db
+    let existing: Option<DbGroup> = db
         .query("SELECT meta::id(id) AS id, name, parent, members, relay, nostr_group, created_at FROM nomen_group WHERE meta::id(id) = $id LIMIT 1")
         .bind(("id", id.to_string()))
         .await?
@@ -210,13 +151,13 @@ pub async fn create_group(
 
 /// List all groups from SurrealDB.
 pub async fn list_groups(db: &Surreal<Db>) -> Result<Vec<Group>> {
-    let groups: Vec<Group> = db.query("SELECT meta::id(id) AS id, name, parent, members, relay, nostr_group, created_at FROM nomen_group ORDER BY id").await?.check()?.take(0)?;
-    Ok(groups)
+    let db_groups: Vec<DbGroup> = db.query("SELECT meta::id(id) AS id, name, parent, members, relay, nostr_group, created_at FROM nomen_group ORDER BY id").await?.check()?.take(0)?;
+    Ok(db_groups.into_iter().map(Into::into).collect())
 }
 
 /// Get members of a group.
 pub async fn get_members(db: &Surreal<Db>, group_id: &str) -> Result<Vec<String>> {
-    let group: Option<Group> = db
+    let group: Option<DbGroup> = db
         .query("SELECT meta::id(id) AS id, name, parent, members, relay, nostr_group, created_at FROM nomen_group WHERE meta::id(id) = $id LIMIT 1")
         .bind(("id", group_id.to_string()))
         .await?
@@ -230,7 +171,7 @@ pub async fn get_members(db: &Surreal<Db>, group_id: &str) -> Result<Vec<String>
 
 /// Add a member to a group.
 pub async fn add_member(db: &Surreal<Db>, group_id: &str, npub: &str) -> Result<()> {
-    let group: Option<Group> = db
+    let group: Option<DbGroup> = db
         .query("SELECT meta::id(id) AS id, name, parent, members, relay, nostr_group, created_at FROM nomen_group WHERE meta::id(id) = $id LIMIT 1")
         .bind(("id", group_id.to_string()))
         .await?
@@ -254,7 +195,7 @@ pub async fn add_member(db: &Surreal<Db>, group_id: &str, npub: &str) -> Result<
 
 /// Remove a member from a group.
 pub async fn remove_member(db: &Surreal<Db>, group_id: &str, npub: &str) -> Result<()> {
-    let group: Option<Group> = db
+    let group: Option<DbGroup> = db
         .query("SELECT meta::id(id) AS id, name, parent, members, relay, nostr_group, created_at FROM nomen_group WHERE meta::id(id) = $id LIMIT 1")
         .bind(("id", group_id.to_string()))
         .await?
@@ -273,108 +214,5 @@ pub async fn remove_member(db: &Surreal<Db>, group_id: &str, npub: &str) -> Resu
             Ok(())
         }
         None => bail!("Group not found: {group_id}"),
-    }
-}
-
-// ── Helpers ─────────────────────────────────────────────────────────
-
-/// Derive parent scope from a dot-separated id.
-/// "atlantislabs.engineering.infra" -> Some("atlantislabs.engineering")
-/// "atlantislabs" -> None
-fn derive_parent(id: &str) -> Option<String> {
-    id.rfind('.').map(|pos| id[..pos].to_string())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_derive_parent() {
-        assert_eq!(derive_parent("atlantislabs"), None);
-        assert_eq!(
-            derive_parent("atlantislabs.engineering"),
-            Some("atlantislabs".to_string())
-        );
-        assert_eq!(
-            derive_parent("atlantislabs.engineering.infra"),
-            Some("atlantislabs.engineering".to_string())
-        );
-    }
-
-    #[test]
-    fn test_is_member() {
-        let store = GroupStore::from_config(&[
-            GroupConfig {
-                id: "atlantislabs".to_string(),
-                name: "Atlantis Labs".to_string(),
-                members: vec!["npub1abc".to_string(), "npub1def".to_string()],
-                nostr_group: None,
-                relay: None,
-            },
-            GroupConfig {
-                id: "atlantislabs.engineering".to_string(),
-                name: "Engineering".to_string(),
-                members: vec!["npub1abc".to_string()],
-                nostr_group: Some("techteam".to_string()),
-                relay: None,
-            },
-        ]);
-
-        assert!(store.is_member("atlantislabs", "npub1abc"));
-        assert!(store.is_member("atlantislabs", "npub1def"));
-        assert!(!store.is_member("atlantislabs", "npub1xyz"));
-        assert!(store.is_member("atlantislabs.engineering", "npub1abc"));
-        assert!(!store.is_member("atlantislabs.engineering", "npub1def"));
-    }
-
-    #[test]
-    fn test_expand_scopes() {
-        let store = GroupStore::from_config(&[
-            GroupConfig {
-                id: "atlantislabs".to_string(),
-                name: "Atlantis Labs".to_string(),
-                members: vec!["npub1abc".to_string(), "npub1def".to_string()],
-                nostr_group: None,
-                relay: None,
-            },
-            GroupConfig {
-                id: "atlantislabs.engineering".to_string(),
-                name: "Engineering".to_string(),
-                members: vec!["npub1abc".to_string()],
-                nostr_group: None,
-                relay: None,
-            },
-        ]);
-
-        let scopes = store.expand_scopes("npub1abc");
-        assert_eq!(scopes, vec!["atlantislabs", "atlantislabs.engineering"]);
-
-        let scopes = store.expand_scopes("npub1def");
-        assert_eq!(scopes, vec!["atlantislabs"]);
-
-        let scopes = store.expand_scopes("npub1xyz");
-        assert!(scopes.is_empty());
-    }
-
-    #[test]
-    fn test_nostr_group_mapping() {
-        let store = GroupStore::from_config(&[GroupConfig {
-            id: "atlantislabs.engineering".to_string(),
-            name: "Engineering".to_string(),
-            members: vec![],
-            nostr_group: Some("techteam".to_string()),
-            relay: None,
-        }]);
-
-        assert_eq!(
-            store.resolve_nostr_group("techteam"),
-            Some("atlantislabs.engineering")
-        );
-        assert_eq!(store.resolve_nostr_group("unknown"), None);
-        assert_eq!(
-            store.resolve_scope_to_nostr_group("atlantislabs.engineering"),
-            Some("techteam")
-        );
     }
 }

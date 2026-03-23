@@ -1,5 +1,5 @@
 [workspace]
-members = [".", "nomen-wire"]
+members = [".", "nomen-wire", "crates/nomen-core"]
 
 [package]
 name = "nomen"
@@ -68,6 +68,9 @@ tower-http = { version = "0.6", features = ["fs", "cors"] }
 
 # Async trait support
 async-trait = "0.1"
+
+# Core types (pure, no heavy deps)
+nomen-core = { path = "crates/nomen-core" }
 
 # Socket protocol
 nomen-wire = { path = "nomen-wire" }

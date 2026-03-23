@@ -1,3 +1,5 @@
+pub use nomen_core::ingest::*;
+
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use surrealdb::engine::local::Db;
@@ -5,18 +7,6 @@ use surrealdb::engine::local::Db;
 use surrealdb::types::SurrealValue;
 use surrealdb::Surreal;
 use tracing::debug;
-
-/// A raw message from any source (telegram, nostr, webhook, CLI, etc.).
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct RawMessage {
-    pub source: String,
-    pub source_id: Option<String>,
-    pub sender: String,
-    pub channel: Option<String>,
-    pub content: String,
-    pub metadata: Option<String>,
-    pub created_at: Option<String>,
-}
 
 /// A raw message as stored in SurrealDB (with DB-assigned id and consolidated flag).
 #[derive(Debug, Clone, Serialize, Deserialize, SurrealValue)]
@@ -48,17 +38,6 @@ pub struct RawMessageRecord {
     #[serde(default)]
     #[surreal(default)]
     pub consolidated: bool,
-}
-
-/// Query options for fetching raw messages.
-#[derive(Debug, Default)]
-pub struct MessageQuery {
-    pub source: Option<String>,
-    pub channel: Option<String>,
-    pub sender: Option<String>,
-    pub since: Option<String>,
-    pub limit: Option<usize>,
-    pub consolidated_only: bool,
 }
 
 /// Ingest a raw message into SurrealDB.

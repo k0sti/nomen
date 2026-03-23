@@ -1,6 +1,7 @@
 //! Integration tests for Nomen using temp-dir SurrealDB (SurrealKv).
 
 use anyhow::Result;
+use nomen::groups::GroupStoreExt;
 use surrealdb::engine::local::{Db, SurrealKv};
 use surrealdb::types::SurrealValue;
 use surrealdb::Surreal;

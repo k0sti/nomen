@@ -2731,6 +2731,7 @@ dependencies = [
  "hex",
  "http",
  "http-body-util",
+ "nomen-core",
  "nomen-wire",
  "nostr-sdk",
  "reqwest 0.12.28",
@@ -2748,6 +2749,21 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "ulid",
+]
+
+[[package]]
+name = "nomen-core"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "chrono",
+ "dirs",
+ "nostr-sdk",
+ "serde",
+ "serde_json",
+ "toml",
+ "tracing",
 ]
 
 [[package]]

@@ -51,9 +51,9 @@ use tokio::sync::broadcast;
 
 use std::sync::Arc;
 
-use crate::config::Config;
+use crate::config::{Config, ConfigExt};
 use crate::embed::Embedder;
-use crate::groups::GroupStore;
+use crate::groups::{GroupStore, GroupStoreExt};
 use crate::relay::RelayManager;
 use crate::signer::NomenSigner;
 

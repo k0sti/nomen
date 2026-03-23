@@ -4,7 +4,7 @@ use std::path::PathBuf;
 
 use anyhow::{bail, Result};
 
-use nomen::config::Config;
+use nomen::config::{Config, ContextVmConfigExt};
 use nomen::cvm;
 use nomen::mcp;
 
