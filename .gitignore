@@ -1,5 +1,2 @@
 target/
 obsidian
-.claude/worktrees/
-# Unison conflict files
-*conflict_on_*

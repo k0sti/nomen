@@ -67,27 +67,17 @@ async function nomenRequest(
 
 type NomenSearchResult = {
   topic: string;
-  detail: string;
+  content: string;
   visibility: string;
   match_type: string;
   created_at: string;
-};
-
-type NomenMemoryRecord = {
-  topic?: string;
-  detail?: string;
-  visibility?: string;
-  scope?: string;
-  version?: number;
-  created_at?: string;
-  d_tag?: string;
 };
 
 function formatSearchResults(results: NomenSearchResult[]) {
   return {
     results: results.map((r) => ({
       path: `nomen:${r.topic}`,
-      snippet: r.detail,
+      snippet: r.content,
       score: 0.5,
       topic: r.topic,
       visibility: r.visibility,
@@ -103,88 +93,6 @@ function jsonResult(data: Record<string, unknown>) {
   };
 }
 
-async function getMemoryByDTag(
-  apiUrl: string,
-  dTag: string,
-  timeoutMs: number,
-): Promise<NomenMemoryRecord | null> {
-  const resp = await nomenRequest(apiUrl, "memory.get", { d_tag: dTag }, timeoutMs);
-  if (!resp.ok || !resp.result) return null;
-  const result = resp.result as any;
-  if (!result || result.topic == null) return null;
-  return result as NomenMemoryRecord;
-}
-
-async function resolveRoomsByProvider(
-  apiUrl: string,
-  providerId: string,
-  timeoutMs: number,
-): Promise<NomenMemoryRecord[]> {
-  const resp = await nomenRequest(apiUrl, "room.resolve", { provider_id: providerId }, timeoutMs);
-  if (!resp.ok || !resp.result) return [];
-  const result = resp.result as any;
-  return ((result?.results ?? []) as NomenMemoryRecord[]);
-}
-
-function formatRoomSection(title: string, record: NomenMemoryRecord): string {
-  const body = record.detail || "";
-  const label = body ? (body.split("\n")[0] ?? "") : "";
-  return `# ${title}${label ? ` (${label})` : ""}\n\n${body}`;
-}
-
-// ── Session key → provider ID extraction ─────────────────────────────
-
-/**
- * Extract a provider chat identifier from an OpenClaw session key.
- *
- * Session keys look like:
- *   agent:main:telegram:-1003821690204:group
- *   agent:main:nostr-nip29:techteam:group
- *   agent:main:telegram:60996061:direct
- *
- * We extract the channel:chatId portion (e.g. "telegram:-1003821690204").
- * Returns null for session keys we can't parse.
- */
-function extractProviderIdFromSessionKey(sessionKey: string): string | null {
-  if (!sessionKey) return null;
-
-  const lower = sessionKey.toLowerCase();
-  const parts = lower.split(":").filter(Boolean);
-
-  // Expected examples:
-  //   agent:main:telegram:group:-1003821690204:topic:8485
-  //   agent:main:telegram:60996061:direct
-  if (parts.length < 5 || parts[0] !== "agent") return null;
-
-  const channel = parts[2];
-
-  const topicIdx = parts.indexOf("topic");
-  if (topicIdx > 4) {
-    const chatIdParts = parts.slice(3, topicIdx);
-    if (chatIdParts.length === 0) return null;
-    return `${channel}:${chatIdParts.join(":")}`;
-  }
-
-  const chatType = parts[parts.length - 1];
-  if (!["group", "direct", "dm", "channel"].includes(chatType)) return null;
-
-  const chatIdParts = parts.slice(3, parts.length - 1);
-  if (chatIdParts.length === 0) return null;
-
-  return `${channel}:${chatIdParts.join(":")}`;
-}
-
-function extractTopicIdFromSessionKey(sessionKey: string): string | null {
-  if (!sessionKey) return null;
-  const parts = sessionKey.split(":").filter(Boolean);
-  const topicIdx = parts.indexOf("topic");
-  if (topicIdx >= 0 && topicIdx + 1 < parts.length) {
-    const topicId = parts[topicIdx + 1];
-    if (topicId && /^\d+$/.test(topicId)) return topicId;
-  }
-  return null;
-}
-
 // ── Plugin ───────────────────────────────────────────────────────────
 
 const memoryNomenPlugin = {
@@ -195,12 +103,8 @@ const memoryNomenPlugin = {
   kind: "memory" as const,
   configSchema: {
     type: "object" as const,
-    additionalProperties: true,
-    properties: {
-      apiUrl: { type: "string" as const },
-      visibility: { type: "string" as const },
-      timeoutMs: { type: "number" as const },
-    },
+    additionalProperties: false,
+    properties: {},
     parse: (v: unknown) => v,
   },
 
@@ -332,7 +236,7 @@ const memoryNomenPlugin = {
             const r = resp.result as Record<string, unknown>;
             return jsonResult({
               path: `nomen:${r.topic}`,
-              text: (r.detail as string) || "",
+              text: (r.content as string) || "",
               topic: r.topic,
               visibility: r.visibility,
             });
@@ -350,10 +254,38 @@ const memoryNomenPlugin = {
             const r = resp2.result as Record<string, unknown>;
             return jsonResult({
               path: `nomen:${r.topic}`,
-              text: (r.detail as string) || "",
+              text: (r.content as string) || "",
               topic: r.topic,
               visibility: r.visibility,
             });
+          }
+
+          // Not found — fall back to file read for backward compat
+          // (MEMORY.md, memory/*.md still exist on disk)
+          try {
+            const fs = await import("node:fs");
+            const path = await import("node:path");
+            const workspace = api.runtime?.config?.agents?.defaults?.workspace ?? process.cwd();
+            const filePath = path.resolve(workspace, rawPath);
+
+            if (fs.existsSync(filePath)) {
+              const content = fs.readFileSync(filePath, "utf8");
+              const from = params?.from ? Math.max(1, params.from) : 1;
+              const lines = params?.lines;
+              const allLines = content.split("\n");
+              const start = from - 1;
+              const end = lines ? start + lines : allLines.length;
+              const slice = allLines.slice(start, end).join("\n");
+
+              return jsonResult({
+                path: rawPath,
+                text: slice,
+                fromLine: from,
+                totalLines: allLines.length,
+              });
+            }
+          } catch {
+            // ignore file read errors
           }
 
           return jsonResult({
@@ -364,216 +296,6 @@ const memoryNomenPlugin = {
         },
       },
       { names: ["memory_get"] },
-    );
-
-    // ── memory_put ─────────────────────────────────────────────
-
-    api.registerTool(
-      {
-        name: "memory_put",
-        label: "Memory Put",
-        description:
-          "Store a memory in Nomen. Use for saving facts, decisions, lessons, or any knowledge worth remembering across sessions.",
-        parameters: {
-          type: "object",
-          properties: {
-            topic: {
-              type: "string",
-              description:
-                "Memory topic path (e.g. 'projects/myapp', 'lessons/debugging', 'k0/preferences')",
-            },
-            detail: {
-              type: "string",
-              description: "Full detail content (markdown supported)",
-            },
-            visibility: {
-              type: "string",
-              enum: ["personal", "group", "public"],
-              description: "Visibility tier (default: from plugin config)",
-            },
-            pinned: {
-              type: "boolean",
-              description: "Pin this memory so it is always injected into the system prompt (optional)",
-            },
-          },
-          required: ["topic", "detail"],
-        },
-        async execute(_toolCallId: string, params: any) {
-          const topic = params?.topic;
-          const detail = params?.detail;
-
-          if (!topic || !detail) {
-            return jsonResult({ error: "topic and detail are required" });
-          }
-
-          const resp = await nomenRequest(
-            cfg.apiUrl,
-            "memory.put",
-            {
-              topic,
-              detail: params?.detail || "",
-              visibility: params?.visibility || cfg.visibility,
-              ...(params?.pinned != null ? { pinned: params.pinned } : {}),
-            },
-            cfg.timeoutMs,
-          );
-
-          if (!resp.ok) {
-            return jsonResult({
-              error: resp.error?.message ?? "memory.put failed",
-            });
-          }
-
-          return jsonResult({ stored: true, topic, ...(resp.result ?? {}) });
-        },
-      },
-      { names: ["memory_put"] },
-    );
-
-    // ── memory_delete ─────────────────────────────────────────
-
-    api.registerTool(
-      {
-        name: "memory_delete",
-        label: "Memory Delete",
-        description:
-          "Delete a memory from Nomen by topic name or d_tag.",
-        parameters: {
-          type: "object",
-          properties: {
-            topic: {
-              type: "string",
-              description:
-                "Memory topic (e.g. 'projects/myapp') or full d_tag to delete",
-            },
-          },
-          required: ["topic"],
-        },
-        async execute(_toolCallId: string, params: any) {
-          const topic = params?.topic;
-
-          if (!topic) {
-            return jsonResult({ error: "topic is required" });
-          }
-
-          // Try as topic first, then as d_tag
-          const resp = await nomenRequest(
-            cfg.apiUrl,
-            "memory.delete",
-            { topic },
-            cfg.timeoutMs,
-          );
-
-          if (resp.ok) {
-            return jsonResult({ deleted: true, topic });
-          }
-
-          // Fallback: try as d_tag
-          const resp2 = await nomenRequest(
-            cfg.apiUrl,
-            "memory.delete",
-            { d_tag: topic },
-            cfg.timeoutMs,
-          );
-
-          if (resp2.ok) {
-            return jsonResult({ deleted: true, d_tag: topic });
-          }
-
-          return jsonResult({
-            error: resp2.error?.message ?? "memory.delete failed",
-          });
-        },
-      },
-      { names: ["memory_delete"] },
-    );
-
-    // ── memory_pin ────────────────────────────────────────────────
-
-    api.registerTool(
-      {
-        name: "memory_pin",
-        label: "Memory Pin",
-        description:
-          "Pin a memory so it is always injected into the system prompt at the start of every session.",
-        parameters: {
-          type: "object",
-          properties: {
-            topic: {
-              type: "string",
-              description: "Memory topic to pin (e.g. 'k0/profile')",
-            },
-          },
-          required: ["topic"],
-        },
-        async execute(_toolCallId: string, params: any) {
-          const topic = params?.topic;
-          if (!topic) return jsonResult({ error: "topic is required" });
-
-          // Resolve topic to d_tag
-          const mem = await nomenRequest(cfg.apiUrl, "memory.get", { topic }, cfg.timeoutMs);
-          const dTag = mem.ok && mem.result ? (mem.result as any).d_tag : null;
-          if (!dTag) return jsonResult({ error: `memory not found for topic: ${topic}` });
-
-          const resp = await nomenRequest(
-            cfg.apiUrl,
-            "memory.pin",
-            { d_tag: dTag },
-            cfg.timeoutMs,
-          );
-
-          if (!resp.ok) {
-            return jsonResult({ error: resp.error?.message ?? "pin failed" });
-          }
-
-          return jsonResult({ pinned: true, topic, d_tag: dTag });
-        },
-      },
-      { names: ["memory_pin"] },
-    );
-
-    // ── memory_unpin ──────────────────────────────────────────────
-
-    api.registerTool(
-      {
-        name: "memory_unpin",
-        label: "Memory Unpin",
-        description:
-          "Unpin a memory so it is no longer injected into the system prompt.",
-        parameters: {
-          type: "object",
-          properties: {
-            topic: {
-              type: "string",
-              description: "Memory topic to unpin (e.g. 'k0/profile')",
-            },
-          },
-          required: ["topic"],
-        },
-        async execute(_toolCallId: string, params: any) {
-          const topic = params?.topic;
-          if (!topic) return jsonResult({ error: "topic is required" });
-
-          // Resolve topic to d_tag
-          const mem = await nomenRequest(cfg.apiUrl, "memory.get", { topic }, cfg.timeoutMs);
-          const dTag = mem.ok && mem.result ? (mem.result as any).d_tag : null;
-          if (!dTag) return jsonResult({ error: `memory not found for topic: ${topic}` });
-
-          const resp = await nomenRequest(
-            cfg.apiUrl,
-            "memory.unpin",
-            { d_tag: dTag },
-            cfg.timeoutMs,
-          );
-
-          if (!resp.ok) {
-            return jsonResult({ error: resp.error?.message ?? "unpin failed" });
-          }
-
-          return jsonResult({ pinned: false, topic, d_tag: dTag });
-        },
-      },
-      { names: ["memory_unpin"] },
     );
 
     // ── memory_consolidate_prepare ───────────────────────────────
@@ -639,10 +361,10 @@ const memoryNomenPlugin = {
                       type: "object",
                       properties: {
                         topic: { type: "string" },
-                        detail: { type: "string" },
+                        content: { type: "string" },
                         importance: { type: "number" },
                       },
-                      required: ["topic", "detail", "importance"],
+                      required: ["topic", "content", "importance"],
                     },
                   },
                 },
@@ -677,93 +399,6 @@ const memoryNomenPlugin = {
       { names: ["memory_consolidate_commit"] },
     );
 
-    // ── Context injection (before_prompt_build hook) ────────────
-    // Injects: 1) Pinned memories (always), 2) Room context (when chatId available)
-
-    api.on(
-      "before_prompt_build",
-      async (_event: any, ctx: any) => {
-        const sections: string[] = [];
-
-        // ── 1. Pinned memories (always injected) ────────────────
-        try {
-          const pinnedResp = await nomenRequest(
-            cfg.apiUrl,
-            "memory.list",
-            { pinned: true, limit: 50 },
-            cfg.timeoutMs,
-          );
-
-          if (pinnedResp.ok && pinnedResp.result) {
-            const memories = ((pinnedResp.result as any)?.memories ?? []) as NomenMemoryRecord[];
-            if (memories.length > 0) {
-              const pinnedLines = memories.map((m) => {
-                const detail = m.detail ?? "";
-                const label = (detail).split("\n")[0] ?? "";
-                // Include full detail only if it's short enough to be useful
-                const body = detail && detail.length < 500
-                  ? detail
-                  : label;
-                return `## ${m.topic}\n${body}`;
-              });
-              sections.push(`# Pinned Memories\n\n${pinnedLines.join("\n\n")}`);
-            }
-          }
-        } catch (err) {
-          api.logger.warn(
-            `memory-nomen: pinned memory injection failed: ${err instanceof Error ? err.message : err}`,
-          );
-        }
-
-        // ── 2. Room context (when chatId available) ─────────────
-        const sessionKey: string = ctx?.sessionKey ?? "";
-        const inbound: any = ctx?.inboundContext ?? {};
-        const chatId = inbound?.chatId ?? inbound?.chat_id ?? extractProviderIdFromSessionKey(sessionKey) ?? "";
-        const threadId = inbound?.threadId ?? inbound?.thread_id ?? extractTopicIdFromSessionKey(sessionKey) ?? "";
-
-        if (chatId) {
-          try {
-            // Group/chat layer
-            const groupDTag = `group/${chatId}/room`;
-            const groupRecord = await getMemoryByDTag(cfg.apiUrl, groupDTag, cfg.timeoutMs);
-            let groupInjected = false;
-
-            if (groupRecord) {
-              sections.push(formatRoomSection("Room Context", groupRecord));
-              groupInjected = true;
-            }
-
-            // Topic/thread layer
-            let topicInjected = false;
-            if (threadId) {
-              const topicDTag = `group/${chatId}/room/${threadId}`;
-              const topicRecord = await getMemoryByDTag(cfg.apiUrl, topicDTag, cfg.timeoutMs);
-              if (topicRecord) {
-                sections.push(formatRoomSection("Topic Context", topicRecord));
-                topicInjected = true;
-              }
-            }
-
-            if (groupInjected || topicInjected) {
-              api.logger.info(
-                `memory-nomen: injected room context for provider "${chatId}" (group=${groupInjected}, topic=${topicInjected})`,
-              );
-            }
-          } catch (err) {
-            api.logger.warn(
-              `memory-nomen: room context injection failed: ${err instanceof Error ? err.message : err}`,
-            );
-          }
-        }
-
-        if (sections.length === 0) return {};
-
-        return {
-          appendSystemContext: sections.join("\n\n"),
-        };
-      },
-    );
-
     // ── Message ingestion hooks ─────────────────────────────────
 
     // Inbound messages — use api.on() for typed hooks (not api.registerHook which is the old HOOK.md system)
@@ -775,26 +410,17 @@ const memoryNomenPlugin = {
       async (event: any, ctx: any) => {
         if (!event?.content) return;
 
-        const meta = event.metadata || {};
-        const provider = meta.provider || ctx?.channelId || "unknown";
-        const threadId = meta.threadId != null ? String(meta.threadId) : undefined;
-        const conversationId = ctx?.conversationId;
-
         try {
           await nomenRequest(
             cfg.apiUrl,
             "message.ingest",
             {
-              source: provider,
-              sender: meta.senderName || meta.senderUsername || event.from || "unknown",
-              sender_id: meta.senderId || event.from || undefined,
+              source: `${ctx?.channelId || "unknown"}:${event.timestamp || Date.now()}`,
+              sender: event.from || "unknown",
               content: event.content,
-              channel: conversationId || provider,
-              room: conversationId || undefined,
-              topic: threadId || undefined,
-              provider_id: meta.messageId || undefined,
-              sender_name: meta.senderName || undefined,
-              source_ts: event.timestamp ? String(Math.floor(event.timestamp / 1000)) : undefined,
+              channel: ctx?.conversationId
+                ? `${ctx.channelId}:${ctx.conversationId}`
+                : ctx?.channelId || "unknown",
             },
             cfg.timeoutMs,
           );
@@ -815,20 +441,17 @@ const memoryNomenPlugin = {
       async (event: any, ctx: any) => {
         if (!event?.content || !event.success) return;
 
-        const provider = ctx?.channelId || "unknown";
-        const conversationId = ctx?.conversationId;
-
         try {
           await nomenRequest(
             cfg.apiUrl,
             "message.ingest",
             {
-              source: provider,
+              source: `${ctx?.channelId || "unknown"}:sent:${Date.now()}`,
               sender: "clarity",
               content: event.content,
-              channel: conversationId || provider,
-              room: conversationId || undefined,
-              source_ts: String(Math.floor(Date.now() / 1000)),
+              channel: ctx?.conversationId
+                ? `${ctx.channelId}:${ctx.conversationId}`
+                : ctx?.channelId || "unknown",
             },
             cfg.timeoutMs,
           );
@@ -894,7 +517,7 @@ const memoryNomenPlugin = {
               console.log(
                 `[${r.visibility}] ${r.topic} (${r.match_type})`,
               );
-              console.log(`  ${(r.detail ?? "").split("\n")[0]}`);
+              console.log(`  ${r.content?.split('\n')[0] || ''}`);
               console.log();
             }
           });

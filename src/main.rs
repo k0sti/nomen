@@ -16,8 +16,8 @@ use nomen::config::{
 use nomen::cvm;
 use nomen::db;
 use nomen::display::display_memories;
+use nomen::kinds::{LEGACY_LESSON_KIND, LESSON_KIND};
 use nomen::mcp;
-use nomen::kinds::{LEGACY_APP_DATA_KIND, RAW_SOURCE_KIND};
 use nomen::memory::{get_tag_value, parse_event};
 use nomen::relay::{RelayConfig, RelayManager};
 use nomen::signer::{KeysSigner, NomenSigner};
@@ -62,25 +62,16 @@ enum Command {
     Config,
     /// Sync memory events from relay to local SurrealDB
     Sync,
-    /// Clean up old colon-format events from relay (NIP-09 deletion)
-    Cleanup {
-        /// Preview what would be deleted without actually deleting
-        #[arg(long)]
-        dry_run: bool,
-    },
     /// Store a new memory
     Store {
         /// Topic/namespace for the memory
         topic: String,
-        /// Short summary (deprecated, use --detail; if set without --detail, treated as detail)
+        /// Memory content
         #[arg(long)]
-        summary: Option<String>,
-        /// Full detail text
-        #[arg(long, default_value = "")]
-        detail: String,
+        content: String,
         /// Visibility tier
-        #[arg(long, visible_alias = "tier", default_value = "public")]
-        visibility: String,
+        #[arg(long, default_value = "public")]
+        tier: String,
     },
     /// Delete a memory by topic or event ID
     Delete {
@@ -222,21 +213,6 @@ enum Command {
         #[arg(long)]
         dry_run: bool,
     },
-    /// Publish local memories/messages to relay that are missing or failed
-    Publish {
-        /// Only publish memories (kind 31234)
-        #[arg(long)]
-        memories: bool,
-        /// Only publish raw messages (kind 1235)
-        #[arg(long)]
-        messages: bool,
-        /// Preview what would be published without actually publishing
-        #[arg(long)]
-        dry_run: bool,
-        /// Max items to publish in one run
-        #[arg(long, default_value = "100")]
-        limit: usize,
-    },
     /// Send a message to a recipient (npub, group, or public)
     Send {
         /// Message content
@@ -256,19 +232,6 @@ enum Command {
         /// Use defaults without interactive prompts (requires NOMEN_NSEC env var)
         #[arg(long)]
         non_interactive: bool,
-    },
-    /// Migrate legacy lesson events (kind 31235/4129) to memory events (kind 31234)
-    MigrateLessons,
-    /// Migrate d-tags from colon format to slash format (v0.2 → v0.3)
-    MigrateDtags {
-        /// Preview what would be migrated without changing anything
-        #[arg(long)]
-        dry_run: bool,
-    },
-    /// Filesystem sync — bidirectional sync between Nomen memories and local markdown files
-    Fs {
-        #[command(subcommand)]
-        action: FsAction,
     },
     /// Validate config and check connectivity
     Doctor,
@@ -337,52 +300,6 @@ enum GroupAction {
         id: String,
         /// Member npub to remove
         npub: String,
-    },
-}
-
-#[derive(Subcommand)]
-enum FsAction {
-    /// Initialize a new filesystem sync directory
-    Init {
-        /// Directory path (overrides config [fs].dir)
-        #[arg(long)]
-        dir: Option<PathBuf>,
-    },
-    /// Pull all memories from DB to filesystem as markdown files
-    Pull {
-        /// Directory path (overrides config [fs].dir)
-        #[arg(long)]
-        dir: Option<PathBuf>,
-    },
-    /// Push changed files back to Nomen as memory events
-    Push {
-        /// Directory path (overrides config [fs].dir)
-        #[arg(long)]
-        dir: Option<PathBuf>,
-    },
-    /// Show sync status
-    Status {
-        /// Directory path (overrides config [fs].dir)
-        #[arg(long)]
-        dir: Option<PathBuf>,
-    },
-    /// Start real-time bidirectional sync daemon
-    Start {
-        /// Directory path (overrides config [fs].dir)
-        #[arg(long)]
-        dir: Option<PathBuf>,
-        /// DB poll interval in seconds (default: 5)
-        #[arg(long, default_value = "5")]
-        poll_secs: u64,
-        /// Print each sync event to stdout
-        #[arg(long, short)]
-        verbose: bool,
-    },
-    /// Stop the running sync daemon
-    Stop {
-        /// Directory path (overrides config [fs].dir)
-        #[arg(long)]
-        dir: Option<PathBuf>,
     },
 }
 
@@ -559,8 +476,7 @@ async fn cli_dispatch(
         Backend::Http(base_url) => dispatch_http(base_url, action, params).await,
         Backend::Direct => {
             let nomen = nomen.expect("Direct backend requires a Nomen instance");
-            let caller = nomen::auth::CallerContext::owner(String::new());
-            let resp = nomen::api::dispatch(nomen, CLI_CHANNEL, action, params, &caller).await;
+            let resp = nomen::api::dispatch(nomen, CLI_CHANNEL, action, params).await;
             if resp.ok {
                 Ok(resp.result.unwrap_or(serde_json::Value::Null))
             } else {
@@ -570,44 +486,6 @@ async fn cli_dispatch(
                     .unwrap_or_else(|| "unknown error".to_string());
                 bail!("{action}: {err}")
             }
-        }
-    }
-}
-
-/// Create a `DispatchFn` closure for use with `nomen::fs` functions.
-///
-/// Uses the HTTP backend if service is running, otherwise opens DB directly.
-async fn make_dispatch_fn(
-    backend: &Backend,
-    config: &Config,
-) -> Result<nomen::fs::DispatchFn> {
-    match backend {
-        Backend::Http(base_url) => {
-            let url = base_url.clone();
-            Ok(Box::new(move |action: String, params: serde_json::Value| {
-                let url = url.clone();
-                Box::pin(async move { dispatch_http(&url, &action, &params).await })
-            }))
-        }
-        Backend::Direct => {
-            let nomen = build_nomen(config).await?;
-            let nomen = std::sync::Arc::new(nomen);
-            Ok(Box::new(move |action: String, params: serde_json::Value| {
-                let nomen = nomen.clone();
-                Box::pin(async move {
-                    let caller = nomen::auth::CallerContext::owner(String::new());
-                    let resp = nomen::api::dispatch(&nomen, CLI_CHANNEL, &action, &params, &caller).await;
-                    if resp.ok {
-                        Ok(resp.result.unwrap_or(serde_json::Value::Null))
-                    } else {
-                        let err = resp
-                            .error
-                            .map(|e| e.message)
-                            .unwrap_or_else(|| "unknown error".to_string());
-                        anyhow::bail!("{action}: {err}")
-                    }
-                })
-            }))
         }
     }
 }
@@ -687,30 +565,17 @@ async fn main() -> Result<()> {
             };
             cmd_sync(&backend, nomen.as_ref()).await?;
         }
-        Command::Cleanup { dry_run } => {
-            if resolved.nsecs.is_empty() {
-                bail!("No nsec provided");
-            }
-            cmd_cleanup_relay(&resolved.relay, &resolved.nsecs, dry_run).await?;
-        }
         Command::Store {
             topic,
-            summary,
-            detail,
-            visibility,
+            content,
+            tier,
         } => {
-            // Backward compat: if --summary is set but --detail is empty, use summary as detail
-            let effective_detail = if detail.is_empty() {
-                summary.as_deref().unwrap_or("")
-            } else {
-                &detail
-            };
             let nomen = if matches!(backend, Backend::Direct) {
                 Some(build_nomen_with_relay(&config, &resolved).await?)
             } else {
                 None
             };
-            cmd_store(&backend, nomen.as_ref(), &topic, effective_detail, &visibility).await?;
+            cmd_store(&backend, nomen.as_ref(), &topic, &content, &tier).await?;
         }
         Command::Delete {
             topic,
@@ -864,28 +729,12 @@ async fn main() -> Result<()> {
             cmd_cluster(&backend, nomen.as_ref(), dry_run, prefix, min_members, namespace_depth).await?;
         }
         Command::Prune { days, dry_run } => {
-            let pruning = config.pruning_config();
-            // CLI --days overrides config; if CLI uses default (90), prefer config value
-            let effective_days = if days != 90 { days } else { pruning.max_age_days };
             let nomen = if matches!(backend, Backend::Direct) {
                 Some(build_nomen(&config).await?)
             } else {
                 None
             };
-            cmd_prune(&backend, nomen.as_ref(), effective_days, dry_run).await?;
-        }
-        Command::Publish {
-            memories,
-            messages,
-            dry_run,
-            limit,
-        } => {
-            let nomen = if matches!(backend, Backend::Direct) {
-                Some(build_nomen_with_relay(&config, &resolved).await?)
-            } else {
-                None
-            };
-            cmd_publish(&backend, nomen.as_ref(), memories, messages, dry_run, limit).await?;
+            cmd_prune(&backend, nomen.as_ref(), days, dry_run).await?;
         }
         Command::Send {
             content,
@@ -921,105 +770,6 @@ async fn main() -> Result<()> {
             )
             .await?;
         }
-        Command::MigrateLessons => {
-            let nomen = build_nomen_with_relay(&config, &resolved).await?;
-            cmd_migrate_lessons(&nomen, &resolved).await?;
-        }
-        Command::MigrateDtags { dry_run } => {
-            let nomen = if matches!(backend, Backend::Direct) {
-                Some(build_nomen(&config).await?)
-            } else {
-                None
-            };
-            let prefix = if dry_run { "[dry-run] " } else { "" };
-            println!("{prefix}Migrating d-tags from colon to slash format...");
-            let result = cli_dispatch(&backend, nomen.as_ref(), "memory.migrate_dtags", &serde_json::json!({"dry_run": dry_run})).await?;
-            let migrated = result["migrated"].as_u64().unwrap_or(0);
-            let skipped = result["skipped"].as_u64().unwrap_or(0);
-            println!("{prefix}Done: {migrated} migrated, {skipped} skipped");
-        }
-        Command::Fs { action } => {
-            let resolve_dir = |cli_dir: Option<PathBuf>| -> PathBuf {
-                cli_dir
-                    .or_else(|| config.fs.as_ref().map(|f| f.dir.clone()))
-                    .unwrap_or_else(|| {
-                        dirs::home_dir()
-                            .unwrap_or_else(|| PathBuf::from("."))
-                            .join(".nomen")
-                            .join("fs")
-                    })
-            };
-            match action {
-                FsAction::Init { dir } => {
-                    let dir = resolve_dir(dir.clone());
-                    nomen::fs::init_sync_dir(&dir)?;
-
-                    // Update config with the fs dir if not already set or different
-                    let needs_update = config.fs.as_ref().map(|f| f.dir != dir).unwrap_or(true);
-                    if needs_update {
-                        let config_path = Config::path();
-                        if config_path.exists() {
-                            let mut text = std::fs::read_to_string(&config_path)?;
-                            let dir_str = dir.display().to_string();
-                            if let Some(fs_idx) = text.find("[fs]") {
-                                // Replace existing dir line after [fs]
-                                let after_fs = &text[fs_idx..];
-                                if let Some(dir_offset) = after_fs.find("dir = \"") {
-                                    let abs_start = fs_idx + dir_offset;
-                                    let val_start = abs_start + 7; // after 'dir = "'
-                                    if let Some(end_quote) = text[val_start..].find('"') {
-                                        text.replace_range(val_start..val_start + end_quote, &dir_str);
-                                    }
-                                } else {
-                                    // [fs] exists but no dir line — insert after [fs]
-                                    let insert_at = fs_idx + 4;
-                                    text.insert_str(insert_at, &format!("\ndir = \"{dir_str}\""));
-                                }
-                            } else {
-                                // Append [fs] section
-                                text.push_str(&format!("\n[fs]\ndir = \"{dir_str}\"\n"));
-                            }
-                            std::fs::write(&config_path, &text)?;
-                            println!("Updated config: [fs].dir = \"{}\"", dir_str);
-                        }
-                    }
-
-                    println!("Initialized sync directory: {}", dir.display());
-                }
-                FsAction::Pull { dir } => {
-                    let dir = resolve_dir(dir);
-                    let dispatch = make_dispatch_fn(&backend, &config).await?;
-                    if !dir.join(".nomen-fs").exists() {
-                        nomen::fs::init_sync_dir(&dir)?;
-                    }
-                    let count = nomen::fs::pull(&dispatch, &dir).await?;
-                    println!("Pulled {count} memories to {}", dir.display());
-                }
-                FsAction::Push { dir } => {
-                    let dir = resolve_dir(dir);
-                    let dispatch = make_dispatch_fn(&backend, &config).await?;
-                    let count = nomen::fs::push(&dispatch, &dir).await?;
-                    println!("Pushed {count} changed files from {}", dir.display());
-                }
-                FsAction::Status { dir } => {
-                    let dir = resolve_dir(dir);
-                    let dispatch = make_dispatch_fn(&backend, &config).await?;
-                    nomen::fs::status(&dispatch, &dir).await?;
-                }
-                FsAction::Start { dir, poll_secs, verbose } => {
-                    let dir = resolve_dir(dir);
-                    let dispatch = make_dispatch_fn(&backend, &config).await?;
-                    if !dir.join(".nomen-fs").exists() {
-                        nomen::fs::init_sync_dir(&dir)?;
-                    }
-                    nomen::fs::start(&dispatch, &dir, poll_secs, verbose).await?;
-                }
-                FsAction::Stop { dir } => {
-                    let dir = resolve_dir(dir);
-                    nomen::fs::stop(&dir)?;
-                }
-            }
-        }
         Command::Init { .. } | Command::Doctor => unreachable!("handled above"),
     }
 
@@ -1038,15 +788,14 @@ async fn cmd_list_relay(relay_url: &str, nsecs: &[String], named: bool) -> Resul
     let events = mgr.fetch_memories(&pubkeys).await?;
 
     let mut memories = Vec::new();
+    let mut lesson_count = 0usize;
 
     for event in events.into_iter() {
-        // Skip raw source events (kind 1235) and legacy NIP-78 events (kind 30078)
-        if event.kind == nostr_sdk::Kind::Custom(RAW_SOURCE_KIND)
-            || event.kind == nostr_sdk::Kind::Custom(LEGACY_APP_DATA_KIND)
+        if event.kind == Kind::Custom(LESSON_KIND) || event.kind == Kind::Custom(LEGACY_LESSON_KIND)
         {
+            lesson_count += 1;
             continue;
         }
-
         let d_tag = get_tag_value(&event.tags, "d").unwrap_or_default();
         if d_tag.starts_with("snowclaw:config:") {
             continue;
@@ -1067,7 +816,7 @@ async fn cmd_list_relay(relay_url: &str, nsecs: &[String], named: bool) -> Resul
         .filter_map(|k| k.public_key().to_bech32().ok())
         .collect();
 
-    display_memories(&npubs, &memories);
+    display_memories(&npubs, &memories, lesson_count);
     mgr.disconnect().await;
     Ok(())
 }
@@ -1078,58 +827,11 @@ async fn cmd_list_local(backend: &Backend, nomen: Option<&Nomen>, ephemeral: boo
     if stats {
         let result = cli_dispatch(backend, nomen, "memory.list", &json!({"stats": true, "limit": 0})).await?;
         if let Some(s) = result.get("stats") {
-            let named = s["named"].as_u64().unwrap_or(0);
+            let total = s["total"].as_u64().unwrap_or(0);
             let pending = s["pending"].as_u64().unwrap_or(0);
             println!("\n{}\n{}", "Memory Statistics".bold(), "═".repeat(40));
-            println!("  Named memories: {}", named);
+            println!("  Named memories: {}", total);
             println!("  Ephemeral (pending): {}", pending.to_string().yellow());
-
-            // Last consolidation time
-            if let Some(last) = s.get("last_consolidation").and_then(|v| v.as_str()) {
-                println!("  Last consolidation: {}", last.dimmed());
-            }
-
-            // Memories by visibility
-            if let Some(tiers) = s.get("by_tier").and_then(|v| v.as_array()) {
-                if !tiers.is_empty() {
-                    println!("\n  {}:", "By visibility".bold());
-                    for tier in tiers {
-                        let name = tier["tier"].as_str().unwrap_or("?");
-                        let count = tier["count"].as_u64().unwrap_or(0);
-                        println!("    {:<14} {}", name, count);
-                    }
-                }
-            }
-
-            // Unconsolidated messages by channel
-            if let Some(channels) = s.get("channels").and_then(|v| v.as_array()) {
-                let has_pending: Vec<&Value> = channels
-                    .iter()
-                    .filter(|ch| ch["unconsolidated"].as_u64().unwrap_or(0) > 0)
-                    .collect();
-                if !has_pending.is_empty() {
-                    println!("\n  {}:", "Unconsolidated messages by channel".bold());
-                    for ch in &has_pending {
-                        let name = ch["channel"].as_str().unwrap_or("(none)");
-                        let display_name = if name.is_empty() { "(none)" } else { name };
-                        let uncons = ch["unconsolidated"].as_u64().unwrap_or(0);
-                        let mut line = format!("    {:<40} {} pending", display_name, uncons.to_string().yellow());
-                        let oldest = ch.get("oldest_unconsolidated").and_then(|v| v.as_str());
-                        let newest = ch.get("newest_unconsolidated").and_then(|v| v.as_str());
-                        if let (Some(o), Some(n)) = (oldest, newest) {
-                            let o_short = &o[..o.len().min(10)];
-                            let n_short = &n[..n.len().min(10)];
-                            if o_short == n_short {
-                                line.push_str(&format!(" ({})", o_short.dimmed()));
-                            } else {
-                                line.push_str(&format!(" ({} .. {})", o_short.dimmed(), n_short.dimmed()));
-                            }
-                        }
-                        println!("{}", line);
-                    }
-                }
-            }
-
             println!();
         }
         return Ok(());
@@ -1197,53 +899,6 @@ fn cmd_config(relay: &str, nsecs: &[String]) {
 
 // ── Command: sync ───────────────────────────────────────────────────
 
-async fn cmd_cleanup_relay(relay_url: &str, nsecs: &[String], dry_run: bool) -> Result<()> {
-    use nomen::memory::is_colon_format;
-
-    let (all_keys, pubkeys) = parse_keys(nsecs)?;
-    let manager = build_relay_manager(relay_url, &all_keys[0]);
-    manager.connect().await?;
-    let events = manager.fetch_memories(&pubkeys).await?;
-
-    let old_events: Vec<_> = events
-        .iter()
-        .filter(|e| {
-            e.tags.iter().any(|t| {
-                let tag_vec = t.as_slice();
-                tag_vec.len() >= 2 && tag_vec[0] == "d" && (is_colon_format(&tag_vec[1]) || tag_vec[1].contains("//"))
-            })
-        })
-        .collect();
-
-    if old_events.is_empty() {
-        println!("No colon-format events found on relay. Nothing to clean up.");
-        return Ok(());
-    }
-
-    println!("Found {} colon-format events to delete", old_events.len());
-
-    if dry_run {
-        for e in &old_events {
-            let dtag = e.tags.iter()
-                .find_map(|t| {
-                    let s = t.as_slice();
-                    if s.len() >= 2 && s[0] == "d" { Some(&s[1]) } else { None }
-                })
-                .unwrap_or(&String::new())
-                .clone();
-            println!("  [DELETE] {dtag}");
-        }
-        println!("\n[DRY RUN] {} events would be deleted", old_events.len());
-    } else {
-        let ids: Vec<EventId> = old_events.iter().map(|e| e.id).collect();
-        let result = manager.delete_events(&ids, "Migrated to slash-format d_tags").await?;
-        println!("Deleted {} events ({})", ids.len(), result.summary());
-    }
-
-    manager.disconnect().await;
-    Ok(())
-}
-
 async fn cmd_sync(backend: &Backend, nomen: Option<&Nomen>) -> Result<()> {
     println!("Connecting to relay...");
     let result = cli_dispatch(backend, nomen, "memory.sync", &json!({})).await?;
@@ -1267,15 +922,15 @@ async fn cmd_store(
     backend: &Backend,
     nomen: Option<&Nomen>,
     topic: &str,
-    detail: &str,
-    visibility: &str,
+    content: &str,
+    tier: &str,
 ) -> Result<()> {
     println!("Publishing to relay...");
 
     let params = json!({
         "topic": topic,
-        "detail": detail,
-        "visibility": visibility,
+        "content": content,
+        "visibility": tier,
     });
 
     let result = cli_dispatch(backend, nomen, "memory.put", &params).await?;
@@ -1285,7 +940,7 @@ async fn cmd_store(
         "{} stored: {} [{}]",
         "Memory".green().bold(),
         topic.bold(),
-        visibility
+        tier
     );
     println!("  d_tag: {}", d_tag);
 
@@ -1424,8 +1079,7 @@ async fn cmd_search(
         };
 
         let topic = r["topic"].as_str().unwrap_or("");
-        let detail = r["detail"].as_str().unwrap_or("");
-        let first_line = detail.lines().next().unwrap_or("");
+        let content = r["content"].as_str().unwrap_or("");
         let created_at = r["created_at"].as_str().unwrap_or("");
 
         println!(
@@ -1436,7 +1090,7 @@ async fn cmd_search(
             topic.bold(),
             match_indicator.dimmed()
         );
-        println!("   {}", first_line);
+        println!("   {}", content);
         println!("   Created: {}", created_at);
     }
 
@@ -1727,13 +1381,13 @@ async fn cmd_consolidate(
             "{}: {} messages → {} memories",
             prefix, messages_processed, memories_created
         );
-        if events_published > 0 && !dry_run {
+        if events_published > 0 {
             println!(
                 "  Published {} memories to relay (kind 31234)",
                 events_published
             );
         }
-        if events_deleted > 0 && !dry_run {
+        if events_deleted > 0 {
             println!(
                 "  Deleted {} ephemeral events from relay (NIP-09)",
                 events_deleted
@@ -1743,26 +1397,6 @@ async fn cmd_consolidate(
             let channel_strs: Vec<&str> = channels.iter().filter_map(|c| c.as_str()).collect();
             if !channel_strs.is_empty() {
                 println!("  Channels: {}", channel_strs.join(", "));
-            }
-        }
-        if let Some(groups) = result["groups"].as_array() {
-            if !groups.is_empty() {
-                println!("\n  {}", "Per-group breakdown:".dimmed());
-                for g in groups {
-                    let scope = g["scope"].as_str().unwrap_or("");
-                    let count = g["message_count"].as_u64().unwrap_or(0);
-                    let topic = g["topic"].as_str().unwrap_or("?");
-                    let t_start = g["time_start"].as_str().unwrap_or("?");
-                    let t_end = g["time_end"].as_str().unwrap_or("?");
-
-                    println!(
-                        "    {} ({} msgs, {})",
-                        topic.bold(),
-                        count,
-                        scope.dimmed()
-                    );
-                    println!("      {} \u{2192} {}", t_start, t_end);
-                }
             }
         }
     }
@@ -1942,12 +1576,14 @@ async fn cmd_prune(backend: &Backend, nomen: Option<&Nomen>, days: u64, dry_run:
             println!("\n{} memories eligible for pruning:", pruned.len());
             for mem in pruned {
                 let topic = mem["topic"].as_str().unwrap_or("");
+                let confidence = mem["confidence"].as_f64().map(|c| format!("{c:.2}")).unwrap_or_else(|| "?".to_string());
                 let access_count = mem["access_count"].as_u64().unwrap_or(0);
                 let created_at = mem["created_at"].as_str().unwrap_or("");
                 let date = if created_at.len() >= 10 { &created_at[..10] } else { created_at };
                 println!(
-                    "  {} (accesses: {}, created: {})",
+                    "  {} (confidence: {}, accesses: {}, created: {})",
                     topic.bold(),
+                    confidence,
                     access_count,
                     date
                 );
@@ -1985,61 +1621,6 @@ async fn cmd_prune(backend: &Backend, nomen: Option<&Nomen>, days: u64, dry_run:
                 raw_messages_pruned
             );
         }
-    }
-
-    Ok(())
-}
-
-// ── Command: publish ────────────────────────────────────────────────
-
-async fn cmd_publish(
-    backend: &Backend,
-    nomen: Option<&Nomen>,
-    memories: bool,
-    messages: bool,
-    dry_run: bool,
-    limit: usize,
-) -> Result<()> {
-    if dry_run {
-        println!(
-            "{} Publishing local items to relay (limit: {})...",
-            "[DRY RUN]".yellow().bold(),
-            limit
-        );
-    } else {
-        println!("Publishing local items to relay (limit: {})...", limit);
-    }
-
-    let params = json!({
-        "memories": memories,
-        "messages": messages,
-        "dry_run": dry_run,
-        "limit": limit,
-    });
-
-    let result = cli_dispatch(backend, nomen, "memory.publish", &params).await?;
-
-    let published = result["published"].as_u64().unwrap_or(0);
-    let failed = result["failed"].as_u64().unwrap_or(0);
-    let skipped = result["skipped"].as_u64().unwrap_or(0);
-
-    if dry_run {
-        println!(
-            "{}: {} items would be published",
-            "[DRY RUN]".yellow().bold(),
-            skipped
-        );
-    } else {
-        println!(
-            "Publish complete: {} published, {} failed, {} skipped",
-            published.to_string().green(),
-            if failed > 0 {
-                failed.to_string().red().to_string()
-            } else {
-                failed.to_string()
-            },
-            skipped
-        );
     }
 
     Ok(())
@@ -2152,7 +1733,6 @@ async fn cmd_serve(
                 &cvm_relay,
                 cvm_encryption,
                 cvm_allowed,
-                config.owner.clone(),
                 cvm_rate_limit,
                 default_channel.clone(),
                 cvm_announce,
@@ -2238,9 +1818,7 @@ async fn cmd_serve(
         // HTTP (± CVM): build HTTP state, run concurrently if CVM enabled
         (Some(addr), cvm_opt) => {
             let bind_addr = if addr.starts_with(':') {
-                format!("127.0.0.1{addr}")
-            } else if !addr.contains(':') {
-                format!("127.0.0.1:{addr}")
+                format!("0.0.0.0{addr}")
             } else {
                 addr
             };
@@ -2303,95 +1881,6 @@ async fn cmd_serve(
             mcp::serve_stdio(nomen_instance, default_channel).await
         }
     }
-}
-
-// ── Command: migrate-lessons ─────────────────────────────────────────
-
-async fn cmd_migrate_lessons(nomen: &Nomen, resolved: &ResolvedConfig) -> Result<()> {
-    let relay = nomen
-        .relay()
-        .ok_or_else(|| anyhow::anyhow!("No relay configured"))?;
-    let _ = nomen
-        .signer()
-        .ok_or_else(|| anyhow::anyhow!("No signer configured"))?;
-
-    let (_, pubkeys) = parse_keys(&resolved.nsecs)?;
-
-    println!("Fetching lesson events from relay...");
-    let events = relay.fetch_lessons(&pubkeys).await?;
-
-    if events.is_empty() {
-        println!("No lesson events found. Nothing to migrate.");
-        return Ok(());
-    }
-
-    println!("Found {} lesson event(s). Migrating...", events.len());
-
-    let mut migrated = 0usize;
-    let mut deleted = 0usize;
-    let mut errors = 0usize;
-
-    for event in events.into_iter() {
-        let event_id = event.id;
-
-        // Extract existing tags, replacing the kind implicitly by re-publishing as 31234
-        let tags: Vec<nostr_sdk::Tag> = event.tags.iter().cloned().collect();
-        let content = event.content.clone();
-
-        // Re-publish as memory event (kind 31234)
-        let memory_builder = nostr_sdk::EventBuilder::new(
-            nostr_sdk::Kind::Custom(nomen::kinds::MEMORY_KIND),
-            content,
-        )
-        .tags(tags);
-
-        match relay.publish(memory_builder).await {
-            Ok(result) => {
-                if result.accepted.is_empty() {
-                    println!(
-                        "  Warning: memory event for {} rejected by all relays",
-                        event_id
-                    );
-                    errors += 1;
-                    continue;
-                }
-                migrated += 1;
-            }
-            Err(e) => {
-                println!("  Error publishing memory for {}: {e}", event_id);
-                errors += 1;
-                continue;
-            }
-        }
-
-        // Publish kind 5 deletion event for the original lesson
-        let delete_builder = nostr_sdk::EventBuilder::new(nostr_sdk::Kind::Custom(5), "")
-            .tags(vec![nostr_sdk::Tag::event(event_id)]);
-
-        match relay.publish(delete_builder).await {
-            Ok(_) => {
-                deleted += 1;
-            }
-            Err(e) => {
-                println!(
-                    "  Warning: failed to delete original lesson {}: {e}",
-                    event_id
-                );
-            }
-        }
-    }
-
-    println!(
-        "\n{}: {} lessons migrated to memory events, {} deletion events published",
-        "Done".green().bold(),
-        migrated,
-        deleted
-    );
-    if errors > 0 {
-        println!("  {} errors occurred", errors.to_string().red());
-    }
-
-    Ok(())
 }
 
 // ── Command: init ───────────────────────────────────────────────────
@@ -2511,7 +2000,6 @@ async fn cmd_init(force: bool, non_interactive: bool) -> Result<()> {
 
         Some(MemorySection {
             cluster: None,
-            pruning: None,
             consolidation: Some(MemoryConsolidationConfig {
                 enabled: true,
                 mode: "internal".to_string(),
@@ -2577,8 +2065,6 @@ async fn cmd_init(force: bool, non_interactive: bool) -> Result<()> {
         entities: None,
         contextvm: None,
         socket: None,
-        fs: None,
-        auth: None,
     };
 
     // Write config
@@ -2642,7 +2128,6 @@ async fn cmd_init_non_interactive() -> Result<()> {
         consolidation: None,
         memory: Some(MemorySection {
             cluster: None,
-            pruning: None,
             consolidation: Some(MemoryConsolidationConfig {
                 enabled: true,
                 mode: "internal".to_string(),
@@ -2668,8 +2153,6 @@ async fn cmd_init_non_interactive() -> Result<()> {
         entities: None,
         contextvm: None,
         socket: None,
-        fs: None,
-        auth: None,
     };
 
     let config_path = Config::path();

@@ -6,14 +6,12 @@
 
 pub mod access;
 pub mod api;
-pub mod auth;
 pub mod cluster;
 pub mod config;
 pub mod consolidate;
 pub mod db;
 pub mod embed;
 pub mod entities;
-pub mod fs;
 pub mod groups;
 pub mod ingest;
 pub mod kinds;
@@ -54,7 +52,7 @@ use crate::consolidate::{ConsolidationConfig, ConsolidationReport, NoopLlmProvid
 use crate::embed::Embedder;
 use crate::entities::{EntityKind, EntityRecord};
 use crate::groups::GroupStore;
-use crate::ingest::{MessageQuery, RawMessage, RawMessageRecord, RawMessageSearchResult};
+use crate::ingest::{MessageQuery, RawMessage, RawMessageRecord};
 use crate::relay::RelayManager;
 use crate::search::{SearchOptions, SearchResult};
 use crate::signer::NomenSigner;
@@ -72,11 +70,11 @@ pub struct Nomen {
 /// Options for creating a new memory directly (without relay event).
 pub struct NewMemory {
     pub topic: String,
-    pub detail: String,
-    pub visibility: String,
-    /// Scope/context for d-tag construction (e.g. group ID, pubkey hex).
-    /// If empty, derived from visibility.
-    pub scope: String,
+    /// Plain-text content (the full memory body).
+    pub content: String,
+    pub tier: String,
+    /// Importance score (1-10). Optional.
+    pub importance: Option<i32>,
     /// Source label (e.g. "api", "mcp", "contextvm"). Defaults to "api".
     pub source: Option<String>,
     /// Model label. Defaults to "nomen/api".
@@ -89,9 +87,6 @@ pub struct ConsolidateOptions {
     pub min_messages: usize,
     pub llm_provider: Option<Box<dyn consolidate::LlmProvider>>,
     pub entity_extractor: Option<Box<dyn entities::EntityExtractor>>,
-    pub dry_run: bool,
-    pub older_than: Option<String>,
-    pub tier: Option<String>,
 }
 
 impl Default for ConsolidateOptions {
@@ -101,9 +96,6 @@ impl Default for ConsolidateOptions {
             min_messages: 3,
             llm_provider: None,
             entity_extractor: None,
-            dry_run: false,
-            older_than: None,
-            tier: None,
         }
     }
 }
@@ -242,9 +234,9 @@ impl Nomen {
     /// Store a new memory into SurrealDB and optionally publish to relay.
     ///
     /// Includes supersedes logic: if a memory with the same topic already exists
-    /// in the local DB, the new event will carry a `supersedes` tag and incremented
-    /// version number. For personal/internal tier, content is NIP-44 encrypted
-    /// before relay publish.
+    /// in the local DB, the new event will carry a `supersedes` tag.
+    /// For personal/internal tier, content is NIP-44 encrypted before relay publish.
+    /// Content is always plain text (not JSON).
     pub async fn store(&self, mem: NewMemory) -> Result<String> {
         let author_pubkey_hex = self
             .signer
@@ -252,12 +244,10 @@ impl Nomen {
             .map(|s| s.public_key().to_hex())
             .unwrap_or_default();
 
-        let base_tier = memory::base_tier(&mem.visibility);
-        let context = if !mem.scope.is_empty() {
-            mem.scope.clone()
-        } else if base_tier == "personal" || base_tier == "internal" {
+        let base_tier = memory::base_tier(&mem.tier);
+        let context = if base_tier == "personal" || base_tier == "internal" {
             author_pubkey_hex.clone()
-        } else if let Some(group_id) = mem.visibility.strip_prefix("group:") {
+        } else if let Some(group_id) = mem.tier.strip_prefix("group:") {
             group_id.to_string()
         } else {
             String::new()
@@ -266,45 +256,42 @@ impl Nomen {
 
         let source = mem.source.as_deref().unwrap_or("api");
         let model = mem.model.as_deref().unwrap_or("nomen/api");
-        let content_str = mem.detail.clone();
+        let content_str = mem.content.clone();
 
         // Supersedes logic: check for existing memory with same topic
-        let (version, previous_nostr_id) =
+        let previous_nostr_id =
             match db::get_memory_by_topic(&self.db, &mem.topic).await? {
-                Some(existing) => {
-                    let new_version = existing.version + 1;
-                    (new_version, existing.nostr_id)
-                }
+                Some(existing) => existing.nostr_id,
                 None => {
-                    // Also check by d_tag
                     match db::get_memory_by_dtag(&self.db, &d_tag).await? {
-                        Some(existing) => {
-                            let new_version = existing.version + 1;
-                            (new_version, existing.nostr_id)
-                        }
-                        None => (1, None),
+                        Some(existing) => existing.nostr_id,
+                        None => None,
                     }
                 }
             };
 
         let parsed = memory::ParsedMemory {
-            visibility: mem.visibility.clone(),
+            tier: mem.tier.clone(),
+            visibility: base_tier.to_string(),
             topic: mem.topic.clone(),
-            version: version.to_string(),
             model: model.to_string(),
+            content: content_str.clone(),
             created_at: nostr_sdk::Timestamp::now(),
             d_tag: d_tag.clone(),
             source: source.to_string(),
-            content_raw: content_str.clone(),
-            detail: mem.detail.clone(),
+            importance: mem.importance,
         };
 
         db::store_memory_direct(&self.db, &parsed, source).await?;
 
+        // Set importance if provided
+        if let Some(imp) = mem.importance {
+            let _ = db::set_importance(&self.db, &d_tag, imp).await;
+        }
+
         // Generate embedding if embedder is configured
         if self.embedder.dimensions() > 0 {
-            let text = parsed.detail.clone();
-            if let Ok(embeddings) = self.embedder.embed(&[text]).await {
+            if let Ok(embeddings) = self.embedder.embed(&[content_str.clone()]).await {
                 if let Some(embedding) = embeddings.into_iter().next() {
                     let _ = db::store_embedding(&self.db, &d_tag, embedding).await;
                 }
@@ -334,11 +321,15 @@ impl Nomen {
                     nostr_sdk::TagKind::Custom("model".into()),
                     vec![model.to_string()],
                 ),
-                nostr_sdk::Tag::custom(
-                    nostr_sdk::TagKind::Custom("version".into()),
-                    vec![version.to_string()],
-                ),
             ];
+
+            // Add importance tag if set
+            if let Some(imp) = mem.importance {
+                tags.push(nostr_sdk::Tag::custom(
+                    nostr_sdk::TagKind::Custom("importance".into()),
+                    vec![imp.to_string()],
+                ));
+            }
 
             // Add supersedes tag if updating an existing memory
             if let Some(ref prev_id) = previous_nostr_id {
@@ -361,7 +352,7 @@ impl Nomen {
             }
 
             // Add h tag for group tier (NIP-29)
-            if let Some(group_id) = mem.visibility.strip_prefix("group:") {
+            if let Some(group_id) = mem.tier.strip_prefix("group:") {
                 tags.push(nostr_sdk::Tag::custom(
                     nostr_sdk::TagKind::Custom("h".into()),
                     vec![group_id.to_string()],
@@ -411,39 +402,33 @@ impl Nomen {
         mem: NewMemory,
         author_pubkey_hex: &str,
     ) -> Result<String> {
-        let base_tier = memory::base_tier(&mem.visibility);
-        let context = if !mem.scope.is_empty() {
-            mem.scope.clone()
-        } else if base_tier == "personal" || base_tier == "internal" {
-            author_pubkey_hex.to_string()
-        } else if let Some(group_id) = mem.visibility.strip_prefix("group:") {
-            group_id.to_string()
-        } else {
-            String::new()
-        };
-        let d_tag = memory::build_v2_dtag(base_tier, &context, &mem.topic);
+        let d_tag = memory::build_dtag_from_tier(&mem.tier, author_pubkey_hex, &mem.topic);
         let source = mem.source.as_deref().unwrap_or("api");
         let model = mem.model.as_deref().unwrap_or("nomen/api");
-        let content_str = mem.detail.clone();
 
+        let visibility = memory::base_tier(&mem.tier).to_string();
         let parsed = memory::ParsedMemory {
-            visibility: mem.visibility,
+            tier: mem.tier,
+            visibility,
             topic: mem.topic,
-            version: "1".to_string(),
             model: model.to_string(),
+            content: mem.content.clone(),
             created_at: nostr_sdk::Timestamp::now(),
             d_tag: d_tag.clone(),
             source: source.to_string(),
-            content_raw: content_str,
-            detail: mem.detail,
+            importance: mem.importance,
         };
 
         db::store_memory_direct(db, &parsed, source).await?;
 
+        // Set importance if provided
+        if let Some(imp) = mem.importance {
+            let _ = db::set_importance(db, &d_tag, imp).await;
+        }
+
         // Generate embedding if embedder is configured
         if embedder.dimensions() > 0 {
-            let text = parsed.detail.clone();
-            if let Ok(embeddings) = embedder.embed(&[text]).await {
+            if let Ok(embeddings) = embedder.embed(&[mem.content]).await {
                 if let Some(embedding) = embeddings.into_iter().next() {
                     let _ = db::store_embedding(db, &d_tag, embedding).await;
                 }
@@ -454,52 +439,8 @@ impl Nomen {
     }
 
     /// Ingest a raw message for later consolidation.
-    ///
-    /// Stores the message locally and publishes it to the relay as a kind 1235
-    /// raw source event if a relay is configured. On successful publish, the
-    /// local row is updated with the relay event ID and `publish_status = "published"`.
-    /// On relay failure, `publish_status` is set to `"failed"`.
     pub async fn ingest_message(&self, msg: RawMessage) -> Result<String> {
-        let id = ingest::ingest_message(&self.db, &msg).await?;
-        if id == "duplicate" {
-            return Ok(id);
-        }
-
-        // Publish to relay as kind 1235 raw source event
-        if let Some(ref relay) = self.relay {
-            let builder = ingest::build_raw_source_event(&msg);
-            match relay.publish(builder).await {
-                Ok(result) => {
-                    tracing::debug!(
-                        event_id = %result.event_id,
-                        "Published raw source event to relay"
-                    );
-                    db::update_raw_message_publish(
-                        &self.db,
-                        &id,
-                        &result.event_id.to_hex(),
-                        "published",
-                    )
-                    .await?;
-                }
-                Err(e) => {
-                    tracing::warn!("Failed to publish raw source event: {e}");
-                    db::update_raw_message_publish(&self.db, &id, "", "failed").await?;
-                }
-            }
-        }
-
-        self.emit_event(
-            "message.ingested",
-            serde_json::json!({
-                "id": id,
-                "source": msg.source,
-                "sender": msg.sender,
-                "channel": msg.channel,
-            }),
-        );
-
-        Ok(id)
+        ingest::ingest_message(&self.db, &msg).await
     }
 
     /// Run the consolidation pipeline on unconsolidated messages.
@@ -515,9 +456,6 @@ impl Nomen {
                 .entity_extractor
                 .unwrap_or_else(|| Box::new(entities::HeuristicExtractor)),
             author_pubkey,
-            dry_run: opts.dry_run,
-            older_than: opts.older_than,
-            tier: opts.tier,
             ..Default::default()
         };
         let report = consolidate::consolidate(
@@ -615,39 +553,6 @@ impl Nomen {
         ingest::get_messages(&self.db, &opts).await
     }
 
-    /// Full-text BM25 search over raw messages.
-    pub async fn search_messages(
-        &self,
-        query: &str,
-        source: Option<&str>,
-        room: Option<&str>,
-        topic: Option<&str>,
-        sender: Option<&str>,
-        since: Option<&str>,
-        until: Option<&str>,
-        include_consolidated: bool,
-        limit: usize,
-    ) -> Result<Vec<RawMessageSearchResult>> {
-        db::search_raw_messages(
-            &self.db,
-            query,
-            source,
-            room,
-            topic,
-            sender,
-            since,
-            until,
-            include_consolidated,
-            limit,
-        )
-        .await
-    }
-
-    /// Get multiple memories by d-tags in a single query.
-    pub async fn get_batch(&self, d_tags: &[String]) -> Result<Vec<db::MemoryRecord>> {
-        db::get_memories_by_dtags(&self.db, d_tags).await
-    }
-
     /// List extracted entities, optionally filtered by kind.
     pub async fn entities(&self, kind: Option<&str>) -> Result<Vec<EntityRecord>> {
         let kind = kind.and_then(EntityKind::from_str);
@@ -728,9 +633,8 @@ impl Nomen {
         &self,
         tier: Option<&str>,
         limit: usize,
-        pinned: Option<bool>,
     ) -> Result<Vec<db::MemoryRecord>> {
-        db::list_memories(&self.db, tier, limit, pinned).await
+        db::list_memories(&self.db, tier, limit).await
     }
 
     /// Count memories: returns (total, named, pending_raw_messages).
@@ -786,47 +690,11 @@ impl Nomen {
         let mut errors = 0usize;
 
         for event in events.into_iter() {
-            // Skip legacy lesson events (kind 31235 and 4129) — migrated to kind 31234
-            // Skip legacy NIP-78 events (kind 30078) — obsolete
-            if event.kind == nostr_sdk::Kind::Custom(31235)
-                || event.kind == nostr_sdk::Kind::Custom(4129)
-                || event.kind == nostr_sdk::Kind::Custom(kinds::LEGACY_APP_DATA_KIND)
+            if event.kind == nostr_sdk::Kind::Custom(crate::kinds::LESSON_KIND)
+                || event.kind == nostr_sdk::Kind::Custom(crate::kinds::LEGACY_LESSON_KIND)
             {
                 continue;
             }
-
-            // Handle kind 1235 raw source events — import as raw messages
-            if event.kind == nostr_sdk::Kind::Custom(kinds::RAW_SOURCE_KIND) {
-                let nostr_id = event.id.to_hex();
-                match db::check_duplicate_by_nostr_id(&self.db, &nostr_id).await {
-                    Ok(true) => {
-                        skipped += 1;
-                    }
-                    Ok(false) => {
-                        let raw_msg = ingest::parse_raw_source_event(&event);
-                        match db::store_raw_message_from_relay(&self.db, &raw_msg, &nostr_id).await
-                        {
-                            Ok(_) => stored += 1,
-                            Err(e) => {
-                                tracing::warn!(
-                                    "Failed to import raw source event {}: {e}",
-                                    nostr_id
-                                );
-                                errors += 1;
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        tracing::warn!(
-                            "Failed to check duplicate for raw source event {}: {e}",
-                            nostr_id
-                        );
-                        errors += 1;
-                    }
-                }
-                continue;
-            }
-
             let d_tag = memory::get_tag_value(&event.tags, "d").unwrap_or_default();
             if d_tag.starts_with("snowclaw:config:") {
                 continue;
@@ -874,7 +742,7 @@ impl Nomen {
 
         let texts: Vec<String> = missing
             .iter()
-            .map(|m| m.search_text.clone())
+            .map(|m| m.content.clone())
             .collect();
 
         let embeddings = self.embedder.embed(&texts).await?;
@@ -897,15 +765,13 @@ impl Nomen {
 
     /// List memories from local DB with optional filters.
     pub async fn list(&self, opts: ListOptions) -> Result<ListReport> {
-        let memories = db::list_memories(&self.db, opts.tier.as_deref(), opts.limit, opts.pinned).await?;
+        let memories = db::list_memories(&self.db, opts.tier.as_deref(), opts.limit).await?;
         let stats = if opts.include_stats {
             let (total, named, pending) = db::count_memories_by_type(&self.db).await?;
-            let detailed = db::get_detailed_stats(&self.db).await.ok();
             Some(ListStats {
                 total,
                 named,
                 pending,
-                detailed,
             })
         } else {
             None
@@ -920,75 +786,6 @@ impl Nomen {
         let cutoff = chrono::Utc::now() - chrono::Duration::seconds(secs);
         let cutoff_str = cutoff.to_rfc3339();
         db::delete_ephemeral_before(&self.db, &cutoff_str).await
-    }
-
-    // ── D-tag migration ────────────────────────────────────────
-
-    /// Migrate all memory d-tags from colon format to slash format.
-    /// Returns (migrated_count, skipped_count).
-    pub async fn migrate_dtags(&self, dry_run: bool) -> Result<(usize, usize)> {
-        let memories = db::list_memories(&self.db, None, 10000, None).await?;
-        let mut migrated = 0;
-        let mut skipped = 0;
-
-        for mem in &memories {
-            let old_dtag = match &mem.d_tag {
-                Some(d) if !d.is_empty() => d.clone(),
-                _ => {
-                    skipped += 1;
-                    continue;
-                }
-            };
-
-            if !memory::is_colon_format(&old_dtag) {
-                skipped += 1;
-                continue;
-            }
-
-            let new_dtag = memory::migrate_dtag_to_slash(&old_dtag);
-            if new_dtag == old_dtag {
-                skipped += 1;
-                continue;
-            }
-
-            let (_, new_scope) = memory::extract_visibility_scope(&new_dtag);
-            let new_topic = memory::v2_dtag_topic(&new_dtag)
-                .unwrap_or(&new_dtag)
-                .to_string();
-
-            if dry_run {
-                tracing::info!("{old_dtag} → {new_dtag}");
-                migrated += 1;
-                continue;
-            }
-
-            match db::update_memory_dtag(&self.db, &old_dtag, &new_dtag, &new_scope, &new_topic)
-                .await
-            {
-                Ok(true) => {
-                    tracing::info!("{old_dtag} → {new_dtag}");
-                    migrated += 1;
-                }
-                Ok(false) => skipped += 1,
-                Err(e) => {
-                    let msg = e.to_string();
-                    if msg.contains("already contains") {
-                        // New d_tag exists (from fs push), delete the old duplicate
-                        tracing::info!("Deleting duplicate old record: {old_dtag}");
-                        if let Err(del_e) = db::delete_memory_by_dtag(&self.db, &old_dtag).await {
-                            tracing::warn!("Failed to delete old duplicate {old_dtag}: {del_e}");
-                        } else {
-                            migrated += 1;
-                        }
-                    } else {
-                        tracing::warn!("Failed to migrate {old_dtag}: {e}");
-                        skipped += 1;
-                    }
-                }
-            }
-        }
-
-        Ok((migrated, skipped))
     }
 
     // ── Group management ────────────────────────────────────────
@@ -1024,256 +821,9 @@ impl Nomen {
     pub async fn group_remove_member(&self, group_id: &str, npub: &str) -> Result<()> {
         crate::groups::remove_member(&self.db, group_id, npub).await
     }
-
-    /// Publish local DB items that are missing from the relay.
-    ///
-    /// Reconciles local DB with relay by publishing memories and raw messages
-    /// that have not been successfully published yet.
-    pub async fn publish(&self, opts: PublishOptions) -> Result<PublishReport> {
-        let relay = self
-            .relay
-            .as_ref()
-            .ok_or_else(|| anyhow::anyhow!("No relay configured for publish"))?;
-
-        let mut published = 0usize;
-        let mut failed = 0usize;
-        let mut skipped = 0usize;
-
-        // Publish memories (kind 31234)
-        if opts.memories {
-            let memories = db::get_unpublished_memories(&self.db, opts.limit).await?;
-            for mem in &memories {
-                if opts.dry_run {
-                    skipped += 1;
-                    continue;
-                }
-
-                let d_tag = match &mem.d_tag {
-                    Some(dt) if !dt.is_empty() => dt.clone(),
-                    _ => {
-                        skipped += 1;
-                        continue;
-                    }
-                };
-
-                let base_tier = memory::base_tier(&mem.visibility);
-                let content_str = mem.search_text.clone();
-
-                // NIP-44 encrypt for personal/internal tier
-                let final_content = if base_tier == "personal" || base_tier == "internal" {
-                    relay.signer().encrypt(&content_str).unwrap_or(content_str)
-                } else {
-                    content_str
-                };
-
-                let mut tags = vec![
-                    nostr_sdk::Tag::custom(
-                        nostr_sdk::TagKind::Custom("d".into()),
-                        vec![d_tag.clone()],
-                    ),
-                    nostr_sdk::Tag::custom(
-                        nostr_sdk::TagKind::Custom("visibility".into()),
-                        vec![base_tier.to_string()],
-                    ),
-                    nostr_sdk::Tag::custom(
-                        nostr_sdk::TagKind::Custom("scope".into()),
-                        vec![mem.scope.clone()],
-                    ),
-                    nostr_sdk::Tag::custom(
-                        nostr_sdk::TagKind::Custom("version".into()),
-                        vec![mem.version.to_string()],
-                    ),
-                ];
-
-                if let Some(ref model) = mem.model {
-                    tags.push(nostr_sdk::Tag::custom(
-                        nostr_sdk::TagKind::Custom("model".into()),
-                        vec![model.clone()],
-                    ));
-                }
-
-                // Add topic tags for relay-side filtering
-                for part in mem.topic.split('/') {
-                    if !part.is_empty() {
-                        tags.push(nostr_sdk::Tag::custom(
-                            nostr_sdk::TagKind::Custom("t".into()),
-                            vec![part.to_string()],
-                        ));
-                    }
-                }
-
-                // Add h tag for group tier (NIP-29)
-                if base_tier == "group" && !mem.scope.is_empty() {
-                    tags.push(nostr_sdk::Tag::custom(
-                        nostr_sdk::TagKind::Custom("h".into()),
-                        vec![mem.scope.clone()],
-                    ));
-                }
-
-                let builder = nostr_sdk::EventBuilder::new(
-                    nostr_sdk::Kind::Custom(crate::kinds::MEMORY_KIND),
-                    final_content,
-                )
-                .tags(tags);
-
-                match relay.publish(builder).await {
-                    Ok(result) => {
-                        let event_id_hex = result.event_id.to_hex();
-                        let _ = db::update_memory_nostr_id(&self.db, &d_tag, &event_id_hex).await;
-                        published += 1;
-                    }
-                    Err(e) => {
-                        tracing::warn!("Failed to publish memory {}: {e}", d_tag);
-                        failed += 1;
-                    }
-                }
-            }
-        }
-
-        // Publish raw messages (kind 1235)
-        if opts.messages {
-            let remaining = opts.limit.saturating_sub(published + failed + skipped);
-            if remaining > 0 {
-                let messages = db::get_unpublished_messages(&self.db, remaining).await?;
-                for msg_record in &messages {
-                    if opts.dry_run {
-                        skipped += 1;
-                        continue;
-                    }
-
-                    // Convert RawMessageRecord back to RawMessage for event building
-                    let raw_msg = ingest::RawMessage {
-                        source: msg_record.source.clone(),
-                        source_id: if msg_record.source_id.is_empty() {
-                            None
-                        } else {
-                            Some(msg_record.source_id.clone())
-                        },
-                        sender: msg_record.sender_id.clone(),
-                        channel: if msg_record.channel.is_empty() {
-                            None
-                        } else {
-                            Some(msg_record.channel.clone())
-                        },
-                        content: msg_record.content.clone(),
-                        metadata: if msg_record.metadata.is_empty() {
-                            None
-                        } else {
-                            Some(msg_record.metadata.clone())
-                        },
-                        created_at: Some(msg_record.created_at.clone()),
-                        provider_id: if msg_record.provider_id.is_empty() {
-                            None
-                        } else {
-                            Some(msg_record.provider_id.clone())
-                        },
-                        sender_name: if msg_record.sender.is_empty() {
-                            None
-                        } else {
-                            Some(msg_record.sender.clone())
-                        },
-                        room: if msg_record.room.is_empty() {
-                            None
-                        } else {
-                            Some(msg_record.room.clone())
-                        },
-                        topic: if msg_record.topic.is_empty() {
-                            None
-                        } else {
-                            Some(msg_record.topic.clone())
-                        },
-                        thread: if msg_record.thread.is_empty() {
-                            None
-                        } else {
-                            Some(msg_record.thread.clone())
-                        },
-                        scope: if msg_record.scope.is_empty() {
-                            None
-                        } else {
-                            Some(msg_record.scope.clone())
-                        },
-                        source_ts: if msg_record.source_created_at.is_empty() {
-                            None
-                        } else {
-                            Some(msg_record.source_created_at.clone())
-                        },
-                    };
-
-                    let builder = ingest::build_raw_source_event(&raw_msg);
-
-                    // Extract the raw_message DB id (strip table prefix if present)
-                    let db_id = msg_record
-                        .id
-                        .strip_prefix("raw_message:")
-                        .unwrap_or(&msg_record.id);
-
-                    match relay.publish(builder).await {
-                        Ok(result) => {
-                            let event_id_hex = result.event_id.to_hex();
-                            let _ = db::update_raw_message_publish(
-                                &self.db,
-                                db_id,
-                                &event_id_hex,
-                                "published",
-                            )
-                            .await;
-                            published += 1;
-                        }
-                        Err(e) => {
-                            tracing::warn!("Failed to publish raw message {}: {e}", db_id);
-                            let _ = db::update_raw_message_publish(
-                                &self.db,
-                                db_id,
-                                "",
-                                "failed",
-                            )
-                            .await;
-                            failed += 1;
-                        }
-                    }
-                }
-            }
-        }
-
-        Ok(PublishReport {
-            published,
-            failed,
-            skipped,
-        })
-    }
-}
-
-/// Options for the publish command.
-pub struct PublishOptions {
-    /// Publish memories (kind 31234)
-    pub memories: bool,
-    /// Publish raw messages (kind 1235)
-    pub messages: bool,
-    /// Dry run (preview only)
-    pub dry_run: bool,
-    /// Max items to publish
-    pub limit: usize,
-}
-
-impl Default for PublishOptions {
-    fn default() -> Self {
-        Self {
-            memories: true,
-            messages: true,
-            dry_run: false,
-            limit: 100,
-        }
-    }
 }
 
 // ── Report structs ──────────────────────────────────────────────────
-
-/// Report from a publish operation.
-pub struct PublishReport {
-    pub published: usize,
-    pub failed: usize,
-    pub skipped: usize,
-}
 
 /// Report from a sync operation.
 pub struct SyncReport {
@@ -1293,7 +843,6 @@ pub struct ListOptions {
     pub tier: Option<String>,
     pub limit: usize,
     pub include_stats: bool,
-    pub pinned: Option<bool>,
 }
 
 impl Default for ListOptions {
@@ -1302,7 +851,6 @@ impl Default for ListOptions {
             tier: None,
             limit: 100,
             include_stats: false,
-            pinned: None,
         }
     }
 }
@@ -1318,5 +866,4 @@ pub struct ListStats {
     pub total: usize,
     pub named: usize,
     pub pending: usize,
-    pub detailed: Option<db::DetailedStats>,
 }

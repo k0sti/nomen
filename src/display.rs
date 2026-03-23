@@ -12,7 +12,7 @@ pub fn format_timestamp(ts: Timestamp) -> String {
     }
 }
 
-pub fn display_memories(npubs: &[String], memories: &[ParsedMemory]) {
+pub fn display_memories(npubs: &[String], memories: &[ParsedMemory], lesson_count: usize) {
     for npub in npubs {
         println!(
             "\n{}\n{}",
@@ -48,22 +48,22 @@ pub fn display_memories(npubs: &[String], memories: &[ParsedMemory]) {
         };
 
         println!(
-            "\n{} {} (v{})",
+            "\n{} {}",
             tier_colored,
             mem.topic.bold(),
-            mem.version,
         );
         println!("  Model: {}", mem.model);
-        println!("  Summary: {}", crate::memory::first_line(&mem.detail));
+        println!("  Summary: {}", crate::memory::first_line(&mem.content));
         println!("  Created: {}", format_timestamp(mem.created_at));
     }
 
     println!(
-        "\n{}: {} memories ({} public, {} group, {} personal)\n",
+        "\n{}: {} memories ({} public, {} group, {} personal), {} lessons\n",
         "Total".bold(),
         memories.len(),
         public_count,
         group_count,
-        personal_count
+        personal_count,
+        lesson_count
     );
 }

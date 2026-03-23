@@ -18,25 +18,10 @@ pub async fn consolidate(
         .get("min_messages")
         .and_then(|v| v.as_u64())
         .unwrap_or(3) as usize;
-    let dry_run = params
-        .get("dry_run")
-        .and_then(|v| v.as_bool())
-        .unwrap_or(false);
-    let older_than = params
-        .get("older_than")
-        .and_then(|v| v.as_str())
-        .map(String::from);
-    let tier = params
-        .get("tier")
-        .and_then(|v| v.as_str())
-        .map(String::from);
 
     let opts = crate::ConsolidateOptions {
         batch_size,
         min_messages,
-        dry_run,
-        older_than,
-        tier,
         ..Default::default()
     };
 
@@ -45,22 +30,11 @@ pub async fn consolidate(
         .await
         .map_err(ApiError::from_anyhow)?;
 
-    let groups: Vec<Value> = report.groups.iter().map(|g| json!({
-        "key": g.key,
-        "message_count": g.message_count,
-        "topic": g.topic,
-        "scope": g.scope,
-        "time_start": g.time_start,
-        "time_end": g.time_end,
-    })).collect();
-
     Ok(json!({
         "messages_processed": report.messages_processed,
         "memories_created": report.memories_created,
         "events_published": report.events_published,
         "channels": report.channels,
-        "groups": groups,
-        "dry_run": report.dry_run,
     }))
 }
 
@@ -210,54 +184,6 @@ pub async fn embed(
     }))
 }
 
-pub async fn publish(
-    nomen: &Nomen,
-    _default_channel: &str,
-    params: &Value,
-) -> Result<Value, ApiError> {
-    let memories = params
-        .get("memories")
-        .and_then(|v| v.as_bool())
-        .unwrap_or(false);
-    let messages = params
-        .get("messages")
-        .and_then(|v| v.as_bool())
-        .unwrap_or(false);
-    let dry_run = params
-        .get("dry_run")
-        .and_then(|v| v.as_bool())
-        .unwrap_or(false);
-    let limit = params
-        .get("limit")
-        .and_then(|v| v.as_u64())
-        .unwrap_or(100) as usize;
-
-    // If neither flag is set, publish both
-    let (do_memories, do_messages) = if !memories && !messages {
-        (true, true)
-    } else {
-        (memories, messages)
-    };
-
-    let opts = crate::PublishOptions {
-        memories: do_memories,
-        messages: do_messages,
-        dry_run,
-        limit,
-    };
-
-    let report = nomen
-        .publish(opts)
-        .await
-        .map_err(ApiError::from_anyhow)?;
-
-    Ok(json!({
-        "published": report.published,
-        "failed": report.failed,
-        "skipped": report.skipped,
-    }))
-}
-
 pub async fn prune(
     nomen: &Nomen,
     _default_channel: &str,
@@ -278,27 +204,5 @@ pub async fn prune(
         "memories_pruned": report.memories_pruned,
         "raw_messages_pruned": report.raw_messages_pruned,
         "dry_run": report.dry_run,
-    }))
-}
-
-pub async fn migrate_dtags(
-    nomen: &Nomen,
-    _default_channel: &str,
-    params: &Value,
-) -> Result<Value, ApiError> {
-    let dry_run = params
-        .get("dry_run")
-        .and_then(|v| v.as_bool())
-        .unwrap_or(false);
-
-    let (migrated, skipped) = nomen
-        .migrate_dtags(dry_run)
-        .await
-        .map_err(|e| ApiError::internal(format!("Migration failed: {e}")))?;
-
-    Ok(serde_json::json!({
-        "migrated": migrated,
-        "skipped": skipped,
-        "dry_run": dry_run,
     }))
 }

@@ -64,19 +64,6 @@ pub struct Config {
     /// Socket server configuration
     #[serde(default)]
     pub socket: Option<SocketConfig>,
-    /// Filesystem sync configuration
-    #[serde(default)]
-    pub fs: Option<FsSyncConfig>,
-    /// HTTP auth configuration
-    #[serde(default)]
-    pub auth: Option<crate::auth::AuthConfig>,
-}
-
-/// The [fs] config section for filesystem sync.
-#[derive(Deserialize, Serialize, Clone, Default)]
-pub struct FsSyncConfig {
-    /// Directory to sync memories to/from. Default: ~/.nomen/fs
-    pub dir: PathBuf,
 }
 
 /// The [memory] config section, per spec.
@@ -88,31 +75,6 @@ pub struct MemorySection {
     /// Cluster fusion settings: [memory.cluster]
     #[serde(default)]
     pub cluster: Option<MemoryClusterConfig>,
-    /// Pruning settings: [memory.pruning]
-    #[serde(default)]
-    pub pruning: Option<MemoryPruningConfig>,
-}
-
-/// Pruning config matching the spec [memory.pruning] section.
-#[derive(Deserialize, Serialize, Clone)]
-pub struct MemoryPruningConfig {
-    /// Whether pruning is enabled
-    #[serde(default)]
-    pub enabled: bool,
-    /// Delete memories older than N days (default 90)
-    #[serde(default = "default_max_age_days")]
-    pub max_age_days: u64,
-    /// Minimum confidence threshold for pruning (default 0.3)
-    #[serde(default = "default_min_confidence")]
-    pub min_confidence: f64,
-}
-
-fn default_max_age_days() -> u64 {
-    90
-}
-
-fn default_min_confidence() -> f64 {
-    0.3
 }
 
 /// Cluster fusion config matching the spec [memory.cluster] section.
@@ -491,18 +453,6 @@ impl Config {
 
         // Fall back to top-level [consolidation]
         self.consolidation.clone()
-    }
-
-    /// Get the pruning config (returns defaults if not configured).
-    pub fn pruning_config(&self) -> MemoryPruningConfig {
-        self.memory
-            .as_ref()
-            .and_then(|m| m.pruning.clone())
-            .unwrap_or(MemoryPruningConfig {
-                enabled: false,
-                max_age_days: default_max_age_days(),
-                min_confidence: default_min_confidence(),
-            })
     }
 
     /// Get the embedding dimensions from config (defaults to 1536).

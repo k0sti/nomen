@@ -47,12 +47,12 @@ mod fixtures {
         Fixture { action: "memory.list", params: json!({ "limit": limit }) }
     }
 
-    pub fn memory_put(topic: &str, detail: &str) -> Fixture {
+    pub fn memory_put(topic: &str, summary: &str) -> Fixture {
         Fixture {
             action: "memory.put",
             params: json!({
                 "topic": topic,
-                "detail": detail,
+                "summary": summary,
                 "visibility": "public",
             }),
         }
@@ -112,8 +112,8 @@ async fn test_nomen() -> Result<(nomen::Nomen, tempfile::TempDir)> {
 }
 
 /// Store a test memory via direct dispatch and return the serialized ApiResponse.
-async fn store_test_memory(nomen: &nomen::Nomen, topic: &str, detail: &str) -> Value {
-    let f = fixtures::memory_put(topic, detail);
+async fn store_test_memory(nomen: &nomen::Nomen, topic: &str, summary: &str) -> Value {
+    let f = fixtures::memory_put(topic, summary);
     dispatch_direct(nomen, &f).await
 }
 
@@ -124,28 +124,21 @@ async fn store_test_memory(nomen: &nomen::Nomen, topic: &str, detail: &str) -> V
 
 /// Direct `api::dispatch()`.
 async fn dispatch_direct(nomen: &nomen::Nomen, f: &Fixture) -> Value {
-    let caller = nomen::auth::CallerContext::owner(String::new());
-    let resp = nomen::api::dispatch(nomen, "test", f.action, &f.params, &caller).await;
+    let resp = nomen::api::dispatch(nomen, "test", f.action, &f.params).await;
     serde_json::to_value(&resp).unwrap()
 }
 
 /// HTTP dispatch via test router (in-process, no TCP).
-/// Injects ConnectInfo with loopback address so the NIP-98 local bypass kicks in.
 async fn dispatch_http(router: axum::Router, f: &Fixture) -> Value {
     use tower::ServiceExt;
 
     let body = json!({ "action": f.action, "params": f.params });
-    let mut req = http::Request::builder()
+    let req = http::Request::builder()
         .method("POST")
         .uri("/memory/api/dispatch")
         .header("content-type", "application/json")
         .body(axum::body::Body::from(serde_json::to_string(&body).unwrap()))
         .unwrap();
-
-    // Simulate localhost connection for local bypass
-    req.extensions_mut().insert(axum::extract::ConnectInfo(
-        std::net::SocketAddr::from(([127, 0, 0, 1], 0)),
-    ));
 
     let resp = router.oneshot(req).await.unwrap();
     let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
@@ -340,7 +333,7 @@ async fn dispatch_vs_cvm_memory_put_get() {
     let get = dispatch_cvm(&handler, &fixtures::memory_get(&d_tag)).await;
     assert_ok(&get, "CVM get");
     assert_eq!(get["result"]["topic"], "conformance/put-test");
-    assert_eq!(get["result"]["topic"], "conformance/put-test");
+    assert_eq!(get["result"]["summary"], "Test memory for conformance");
 
     // Store via CVM, get via CVM (both go through dispatch)
     let cvm_put = dispatch_cvm(&handler, &fixtures::memory_put("conformance/cvm-put", "Stored via CVM")).await;
@@ -557,7 +550,7 @@ async fn mcp_tools_call_memory_put_get() {
     let get = dispatch_mcp(&mcp, &fixtures::memory_get(d_tag)).await;
     assert_ok(&get, "MCP get");
     assert_eq!(get["result"]["topic"], "conformance/mcp-put");
-    assert_eq!(get["result"]["topic"], "conformance/mcp-put");
+    assert_eq!(get["result"]["summary"], "Stored via MCP adapter");
 
     // Cross-transport: get via direct dispatch
     let direct = dispatch_direct(&mcp.nomen, &fixtures::memory_get(d_tag)).await;
@@ -691,7 +684,7 @@ async fn socket_vs_direct_memory_put_get() {
     let direct = dispatch_direct(&nomen_direct, &fixtures::memory_get(d_tag)).await;
     assert_ok(&direct, "direct get");
     assert_eq!(direct["result"]["topic"], "conformance/socket-put");
-    assert_eq!(direct["result"]["topic"], "conformance/socket-put");
+    assert_eq!(direct["result"]["summary"], "Stored via socket");
 
     client.close().await;
 }
@@ -749,14 +742,9 @@ async fn e2e_http_smoke_test() {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
 
-    // Spawn the HTTP server (with ConnectInfo for NIP-98 local bypass)
+    // Spawn the HTTP server
     let server_handle = tokio::spawn(async move {
-        axum::serve(
-            listener,
-            router.into_make_service_with_connect_info::<std::net::SocketAddr>(),
-        )
-        .await
-        .unwrap();
+        axum::serve(listener, router).await.unwrap();
     });
 
     // Give the server a moment to start
@@ -795,7 +783,7 @@ async fn e2e_http_smoke_test() {
             "action": "memory.put",
             "params": {
                 "topic": "conformance/e2e-put",
-                "detail": "Created via e2e HTTP test",
+                "summary": "Created via e2e HTTP test",
                 "visibility": "public"
             }
         }))

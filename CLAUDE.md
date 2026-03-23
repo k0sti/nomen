@@ -1,6 +1,6 @@
 # CLAUDE.md — Nomen Implementation Guide
 
-**Last modified:** 2026-03-18T16:45+02:00
+**Last modified:** 2026-03-14T00:00+02:00
 
 ## Project
 
@@ -10,61 +10,43 @@
 
 ### Definitive specs (`docs/`)
 These are the canonical specifications. Code must match these.
-- `docs/architecture.md` — Full system design, SurrealDB schema, data flow (v0.3)
-- `docs/api-spec.md` — Canonical API v2 specification (Draft)
+- `docs/architecture.md` — Full system design, SurrealDB schema, data flow
 - `docs/nostr-memory-spec.md` — NIP event format for memory (v0.2)
 - `docs/consolidation-spec.md` — Consolidation pipeline spec (v1.0)
-- `docs/raw-source-event-spec.md` — Raw source events, kind 1235 (v0.1)
-- `docs/room-context-spec.md` — Room context injection for integrations (v0.1)
 - `docs/migration.md` — D-tag format migration (v0.1 → v0.2)
 
 ### Design & working docs (`~/Obsidian/vault/Projects/Nomen/`)
 Important design documents, research, RFCs, and audit reports. Less organized than `docs/` but contains critical context. Symlinked at `obsidian/` if available.
 
-**Latest audit:** `03-18 Full Spec Audit.md`
+**Latest audit:** `03-14 Full Spec Audit.md`
 New audit reports should be placed here with `MM-DD` prefix and full timestamps (created + modified).
 
 ## Module Map
 
 ```
 src/
-├── main.rs           (2373) CLI entry, clap commands
-├── lib.rs             (953) Nomen struct, public API
-├── db.rs             (1700) SurrealDB schema, queries, CRUD, provider_binding
-├── consolidate.rs    (1839) Raw messages → named memories, two-phase, merge, dedup
-├── mcp.rs             (552) MCP server (JSON-RPC stdio, 24+ tools)
-├── cvm.rs             (500) ContextVM server (CvmServer + CvmHandler) via NIP-44
-├── auth.rs            (440) NIP-98 HTTP auth middleware, CallerContext, role resolution
-├── http.rs            (376) HTTP server + web UI serving + NIP-98 middleware
-├── socket.rs          (323) Unix/TCP socket transport + push events
-├── groups.rs          (373) Group management (hierarchical, NIP-29 mapping)
-├── search.rs          (574) Hybrid vector + BM25 search + graph expansion + scoring
-├── config.rs          (280) TOML config (~/.config/nomen/config.toml)
-├── send.rs            (249) Send messages (NIP-17 DM, NIP-29 group, kind 1)
-├── memory.rs          (251) Memory parsing, d-tag v0.1/v0.2 dual format
-├── relay.rs           (227) Nostr relay sync (NIP-42, NIP-44, kind 1235 raw events)
-├── signer.rs          (113) NomenSigner trait + KeysSigner default impl
-├── session.rs         (231) Session ID resolution → tier/scope
-├── entities.rs        (380) Entity extraction + typed relationships + graph edges
-├── cluster.rs         (420) Cluster fusion — namespace-grouped memory synthesis
-├── embed.rs           (188) Embedding generation (OpenAI-compatible API)
-├── access.rs          (132) Access control (5-tier model)
-├── migrate.rs         (139) SQLite → SurrealDB migration (feature-gated)
-├── display.rs          (77) Formatted CLI output
-├── ingest.rs          (253) Raw message ingestion + kind 1235 builder/parser
-├── tools.rs           (711) MCP tool definitions
-└── kinds.rs            (23) Custom Nostr kind constants
-├── api/
-│   ├── dispatch.rs    (128) Action name → handler routing (28 operations)
-│   ├── types.rs       (256) Canonical request/response structs, Visibility enum
-│   ├── errors.rs       (97) Structured error model (7 error codes)
-│   └── operations/
-│       ├── memory.rs  (374) search, put, get, get_batch, list, delete
-│       ├── message.rs (226) ingest, list, context, send
-│       ├── maintenance.rs (208) consolidate, prepare, commit, cluster, sync, embed, prune
-│       ├── room.rs    (155) resolve, bind, unbind (provider → d-tag mapping)
-│       ├── group.rs   (140) list, members, create, add/remove member
-│       └── entity.rs   (86) list, relationships
+├── main.rs           CLI entry, clap commands
+├── lib.rs            Nomen struct, public API
+├── db.rs             SurrealDB schema, queries, CRUD
+├── consolidate.rs    Raw messages → named memories, merge, dedup, relay publish
+├── mcp.rs            MCP server (JSON-RPC stdio, 9+ tools)
+├── cvm.rs            ContextVM server (CvmServer + CvmHandler) via NIP-44
+├── http.rs           HTTP server + web UI serving
+├── groups.rs         Group management (hierarchical, NIP-29 mapping)
+├── search.rs         Hybrid vector + BM25 search + scoring
+├── config.rs         TOML config (~/.config/nomen/config.toml)
+├── send.rs           Send messages (NIP-17 DM, NIP-29 group, kind 1)
+├── memory.rs         Memory parsing, d-tag v0.1/v0.2 dual format
+├── relay.rs          Nostr relay sync (NIP-42, NIP-44)
+├── signer.rs         NomenSigner trait + KeysSigner default impl
+├── session.rs        Session ID resolution → tier/scope
+├── entities.rs       Entity extraction + graph edges
+├── embed.rs          Embedding generation (OpenAI-compatible API)
+├── access.rs         Access control (4-tier model)
+├── migrate.rs        SQLite → SurrealDB migration (feature-gated)
+├── display.rs        Formatted CLI output
+├── ingest.rs         Raw message ingestion
+└── kinds.rs          Custom Nostr kind constants
 ```
 
 Web UI lives in `web/` (Svelte). The Rust HTTP server serves the built UI from `web/dist/`.
@@ -120,23 +102,9 @@ name = "Engineering"
 members = ["npub1abc..."]
 nostr_group = "techteam"
 relay = "wss://zooid.atlantislabs.space"
-
-[auth]
-owner_pubkey = "hex-or-npub1..."  # owner gets full access
-local_bypass = true                # localhost = owner (default: true)
-auth_window_secs = 60              # max NIP-98 event age (default: 60)
 ```
 
 ## Key Implementation Notes
-
-### NIP-98 HTTP Auth (`src/auth.rs`)
-
-All HTTP API requests go through NIP-98 middleware. Clients sign kind 27235 events with `u` (URL) and `method` tags, base64-encode them, and send as `Authorization: Nostr <base64>`. The server verifies the signature, checks kind/URL/method/timestamp, extracts the pubkey, and resolves the caller's role.
-
-**Roles:** Owner (full access), Member (public + group read), Anonymous (public only).
-**Local bypass:** Requests from 127.0.0.1/::1 get owner access (configurable).
-**Write operations** (put, delete, sync, consolidate, etc.) require owner role.
-**Other transports** (MCP, CVM, Socket) are trusted and always get owner access.
 
 ### NomenSigner Trait
 
@@ -161,13 +129,13 @@ pub trait NomenSigner: Send + Sync {
 - CLI reads nsec from config/flags → wraps in `KeysSigner` → passes to `RelayManager`.
 - Library consumers implement `NomenSigner` with their own key management.
 
-### Memory Tiers (5-tier model)
+### Memory Tiers (4-tier model)
 
 - **public** — readable by anyone, plaintext
 - **group** — readable by group members (NIP-29), plaintext (relay handles access)
 - **personal** — user-auditable knowledge, NIP-44 self-encrypted
 - **internal** — agent-only reasoning, NIP-44 self-encrypted
-- **circle** — ad-hoc npub sets with deterministic hash. NIP-44 encrypted to participant set. Not yet implemented.
+- **circle** — ad-hoc npub sets with deterministic hash. NIP-44 encrypted to participant set. Not yet implemented — requires MLS key agreement (e.g., Marmot / NIP-104) or similar group encryption scheme for practical use.
 - Legacy `private` is accepted on read and normalized to `personal`
 
 ### D-Tag Format (v0.2)
@@ -185,7 +153,6 @@ The parser (`memory.rs`) supports dual-format read (v0.1 prefixes + v0.2 format)
 Defined in `kinds.rs`:
 - `31234` — Named/consolidated memory (replaceable, d-tag addressable)
 - `31235` — Agent lesson (replaceable)
-- `1235` — Raw source event (regular, non-replaceable, append-only). Generic format for all providers.
 - `1234` — Ephemeral memory (regular, future use)
 - `30078` — Legacy NIP-78 (read-only compat)
 - `4129` — Legacy lesson (read-only compat)
@@ -194,7 +161,7 @@ Defined in `kinds.rs`:
 
 Full pipeline in `consolidate.rs`:
 1. Query unconsolidated messages (with optional time/tier filters)
-2. Group by sender/channel + 4-hour time windows (with forum topic partitioning)
+2. Group by sender/channel + 4-hour time windows
 3. LLM summarization (or noop provider for testing)
 4. Merge into existing memories or create new (near-duplicate detection at cosine >0.92)
 5. Store with provenance tags + `consolidated_from` graph edges
@@ -202,33 +169,6 @@ Full pipeline in `consolidate.rs`:
 7. Mark raw messages as consolidated
 8. Publish NIP-09 deletion events for consumed ephemeral Nostr events
 9. Publish consolidated memories to relay as kind 31234 (NIP-44 encrypted for personal/internal)
-
-**Note:** Step 8 (NIP-09 deletion) was removed (2026-03-18) per the updated consolidation spec. Both `consolidate()` and two-phase `commit()` now preserve source events.
-
-### Two-Phase Consolidation
-
-For external LLM-driven extraction (e.g., OpenClaw plugin):
-1. `consolidate_prepare` — collects messages, groups into batches, returns structured data for agent extraction
-2. Agent processes batches externally and returns extracted memories
-3. `consolidate_commit` — stores memories, creates edges, marks messages consolidated (no NIP-09 deletion)
-
-Session tracking with TTL ensures prepare/commit pairs don't leak.
-
-### Forum Topic Partitioning
-
-`extract_topic_suffix()` parses Telegram forum sender strings (e.g., `telegram:group:-1003821690204:topic:9225`) and appends the topic suffix to the grouping key. Each forum topic is consolidated independently.
-
-### Room Context (Provider Binding)
-
-Room operations (`room.resolve`, `room.bind`, `room.unbind`) map provider-specific IDs to Nomen memory d-tags via the `provider_binding` table. This enables integrations (e.g., OpenClaw) to resolve room context memories by provider chat/group ID without knowing the Nomen d-tag scheme.
-
-### Raw Source Events (Kind 1235)
-
-Infrastructure for publishing raw messages as append-only Nostr events:
-- `build_raw_source_event()` — builds kind 1235 event from RawMessage
-- `parse_raw_source_event()` — parses kind 1235 event back to RawMessage
-- Relay sync fetches kind 1235 events and imports into local DB
-- **Publish-on-ingest path not yet wired** — helpers exist but `ingest_message()` only stores locally
 
 ### Search Scoring
 

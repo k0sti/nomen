@@ -12,7 +12,6 @@ import { EventStore, QueryStore } from 'applesauce-core';
 import { firstValueFrom, filter as rxFilter, toArray, map, Observable, Subscription as RxSubscription } from 'rxjs';
 import { type EventTemplate, type NostrEvent } from 'nostr-tools';
 import type { Memory, Message, Group } from './api';
-import { parseDTag, normalizeVisibility } from './dtag';
 
 // ── Types ────────────────────────────────────────────────────────
 
@@ -161,11 +160,6 @@ async function publishEvent(event: NostrEvent, timeoutMs = 10000): Promise<strin
   });
 }
 
-/** Fetch raw events by filter — used by Event Explorer page. */
-export async function requestRawEvents(filters: any[], timeoutMs = 15000): Promise<NostrEvent[]> {
-  return requestEvents(filters, timeoutMs);
-}
-
 // ── Memory helpers ───────────────────────────────────────────────
 
 function isMemoryEvent(e: NostrEvent): boolean {
@@ -178,41 +172,38 @@ function isMemoryEvent(e: NostrEvent): boolean {
 }
 
 function parseMemory(e: NostrEvent): Memory {
-  let parsed: any = {};
-  try { parsed = JSON.parse(e.content); } catch { /* skip */ }
-
   const getTag = (name: string) => e.tags.find(t => t[0] === name)?.[1];
 
-  // Use centralized d-tag parser
+  // Parse v0.2 d-tag: {visibility}:{scope}:{topic}
   const dTag = getTag('d') || '';
-  const dtag = parseDTag(dTag);
+  const parts = dTag.split(':');
+  const dtag_visibility = parts[0] || '';
+  const dtag_scope = parts.length >= 3 ? parts[1] : '';
+  const dtag_topic = parts.length >= 3 ? parts.slice(2).join(':') : parts.slice(1).join(':');
 
-  const visibility = normalizeVisibility(getTag('visibility') || dtag.visibility || 'public');
+  // Normalize content: if legacy JSON with summary/detail, merge to plain text
+  let content = e.content;
+  try {
+    const parsed = JSON.parse(e.content);
+    if (parsed && typeof parsed === 'object' && (parsed.summary || parsed.detail)) {
+      const summary = parsed.summary || '';
+      const detail = parsed.detail || '';
+      content = summary && detail && summary !== detail ? `${summary}\n\n${detail}` : detail || summary;
+    }
+  } catch { /* already plain text */ }
 
   return {
     id: e.id,
     d_tag: dTag,
-    topic: dtag.topic || parsed.topic || '',
-    summary: parsed.summary || '',
-    detail: parsed.detail || '',
-    visibility,
-    scope: getTag('scope') || getTag('h') || dtag.scope || '',
-    confidence: parseFloat(getTag('confidence') || String(parsed.confidence || '0.8')),
+    topic: dtag_topic || '',
+    content,
+    visibility: getTag('visibility') || dtag_visibility || 'public',
+    scope: getTag('scope') || getTag('h') || dtag_scope || '',
     source: e.pubkey,
-    model: getTag('model') || parsed.model || '',
-    nostr_id: e.id,
+    model: getTag('model') || '',
     created_at: new Date(e.created_at * 1000).toISOString(),
-    updated_at: new Date(e.created_at * 1000).toISOString(),
-    version: parseInt(getTag('version') || String(parsed.version || '1'), 10),
-    importance: parsed.importance ?? null,
-    access_count: parsed.access_count ?? 0,
-    source_time_start: parsed.source_time_start ?? null,
-    source_time_end: parsed.source_time_end ?? null,
-    consolidated_from: parsed.consolidated_from ?? null,
-    consolidated_at: parsed.consolidated_at ?? null,
-    ephemeral: false,
-    pinned: parsed.pinned ?? false,
-    embedded: false, // not available from relay events
+    version: parseInt(getTag('version') || '1', 10),
+    importance: parseInt(getTag('importance') || '0', 10) || undefined,
   };
 }
 
@@ -244,13 +235,11 @@ export function subscribeMemories(_pubkey: string | undefined, callback: (m: Mem
 
 export async function storeMemory(
   topic: string,
-  summary: string,
-  detail: string,
+  content: string,
   tier: string,
   signer: Signer,
 ): Promise<string> {
   // Build v0.2 d-tag: {visibility}:{scope}:{topic}
-  // For public tier, scope is empty. For personal/internal, scope should be pubkey.
   const pubkey = await signer.getPublicKey();
   let visibility = tier;
   let scope = '';
@@ -263,11 +252,6 @@ export async function storeMemory(
   }
   const dTag = `${visibility}:${scope}:${topic}`;
 
-  const content = JSON.stringify({
-    summary, detail,
-    context: null,
-  });
-
   const event: EventTemplate = {
     kind: 31234,
     created_at: Math.floor(Date.now() / 1000),
@@ -275,8 +259,6 @@ export async function storeMemory(
       ['d', dTag],
       ['visibility', visibility],
       ['scope', scope],
-      ['confidence', '0.8'],
-      ['version', '1'],
     ],
     content,
   };
@@ -380,23 +362,11 @@ export async function getGroupMessages(groupId: string, limit = 100): Promise<Me
   return events
     .map(e => ({
       id: e.id,
-      source: 'nostr',
-      source_id: '',
       content: e.content,
       sender: e.pubkey,
-      sender_id: e.pubkey,
       channel: groupId,
-      metadata: '',
       created_at: new Date(e.created_at * 1000).toISOString(),
       consolidated: false,
-      nostr_event_id: e.id,
-      provider_id: '',
-      room: '',
-      topic: '',
-      thread: '',
-      scope: '',
-      source_created_at: '',
-      publish_status: '',
     }))
     .sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
 }
@@ -460,7 +430,7 @@ export class NomenRelay {
 
   async listMemories(pubkey?: string): Promise<Memory[]> { return listMemories(pubkey); }
   subscribeMemories(pubkey: string | undefined, callback: (m: Memory) => void): Subscription { return subscribeMemories(pubkey, callback); }
-  async storeMemory(topic: string, summary: string, detail: string, tier: string, signer: Signer): Promise<string> { return storeMemory(topic, summary, detail, tier, signer); }
+  async storeMemory(topic: string, content: string, tier: string, signer: Signer): Promise<string> { return storeMemory(topic, content, tier, signer); }
   async deleteMemory(eventId: string, signer: Signer, dTag?: string): Promise<void> { return deleteMemory(eventId, signer, dTag); }
   async listProfiles(): Promise<{ pubkey: string; meta: Record<string, any>; created_at: number; hasProfile: boolean }[]> { return listMembers(); }
   async listGroups(): Promise<Group[]> { return listGroups(); }

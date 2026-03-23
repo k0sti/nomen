@@ -12,7 +12,7 @@ Defines the Nostr event schema for the nomen memory system. Memory events are ki
 
 ### Data Sovereignty
 
-The Nostr relay is the **canonical store** for memory data and, going forward, for raw source-message events as well. Local caches (SQLite, JSON, SurrealDB indexes) are performance optimizations — not sources of truth. If local state is lost, named memories and raw source events should be recoverable from the relay.
+The Nostr relay is the **canonical store** for all memory data. Local caches (SQLite, JSON) are performance optimizations — not sources of truth. If local state is lost, everything recovers from the relay.
 
 ### Event Kind
 
@@ -468,19 +468,6 @@ Group visibility events use the same shared symmetric key model. The group key i
 Personal/internal self-encryption is straightforward: author uses NIP-44 `getConversationKey(own_privkey, own_pubkey)` to encrypt/decrypt.
 
 ---
-
-## Raw Source Events (planned)
-
-This spec currently defines the schema for **named memory events** (kind 31234). The architecture now also expects **raw source messages** to be published to the relay as append-only events so they can serve as the definitive replay/provenance layer.
-
-Requirements for the raw-event layer:
-- append-only identity (no replaceable semantics)
-- provider/channel metadata preserved in tags or structured payload
-- source timestamps preserved exactly
-- linkable to derived semantic memories via provenance edges/IDs
-- suitable for rebuilding local `raw_message` cache after loss
-
-**TBD:** exact kind number, tag schema, and encryption rules for raw source events. This should be specified separately or added as a later section in this doc.
 
 ## NIP Compatibility
 

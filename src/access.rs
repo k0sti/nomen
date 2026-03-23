@@ -10,7 +10,7 @@ use crate::groups::GroupStore;
 /// - internal: only the author (source) can access (agent-only reasoning)
 /// - private: legacy alias for personal, treated identically
 pub fn can_access(memory: &MemoryRecord, requester_npub: &str, group_store: &GroupStore) -> bool {
-    match memory.visibility.as_str() {
+    match memory.tier.as_str() {
         "public" => true,
         "group" => group_store.is_member(&memory.scope, requester_npub),
         "personal" | "internal" | "private" => memory.source == requester_npub,

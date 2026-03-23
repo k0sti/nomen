@@ -5,7 +5,7 @@ use anyhow::{Context, Result};
 use nostr_sdk::prelude::*;
 use tracing::{debug, info, warn};
 
-use crate::kinds::{MEMORY_KIND, RAW_SOURCE_KIND};
+use crate::kinds::{LEGACY_APP_DATA_KIND, LEGACY_LESSON_KIND, LESSON_KIND, MEMORY_KIND};
 use crate::signer::NomenSigner;
 
 /// Result of publishing an event to relays.
@@ -95,12 +95,14 @@ impl RelayManager {
         Ok(())
     }
 
-    /// Fetch memory events (kind 31234) and raw source events (kind 1235).
+    /// Fetch memory events (kind 31234 + legacy 30078) and agent lessons (kind 31235 + legacy 4129).
     pub async fn fetch_memories(&self, pubkeys: &[PublicKey]) -> Result<Events> {
         let filter = Filter::new()
             .kinds(vec![
                 Kind::Custom(MEMORY_KIND),
-                Kind::Custom(RAW_SOURCE_KIND),
+                Kind::Custom(LESSON_KIND),
+                Kind::Custom(LEGACY_APP_DATA_KIND),
+                Kind::Custom(LEGACY_LESSON_KIND),
             ])
             .authors(pubkeys.to_vec());
 
@@ -112,26 +114,6 @@ impl RelayManager {
             .context("Failed to fetch events from relay")?;
 
         info!(count = events.len(), "Fetched memory events");
-        Ok(events)
-    }
-
-    /// Fetch legacy lesson events (kind 31235 + 4129) for migration purposes.
-    pub async fn fetch_lessons(&self, pubkeys: &[PublicKey]) -> Result<Events> {
-        let filter = Filter::new()
-            .kinds(vec![
-                Kind::Custom(31235), // LESSON_KIND
-                Kind::Custom(4129),  // LEGACY_LESSON_KIND
-            ])
-            .authors(pubkeys.to_vec());
-
-        debug!("Fetching lesson events for {} pubkeys", pubkeys.len());
-        let events = self
-            .client
-            .fetch_events(filter, self.config.timeout)
-            .await
-            .context("Failed to fetch lesson events from relay")?;
-
-        info!(count = events.len(), "Fetched lesson events");
         Ok(events)
     }
 
@@ -204,7 +186,9 @@ impl RelayManager {
         let filter = Filter::new()
             .kinds(vec![
                 Kind::Custom(MEMORY_KIND),
-                Kind::Custom(RAW_SOURCE_KIND),
+                Kind::Custom(LESSON_KIND),
+                Kind::Custom(LEGACY_APP_DATA_KIND),
+                Kind::Custom(LEGACY_LESSON_KIND),
             ])
             .authors(pubkeys.to_vec());
 
@@ -231,45 +215,6 @@ impl RelayManager {
         });
 
         Ok(rx)
-    }
-
-    /// Delete events from the relay using NIP-09 (event deletion).
-    /// Publishes a kind 5 deletion event referencing the given event IDs.
-    pub async fn delete_events(&self, event_ids: &[EventId], reason: &str) -> Result<PublishResult> {
-        let builder = EventBuilder::delete(
-            EventDeletionRequest::new()
-                .ids(event_ids.to_vec())
-                .reason(reason)
-        );
-
-        info!(
-            count = event_ids.len(),
-            reason = %reason,
-            "Publishing NIP-09 deletion event"
-        );
-
-        self.publish(builder).await
-    }
-
-    /// Delete events matching a filter (fetch then delete).
-    /// Returns the number of events deleted.
-    pub async fn delete_matching(&self, filter: Filter, reason: &str) -> Result<usize> {
-        let events = self
-            .client
-            .fetch_events(filter, self.config.timeout)
-            .await
-            .context("Failed to fetch events for deletion")?;
-
-        if events.is_empty() {
-            return Ok(0);
-        }
-
-        let ids: Vec<EventId> = events.iter().map(|e| e.id).collect();
-        let count = ids.len();
-
-        self.delete_events(&ids, reason).await?;
-
-        Ok(count)
     }
 
     /// Disconnect from the relay.

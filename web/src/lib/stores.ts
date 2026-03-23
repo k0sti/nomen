@@ -4,7 +4,7 @@ import { writable, derived, get } from 'svelte/store';
 import { NomenRelay, setSigner as setRelaySigner } from './relay';
 import { NomenApi } from './api';
 import type { NostrProfile, NostrSigner } from './nostr';
-import type { Memory, Message, Group, Entity, SearchResult, MessageListOpts } from './api';
+import type { Memory, Message, Group, Entity, SearchResult } from './api';
 
 // ── Settings ──────────────────────────────────────────────────────
 export const relayUrl = writable(localStorage.getItem('nomen:relayUrl') || 'wss://zooid.atlantislabs.space');
@@ -24,7 +24,7 @@ export const api = derived(apiBaseUrl, ($url) => new NomenApi($url));
 export const profile = writable<NostrProfile | null>(null);
 export const signer = writable<NostrSigner | null>(null);
 
-// Keep relay layer and API layer in sync with signer changes
+// Keep relay layer in sync with signer changes
 signer.subscribe((s) => {
   if (s) {
     setRelaySigner({
@@ -34,8 +34,6 @@ signer.subscribe((s) => {
   } else {
     setRelaySigner(null);
   }
-  // Wire signer into API for NIP-98 auth headers
-  get(api).setSigner(s);
 });
 export const isLoggedIn = derived(profile, ($p) => $p !== null);
 export const showLoginModal = writable(false);
@@ -102,9 +100,9 @@ async function mirrorProfileToZooid(pubkey: string, signerInstance: import('./no
 }
 
 // ── Navigation ───────────────────────────────────────────────────
-export type Page = 'landing' | 'memories' | 'events' | 'search' | 'messages' | 'members' | 'groups' | 'agents' | 'settings';
+export type Page = 'landing' | 'memories' | 'search' | 'messages' | 'members' | 'groups' | 'agents' | 'settings';
 
-const validPages: Page[] = ['memories', 'events', 'search', 'messages', 'members', 'groups', 'agents', 'settings'];
+const validPages: Page[] = ['memories', 'search', 'messages', 'members', 'groups', 'agents', 'settings'];
 
 function getPageFromHash(): Page {
   const hash = window.location.hash.replace('#/', '').replace('#', '');

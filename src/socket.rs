@@ -231,14 +231,11 @@ async fn handle_request(
         "unsubscribe" => handle_unsubscribe(state, conn_id, &req).await,
         // Canonical dispatch — same semantics as HTTP/MCP/CVM
         _ => {
-            // Socket is a trusted local transport — always owner access
-            let caller = crate::auth::CallerContext::owner(String::new());
             let api_resp = crate::api::dispatch(
                 &state.nomen,
                 &state.default_channel,
                 &req.action,
                 &req.params,
-                &caller,
             )
             .await;
 

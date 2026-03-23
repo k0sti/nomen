@@ -3,7 +3,7 @@
   "kind": "memory",
   "configSchema": {
     "type": "object",
-    "additionalProperties": true,
+    "additionalProperties": false,
     "properties": {
       "apiUrl": {
         "type": "string",
@@ -20,13 +20,6 @@
         "type": "number",
         "description": "Request timeout in milliseconds",
         "default": 10000
-      },
-      "roomScopes": {
-        "type": "object",
-        "description": "Legacy room scope mapping kept for backward compatibility",
-        "additionalProperties": {
-          "type": "string"
-        }
       }
     }
   }

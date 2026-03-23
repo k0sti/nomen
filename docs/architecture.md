@@ -63,7 +63,7 @@ Single embedded database. Multi-model: documents, vectors (HNSW), full-text (BM2
 ### Core Tables
 
 - `memory` — memories with content, tier, scope, topic, embedding, confidence
-- `raw_message` — ingested messages indexed locally for batching/search/provenance; canonical raw events should also live on the relay
+- `raw_message` — ingested messages before consolidation (local only, never published to relay)
 - `entity` — extracted entities (person, project, concept)
 - `session` — active session tracking
 - `group` — group definitions and membership
@@ -253,11 +253,11 @@ Host integrations should provide or resolve a `scope` for memory operations. The
 
 All external operations are defined in the **canonical API layer** (`src/api/dispatch.rs`). The canonical operation model is transport-independent. ContextVM, MCP, HTTP, and socket are transport adapters. All transports (HTTP, MCP, ContextVM, socket) route through the same `api::dispatch()` function.
 
-**22 operations** across 5 domains:
+**21 operations** across 5 domains:
 
 | Domain | Operations |
 |--------|-----------|
-| Memory | `memory.search`, `memory.put`, `memory.get`, `memory.get_batch`, `memory.list`, `memory.delete` |
+| Memory | `memory.search`, `memory.put`, `memory.get`, `memory.list`, `memory.delete` |
 | Message | `message.ingest`, `message.list`, `message.context`, `message.send` |
 | Entity | `entity.list`, `entity.relationships` |
 | Maintenance | `memory.consolidate`, `memory.cluster`, `memory.sync`, `memory.embed`, `memory.prune` |
@@ -267,7 +267,7 @@ All operations use canonical fields: `visibility`, `scope`, `channel`, `topic`.
 
 Responses use structured envelopes: `{ "ok": true, "result": { ... } }` or `{ "ok": false, "error": { "code": "...", "message": "..." } }`.
 
-See `docs/api-spec.md` for full specification.
+See `docs/api-v2-spec.md` for full specification.
 
 ### ContextVM — Nostr-Native Transport
 
@@ -379,18 +379,14 @@ This sends `tools/list` and `memory.list` requests and verifies responses.
 
 ### What Gets Published to Relay
 
-Nomen publishes **named semantic memories** to the relay as kind 31234 replaceable events. These are created by `memory.put` (direct API) or `memory.consolidate` (LLM extraction from raw messages).
+Only **named memories** are published to the Nostr relay as kind 31234 replaceable events. These are created by `memory.put` (direct API) or `memory.consolidate` (LLM extraction from raw messages).
 
-**Design direction update (2026-03-17): raw messages should also be published to the relay** as append-only source events. The local `raw_message` table remains useful for indexing, grouping, provenance, and recovery, but should no longer be the only copy of source material. Consolidation marks local rows as processed; it does not delete or conceptually replace the raw event stream.
-
-This yields a two-layer source model:
-- **raw message events** = definitive event history / replay source
-- **named memories** = semantic compression and retrieval index
+**Raw messages** (`message.ingest`) are stored **locally in SurrealDB only** — they are never published to the relay. They are ephemeral input to the consolidation pipeline, consumed and marked `consolidated = true` once processed. This is intentional: raw messages are high-volume conversation noise; only the distilled knowledge (named memories) is durable and worth syncing across relays.
 
 | Data | SurrealDB | Nostr Relay |
 |---|---|---|
 | Named memories (`memory.put`, consolidation output) | ✅ `memory` table | ✅ kind 31234 |
-| Raw messages (`message.ingest`) | ✅ `raw_message` table | ✅ append-only raw-event kind (TBD) |
+| Raw messages (`message.ingest`) | ✅ `raw_message` table | ❌ local only |
 | Entities (extracted) | ✅ `entity` table | ❌ local only |
 | Sessions | ✅ `session` table | ❌ local only |
 

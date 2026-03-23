@@ -20,14 +20,17 @@ async fn test_store_and_search() -> Result<()> {
 
     // Store a memory
     let parsed = nomen::memory::ParsedMemory {
-        visibility: "public".to_string(),
+        tier: "public".to_string(),
         topic: "rust/error-handling".to_string(),
         version: "1".to_string(),
+        confidence: "0.92".to_string(),
         model: "test".to_string(),
+        summary: "Use anyhow for application errors".to_string(),
         created_at: nostr_sdk::Timestamp::now(),
         d_tag: "snow:memory:rust/error-handling".to_string(),
         source: "test".to_string(),
         content_raw: serde_json::json!({
+            "summary": "Use anyhow for application errors",
             "detail": "anyhow provides easy error context chaining"
         })
         .to_string(),
@@ -67,7 +70,6 @@ async fn test_ingest_and_consolidate() -> Result<()> {
             content: format!("Test message number {i} about Rust programming"),
             metadata: None,
             created_at: None,
-            ..Default::default()
         };
         nomen::ingest::ingest_message(&db, &msg).await?;
     }
@@ -97,7 +99,7 @@ async fn test_ingest_and_consolidate() -> Result<()> {
     // Verify messages are marked consolidated
     let query_consolidated = nomen::ingest::MessageQuery {
         source: Some("test".to_string()),
-        include_consolidated: true,
+        consolidated_only: true,
         ..Default::default()
     };
     let consolidated = nomen::ingest::get_messages(&db, &query_consolidated).await?;
@@ -205,7 +207,6 @@ async fn test_prune() -> Result<()> {
             content: format!("Old message {i}"),
             metadata: None,
             created_at: Some(old_date.to_string()),
-            ..Default::default()
         };
         nomen::ingest::ingest_message(&db, &msg).await?;
     }

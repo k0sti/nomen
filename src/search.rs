@@ -9,7 +9,7 @@ use tracing::debug;
 use crate::db;
 use crate::embed::Embedder;
 
-/// Minimum recency factor — memories never decay below 20%.
+/// Minimum decay factor — memories never lose more than 80% of their confidence.
 const MIN_DECAY: f64 = 0.2;
 /// Maximum age in days for full decay (365 days).
 const MAX_AGE_DAYS: f64 = 365.0;
@@ -37,6 +37,7 @@ pub struct SearchOptions {
     pub limit: usize,
     pub vector_weight: f32,
     pub text_weight: f32,
+    pub min_confidence: Option<f64>,
     /// If true, group results with >0.85 embedding similarity and merge them.
     pub aggregate: bool,
     /// Enable graph expansion: traverse edges from results to surface related memories.
@@ -54,6 +55,7 @@ impl Default for SearchOptions {
             limit: 10,
             vector_weight: 0.7,
             text_weight: 0.3,
+            min_confidence: None,
             aggregate: false,
             graph_expand: false,
             max_hops: 1,
@@ -63,9 +65,9 @@ impl Default for SearchOptions {
 
 /// A search result with scoring info.
 pub struct SearchResult {
-    pub visibility: String,
+    pub tier: String,
     pub topic: String,
-    pub detail: String,
+    pub content: String,
     pub created_at: Timestamp,
     pub score: f64,
     pub match_type: MatchType,
@@ -79,12 +81,13 @@ pub struct SearchResult {
     pub contradicts: bool,
 }
 
-/// Calculate recency factor based on days since last access.
+/// Calculate confidence decay factor based on days since last access.
 ///
-/// `factor = 1.0 - (days_since_access / max_age) × (1.0 - min_decay)`
+/// `effective_confidence = confidence × decay_factor`
+/// `decay_factor = 1.0 - (days_since_access / max_age) × (1.0 - min_decay)`
 ///
 /// Clamped to [MIN_DECAY, 1.0].
-fn recency_factor(last_accessed: Option<&str>, created_at: &str) -> f64 {
+fn confidence_decay_factor(last_accessed: Option<&str>, created_at: &str) -> f64 {
     let reference_time = last_accessed.unwrap_or(created_at);
     let days_since = chrono::DateTime::parse_from_rfc3339(reference_time)
         .map(|dt| {
@@ -130,7 +133,7 @@ pub async fn search(
         &query_embedding,
         opts.tier.as_deref(),
         opts.allowed_scopes.as_deref(),
-        None,
+        opts.min_confidence,
         opts.vector_weight,
         opts.text_weight,
         opts.limit,
@@ -148,12 +151,12 @@ pub async fn search(
             let text_score = r.text_score.unwrap_or(0.0);
 
             // Compute recency factor (1.0 for now, decays to 0.0 over MAX_AGE_DAYS)
-            let recency = recency_factor(Some(&r.created_at), &r.created_at);
+            let recency = confidence_decay_factor(Some(&r.created_at), &r.created_at);
 
             // Importance normalized to 0.0–1.0 (importance 1-10 → 0.1–1.0)
             let importance_norm = r.importance.unwrap_or(5) as f64 / 10.0;
 
-            // Composite score per spec: semantic×0.4 + text×0.3 + recency×0.15 + importance×0.15
+            // Composite score: semantic×0.4 + text×0.3 + recency×0.15 + importance×0.15
             let decayed_score =
                 vec_score * 0.4 + text_score * 0.3 + recency * 0.15 + importance_norm * 0.15;
 
@@ -166,9 +169,9 @@ pub async fn search(
             };
 
             SearchResult {
-                visibility: r.visibility,
+                tier: r.tier,
                 topic: r.topic,
-                detail: r.detail.unwrap_or_else(|| r.search_text.clone()),
+                content: r.content,
                 created_at: ts,
                 score: decayed_score,
                 match_type,
@@ -301,9 +304,9 @@ async fn graph_expand(
                 .unwrap_or(Timestamp::now());
 
             expanded.push(SearchResult {
-                visibility: neighbor.visibility,
+                tier: neighbor.tier,
                 topic: neighbor.topic,
-                detail: neighbor.detail.unwrap_or_else(|| neighbor.search_text.clone()),
+                content: neighbor.content,
                 created_at: ts,
                 score: graph_score,
                 match_type: MatchType::Graph,
@@ -335,12 +338,15 @@ async fn graph_expand(
 /// This ensures results have meaningful scores even when embeddings are disabled,
 /// preventing downstream filters from discarding all results.
 async fn text_only_search(db: &Surreal<Db>, opts: &SearchOptions) -> Result<Vec<SearchResult>> {
-    let mut conditions = vec!["search_text @1@ $query".to_string()];
+    let mut conditions = vec!["content @1@ $query".to_string()];
     if opts.tier.is_some() {
-        conditions.push("visibility = $tier".to_string());
+        conditions.push("tier = $tier".to_string());
     }
     if opts.allowed_scopes.is_some() {
         conditions.push("(scope = \"\" OR array::any($scopes, |$s| scope = $s OR string::starts_with(scope, string::concat($s, \".\"))))".to_string());
+    }
+    if opts.min_confidence.is_some() {
+        conditions.push("(confidence IS NONE OR confidence >= $min_conf)".to_string());
     }
     let where_clause = conditions.join(" AND ");
 
@@ -358,6 +364,9 @@ async fn text_only_search(db: &Surreal<Db>, opts: &SearchOptions) -> Result<Vec<
     if let Some(ref scopes) = opts.allowed_scopes {
         q = q.bind(("scopes", scopes.clone()));
     }
+    if let Some(min_conf) = opts.min_confidence {
+        q = q.bind(("min_conf", min_conf));
+    }
 
     let rows: Vec<db::HybridSearchRow> = q.await?.check()?.take(0)?;
 
@@ -370,7 +379,7 @@ async fn text_only_search(db: &Surreal<Db>, opts: &SearchOptions) -> Result<Vec<
 
             let text_score = r.text_score.unwrap_or(0.0);
 
-            let recency = recency_factor(Some(&r.created_at), &r.created_at);
+            let recency = confidence_decay_factor(Some(&r.created_at), &r.created_at);
             let importance_norm = r.importance.unwrap_or(5) as f64 / 10.0;
 
             // Same composite as hybrid search, minus vector component:
@@ -378,9 +387,9 @@ async fn text_only_search(db: &Surreal<Db>, opts: &SearchOptions) -> Result<Vec<
             let decayed_score = text_score * 0.3 + recency * 0.15 + importance_norm * 0.15;
 
             SearchResult {
-                visibility: r.visibility,
+                tier: r.tier,
                 topic: r.topic,
-                detail: r.detail.unwrap_or_else(|| r.search_text.clone()),
+                content: r.content,
                 created_at: ts,
                 score: decayed_score,
                 match_type: MatchType::Text,
@@ -432,7 +441,7 @@ fn cosine_similarity(a: &[f32], b: &[f32]) -> f64 {
 }
 
 /// Aggregate search results: group results with >0.85 embedding similarity
-/// and merge them into a single result with combined detail.
+/// and merge them into a single result with combined detail and highest confidence.
 fn aggregate_results(results: Vec<SearchResult>) -> Vec<SearchResult> {
     if results.len() <= 1 {
         return results;
@@ -467,9 +476,9 @@ fn aggregate_results(results: Vec<SearchResult>) -> Vec<SearchResult> {
 
         if group_indices.len() == 1 {
             aggregated.push(SearchResult {
-                visibility: results[i].visibility.clone(),
+                tier: results[i].tier.clone(),
                 topic: results[i].topic.clone(),
-                detail: results[i].detail.clone(),
+                content: results[i].content.clone(),
                 created_at: results[i].created_at,
                 score: results[i].score,
                 match_type: results[i].match_type,
@@ -490,17 +499,17 @@ fn aggregate_results(results: Vec<SearchResult>) -> Vec<SearchResult> {
                 })
                 .unwrap();
 
-            let mut combined_detail = String::new();
+            let mut combined_content = String::new();
             let mut topics: Vec<&str> = Vec::new();
             for &idx in &group_indices {
                 if !topics.contains(&results[idx].topic.as_str()) {
                     topics.push(&results[idx].topic);
                 }
-                if !combined_detail.is_empty() {
-                    combined_detail.push_str("\n---\n");
+                if !combined_content.is_empty() {
+                    combined_content.push_str("\n---\n");
                 }
-                combined_detail
-                    .push_str(&format!("[{}] {}", results[idx].topic, results[idx].detail));
+                combined_content
+                    .push_str(&format!("[{}] {}", results[idx].topic, results[idx].content));
             }
 
             let topic_display = if topics.len() > 1 {
@@ -514,9 +523,9 @@ fn aggregate_results(results: Vec<SearchResult>) -> Vec<SearchResult> {
             };
 
             aggregated.push(SearchResult {
-                visibility: results[best_idx].visibility.clone(),
+                tier: results[best_idx].tier.clone(),
                 topic: topic_display,
-                detail: combined_detail,
+                content: combined_content,
                 created_at: results[best_idx].created_at,
                 score: results[best_idx].score,
                 match_type: results[best_idx].match_type,

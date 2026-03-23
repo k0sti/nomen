@@ -129,12 +129,13 @@ fn v2_tools_list() -> Value {
                     "type": "object",
                     "properties": {
                         "topic": { "type": "string", "description": "Topic/namespace for the memory" },
-                        "detail": { "type": "string", "description": "Full detail text (the memory content)" },
+                        "content": { "type": "string", "description": "Full memory content (plain text/markdown)" },
                         "visibility": { "type": "string", "description": "Visibility (public/group/circle/personal/internal, default: public)" },
-                        "scope": { "type": "string", "description": "Scope (required for group/circle, e.g. group ID or pubkey)" },
+                        "scope": { "type": "string", "description": "Scope (required for group/circle)" },
+                        "importance": { "type": "integer", "description": "Importance score 1-10" },
                         "metadata": { "type": "object", "description": "Arbitrary metadata" }
                     },
-                    "required": ["topic", "detail"]
+                    "required": ["topic", "content"]
                 }
             },
             {
@@ -148,21 +149,6 @@ fn v2_tools_list() -> Value {
                         "visibility": { "type": "string", "description": "For topic → d_tag resolution" },
                         "scope": { "type": "string", "description": "For topic → d_tag resolution" }
                     }
-                }
-            },
-            {
-                "name": "memory_get_batch",
-                "description": "Retrieve multiple memories by d_tag in a single call. Returns results keyed by d_tag for efficient multi-lookup (e.g. room context injection).",
-                "inputSchema": {
-                    "type": "object",
-                    "properties": {
-                        "d_tags": {
-                            "type": "array",
-                            "items": { "type": "string" },
-                            "description": "Array of d_tags to fetch"
-                        }
-                    },
-                    "required": ["d_tags"]
                 }
             },
             {
@@ -317,11 +303,10 @@ fn v2_tools_list() -> Value {
                                             "type": "object",
                                             "properties": {
                                                 "topic": { "type": "string" },
-                                                "summary": { "type": "string" },
-                                                "detail": { "type": "string" },
+                                                "content": { "type": "string" },
                                                 "importance": { "type": "integer" }
                                             },
-                                            "required": ["topic", "summary", "importance"]
+                                            "required": ["topic", "content", "importance"]
                                         }
                                     }
                                 },
@@ -474,10 +459,8 @@ impl McpServer {
             }
         };
 
-        // MCP is a trusted local transport (stdio) — always owner access
-        let caller = crate::auth::CallerContext::owner(String::new());
         let api_resp =
-            crate::api::dispatch(&self.nomen, &self.default_channel, &action, &arguments, &caller).await;
+            crate::api::dispatch(&self.nomen, &self.default_channel, &action, &arguments).await;
 
         let result_json = serde_json::to_value(&api_resp).unwrap_or_else(|_| json!({"ok": false}));
 

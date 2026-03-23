@@ -52,7 +52,6 @@ pub struct CvmServer {
     nomen: Nomen,
     gateway: NostrMCPGateway,
     allowed_npubs: HashSet<String>,
-    owner_npub: Option<String>,
     rate_limiter: RateLimiter,
     default_channel: String,
     announce: bool,
@@ -65,7 +64,6 @@ impl CvmServer {
         relay_url: &str,
         encryption: EncryptionMode,
         allowed_npubs: Vec<String>,
-        owner_npub: Option<String>,
         rate_limit: u32,
         default_channel: String,
         announce: bool,
@@ -103,7 +101,6 @@ impl CvmServer {
             nomen,
             gateway,
             allowed_npubs: allowed_npubs.into_iter().collect(),
-            owner_npub,
             rate_limiter: RateLimiter::new(rate_limit),
             default_channel,
             announce,
@@ -111,15 +108,6 @@ impl CvmServer {
     }
 
     /// Run the CVM server event loop.
-    /// Determine caller context based on whether the npub matches the owner.
-    fn caller_for_npub(&self, npub: &str) -> crate::auth::CallerContext {
-        if self.owner_npub.as_deref() == Some(npub) {
-            crate::auth::CallerContext::owner(npub.to_string())
-        } else {
-            crate::auth::CallerContext::member(npub.to_string())
-        }
-    }
-
     pub async fn run(mut self) -> Result<()> {
         let mut rx = self.gateway.start().await?;
 
@@ -201,7 +189,7 @@ impl CvmServer {
                 "CVM: dispatching request"
             );
 
-            let response = self.handle_message(&incoming.message, client_pubkey).await;
+            let response = self.handle_message(&incoming.message).await;
 
             let is_error = matches!(&response, JsonRpcMessage::ErrorResponse(_));
             match self
@@ -233,7 +221,7 @@ impl CvmServer {
     }
 
     /// Handle a single JSON-RPC message. Public for testing.
-    pub async fn handle_message(&self, message: &JsonRpcMessage, client_npub: &str) -> JsonRpcMessage {
+    pub async fn handle_message(&self, message: &JsonRpcMessage) -> JsonRpcMessage {
         match message {
             JsonRpcMessage::Request(req) => {
                 let method = &req.method;
@@ -265,7 +253,7 @@ impl CvmServer {
                     "tools/call" => {
                         let tool_name = params.get("name").and_then(|n| n.as_str()).unwrap_or("?");
                         info!(method = "tools/call", tool = %tool_name, "CVM: dispatching tool call");
-                        self.handle_tool_call(id, &params, client_npub).await
+                        self.handle_tool_call(id, &params).await
                     }
                     "ping" => {
                         debug!(method = "ping", "CVM: pong");
@@ -274,13 +262,11 @@ impl CvmServer {
                     _ => {
                         // Direct v2 action dispatch (e.g. "memory.search", "group.list")
                         info!(action = %method, "CVM: direct action dispatch");
-                        let caller = self.caller_for_npub(client_npub);
                         let api_resp = crate::api::dispatch(
                             &self.nomen,
                             &self.default_channel,
                             method,
                             &params,
-                            &caller,
                         )
                         .await;
                         let result = serde_json::to_value(&api_resp)
@@ -304,7 +290,7 @@ impl CvmServer {
     }
 
     /// Handle a tools/call request. Public for testing.
-    pub async fn handle_tool_call(&self, id: Value, params: &Value, client_npub: &str) -> JsonRpcMessage {
+    pub async fn handle_tool_call(&self, id: Value, params: &Value) -> JsonRpcMessage {
         let tool_name = params.get("name").and_then(|n| n.as_str()).unwrap_or("");
         let arguments = params.get("arguments").cloned().unwrap_or(json!({}));
 
@@ -328,9 +314,8 @@ impl CvmServer {
 
         debug!(tool = %tool_name, action = %action, "CVM: tool_call → action dispatch");
 
-        let caller = self.caller_for_npub(client_npub);
         let api_resp =
-            crate::api::dispatch(&self.nomen, &self.default_channel, &action, &arguments, &caller).await;
+            crate::api::dispatch(&self.nomen, &self.default_channel, &action, &arguments).await;
 
         if api_resp.ok {
             debug!(tool = %tool_name, action = %action, "CVM: tool call succeeded");
@@ -406,13 +391,11 @@ impl CvmHandler {
                     "tools/call" => self.handle_tool_call(id, &params).await,
                     "ping" => make_success_response(id, json!({})),
                     _ => {
-                        let caller = crate::auth::CallerContext::owner(String::new());
                         let api_resp = crate::api::dispatch(
                             &self.nomen,
                             &self.default_channel,
                             method,
                             &params,
-                            &caller,
                         )
                         .await;
                         let result = serde_json::to_value(&api_resp)
@@ -446,9 +429,8 @@ impl CvmHandler {
             }
         };
 
-        let caller = crate::auth::CallerContext::owner(String::new());
         let api_resp =
-            crate::api::dispatch(&self.nomen, &self.default_channel, &action, &arguments, &caller).await;
+            crate::api::dispatch(&self.nomen, &self.default_channel, &action, &arguments).await;
 
         let result_json = serde_json::to_value(&api_resp).unwrap_or_else(|_| json!({"ok": false}));
 

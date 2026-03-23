@@ -6,7 +6,7 @@
 
 ## Design Principle
 
-The canonical operation model is transport-independent. HTTP, MCP, ContextVM, and socket are transport adapters or projections of the same operations. All 28 canonical actions route through `api::dispatch()`. Individual transports may expose additional transport-specific capabilities (e.g., socket provides `subscribe`/`unsubscribe` for push event management) that are not part of the canonical operation model.
+The canonical operation model is transport-independent. HTTP, MCP, ContextVM, and socket are transport adapters or projections of the same operations. All canonical actions route through `api::dispatch()`. Individual transports may expose additional transport-specific capabilities (e.g., socket provides `subscribe`/`unsubscribe` for push event management) that are not part of the canonical operation model.
 
 ## Field Model
 
@@ -305,51 +305,6 @@ Returns `null` result if not found (with `ok: true`).
 
 ---
 
-### `memory.get_batch`
-
-Retrieve multiple memories by d_tag in a single call. Useful for room context injection where group, topic, and participant context are needed together.
-
-**Request:**
-
-```json
-{
-  "action": "memory.get_batch",
-  "params": {
-    "d_tags": [
-      "group:techteam:room",
-      "group:techteam:room/deploys",
-      "personal:d29f...96d7:user-profile"
-    ]
-  }
-}
-```
-
-**Parameters:**
-
-| Param | Type | Required | Default | Description |
-|-------|------|----------|---------|-------------|
-| `d_tags` | string[] | yes | — | Array of d_tags to fetch |
-
-**Response result:**
-
-```json
-{
-  "count": 2,
-  "results": [
-    { "topic": "room", "summary": "...", "d_tag": "group:techteam:room", ... },
-    { "topic": "room/deploys", "summary": "...", "d_tag": "group:techteam:room/deploys", ... }
-  ],
-  "by_d_tag": {
-    "group:techteam:room": { "topic": "room", "summary": "...", ... },
-    "group:techteam:room/deploys": { "topic": "room/deploys", "summary": "...", ... }
-  }
-}
-```
-
-Missing d_tags are silently omitted from results. The `by_d_tag` map enables keyed access without iterating `results`.
-
----
-
 ### `memory.list`
 
 List memories from local DB with optional filters.
@@ -595,108 +550,6 @@ Trigger consolidation pipeline: group → extract → merge/dedup → store.
 
 ---
 
-### `memory.consolidate_prepare`
-
-Two-phase consolidation: prepare batches for external agent extraction (stages 1-2).
-
-**Request:**
-
-```json
-{
-  "action": "memory.consolidate_prepare",
-  "params": {
-    "min_messages": 3,
-    "batch_size": 50,
-    "older_than": "30m",
-    "ttl_minutes": 30
-  }
-}
-```
-
-**Parameters:**
-
-| Param | Type | Required | Default | Description |
-|-------|------|----------|---------|-------------|
-| `min_messages` | integer | — | 3 | Minimum messages to trigger |
-| `batch_size` | integer | — | 50 | Max messages per run |
-| `older_than` | string | — | — | Duration filter (e.g. `30m`, `1h`) |
-| `ttl_minutes` | integer | — | 30 | Session TTL in minutes |
-
-**Response result:**
-
-```json
-{
-  "session_id": "cons_01abc...",
-  "expires_at": "2026-03-12T11:00:00Z",
-  "batch_count": 3,
-  "message_count": 15,
-  "batches": [
-    {
-      "batch_id": "b_0",
-      "scope": "personal",
-      "visibility": "personal",
-      "message_count": 5,
-      "time_range": { "start": "...", "end": "..." },
-      "messages": [...]
-    }
-  ]
-}
-```
-
----
-
-### `memory.consolidate_commit`
-
-Two-phase consolidation: commit agent-extracted memories (stages 4-6).
-
-**Request:**
-
-```json
-{
-  "action": "memory.consolidate_commit",
-  "params": {
-    "session_id": "cons_01abc...",
-    "extractions": [
-      {
-        "batch_id": "b_0",
-        "memories": [
-          {
-            "topic": "project/nomen/api-v2",
-            "summary": "API v2 uses canonical dispatch",
-            "detail": "...",
-            "importance": 7,
-            "entities": ["nomen", "api-v2"]
-          }
-        ]
-      }
-    ]
-  }
-}
-```
-
-**Parameters:**
-
-| Param | Type | Required | Default | Description |
-|-------|------|----------|---------|-------------|
-| `session_id` | string | ✅ | — | Session ID from prepare |
-| `extractions` | array | ✅ | — | Array of batch extractions |
-
-**Response result:**
-
-```json
-{
-  "session_id": "cons_01abc...",
-  "memories_created": 3,
-  "memories_merged": 1,
-  "memories_deduped": 0,
-  "messages_consolidated": 15,
-  "events_published": 3,
-  "events_deleted": 0
-}
-```
-
----
-
 ### `memory.cluster`
 
 Synthesize related memories by namespace prefix.
@@ -829,303 +682,6 @@ Prune old/unused memories and consolidated raw messages.
 
 ---
 
-## 5. Entity domain
-
-### `entity.list`
-
-List extracted entities, optionally filtered by kind.
-
-```json
-{ "action": "entity.list", "params": { "kind": "person" } }
-```
-
-### `entity.relationships`
-
-List entity relationships, optionally filtered by entity name.
-
-```json
-{ "action": "entity.relationships", "params": { "entity": "nomen" } }
-```
-
----
-
-## 6. Room domain
-
-Room operations map provider-specific chat/group IDs to Nomen memory d-tags via the `provider_binding` table.
-
-### `room.resolve`
-
-Resolve a provider ID to its bound memory d-tags.
-
-**Request:**
-
-```json
-{
-  "action": "room.resolve",
-  "params": {
-    "provider_id": "telegram:-1003821690204"
-  }
-}
-```
-
-**Parameters:**
-
-| Param | Type | Required | Default | Description |
-|-------|------|----------|---------|-------------|
-| `provider_id` | string | ✅ | — | Provider-specific room/chat ID |
-
-**Response result:**
-
-```json
-{
-  "provider_id": "telegram:-1003821690204",
-  "d_tags": ["group:techteam:room", "group:techteam:room/deploys"]
-}
-```
-
----
-
-### `room.bind`
-
-Bind a provider ID to a memory d-tag.
-
-**Request:**
-
-```json
-{
-  "action": "room.bind",
-  "params": {
-    "provider_id": "telegram:-1003821690204",
-    "d_tag": "group:techteam:room"
-  }
-}
-```
-
-**Parameters:**
-
-| Param | Type | Required | Default | Description |
-|-------|------|----------|---------|-------------|
-| `provider_id` | string | ✅ | — | Provider-specific room/chat ID |
-| `d_tag` | string | ✅ | — | Memory d-tag to bind |
-
-**Response result:**
-
-```json
-{
-  "bound": true,
-  "provider_id": "telegram:-1003821690204",
-  "d_tag": "group:techteam:room"
-}
-```
-
----
-
-### `room.unbind`
-
-Unbind a provider ID from a memory d-tag.
-
-**Request:**
-
-```json
-{
-  "action": "room.unbind",
-  "params": {
-    "provider_id": "telegram:-1003821690204",
-    "d_tag": "group:techteam:room"
-  }
-}
-```
-
-**Parameters:**
-
-| Param | Type | Required | Default | Description |
-|-------|------|----------|---------|-------------|
-| `provider_id` | string | ✅ | — | Provider-specific room/chat ID |
-| `d_tag` | string | ✅ | — | Memory d-tag to unbind |
-
-**Response result:**
-
-```json
-{
-  "unbound": true,
-  "provider_id": "telegram:-1003821690204",
-  "d_tag": "group:techteam:room"
-}
-```
-
----
-
-## Socket transport
-
-The socket server provides a persistent, bidirectional connection over Unix domain sockets for local agents and integrations. It is the only transport that supports push events via subscriptions.
-
-### Connection
-
-Connect to the Unix domain socket at the configured path (default: `$XDG_RUNTIME_DIR/nomen/nomen.sock`).
-
-Configuration (`config.toml`):
-
-```toml
-[socket]
-enabled = true
-path = "/run/user/1000/nomen/nomen.sock"   # default: $XDG_RUNTIME_DIR/nomen/nomen.sock
-max_connections = 64                         # default
-max_frame_size = 16777216                    # 16 MB default
-```
-
-Socket permissions are set to `0660`.
-
-### Wire format
-
-All frames use **length-delimited JSON**: a 4-byte big-endian length prefix followed by a JSON payload.
-
-```text
-┌──────────┬──────────────────────┐
-│ len: u32 │ payload: JSON bytes  │
-│ (BE)     │ (len bytes)          │
-└──────────┴──────────────────────┘
-```
-
-### Frame types
-
-Frames are distinguished by field presence (untagged):
-
-| Frame | Discriminator | Direction |
-|-------|--------------|-----------|
-| **Request** | Has `action` field | Agent → Nomen |
-| **Response** | Has `ok` + `id` fields | Nomen → Agent |
-| **Event** | Has `event` field | Nomen → Agent (push) |
-
-#### Request
-
-```json
-{
-  "id": "01JRQX...",
-  "action": "memory.search",
-  "params": { "query": "relay config", "limit": 10 }
-}
-```
-
-- `id` — Correlation ID (ULID recommended, UUID accepted).
-- `action` — Canonical action name (same as HTTP/MCP/CVM) or transport-specific action (`subscribe`, `unsubscribe`).
-- `params` — Action parameters. Defaults to `{}` if omitted.
-
-#### Response
-
-```json
-{
-  "id": "01JRQX...",
-  "ok": true,
-  "result": { "count": 3, "results": [...] },
-  "meta": { "version": "v2" }
-}
-```
-
-Error response:
-
-```json
-{
-  "id": "01JRQX...",
-  "ok": false,
-  "error": { "code": "not_found", "message": "No memory with that topic" },
-  "meta": { "version": "v2" }
-}
-```
-
-#### Event (push)
-
-```json
-{
-  "event": "memory.updated",
-  "ts": 1741860000,
-  "data": { "topic": "project/nomen" }
-}
-```
-
-Events are only delivered to connections that have an active subscription matching the event type.
-
-### Canonical dispatch
-
-All actions except `subscribe` and `unsubscribe` are routed through `api::dispatch()`, producing the same request/response envelope as HTTP, MCP, and CVM. The socket is a trusted local transport — all requests receive owner-level access.
-
-### Transport-specific actions
-
-#### `subscribe`
-
-Register to receive push events on this connection.
-
-```json
-{
-  "id": "sub1",
-  "action": "subscribe",
-  "params": { "events": ["memory.updated", "memory.deleted"] }
-}
-```
-
-Use `"events": ["*"]` to subscribe to all event types.
-
-Response:
-
-```json
-{
-  "id": "sub1",
-  "ok": true,
-  "result": { "subscribed": ["memory.updated", "memory.deleted"] }
-}
-```
-
-#### `unsubscribe`
-
-Remove event subscriptions for this connection.
-
-```json
-{
-  "id": "unsub1",
-  "action": "unsubscribe",
-  "params": { "events": ["memory.deleted"] }
-}
-```
-
-### Built-in events
-
-| Event type | Emitted when | Data |
-|-----------|-------------|------|
-| `agent.connected` | A new socket client connects | `{"agent_id": <conn_id>}` |
-| `agent.disconnected` | A socket client disconnects | `{"agent_id": <conn_id>}` |
-| `memory.updated` | A memory is created or modified | *(varies)* |
-
-Additional event types may be emitted by other Nomen components via the shared broadcast channel.
-
-### Client library
-
-The `nomen-wire` crate provides `NomenClient` (single connection) and `ReconnectingClient` (auto-reconnect) for Rust consumers:
-
-```rust
-use nomen_wire::NomenClient;
-
-let client = NomenClient::connect("/run/user/1000/nomen/nomen.sock").await?;
-
-// Search memories
-let results = client.request("memory.search", json!({"query": "test"})).await?;
-
-// Subscribe to events
-client.request("subscribe", json!({"events": ["*"]})).await?;
-let mut events = client.events();
-while let Ok(event) = events.recv().await {
-    println!("{}: {:?}", event.event, event.data);
-}
-```
-
-### Connection lifecycle
-
-1. Agent connects to Unix socket
-2. Server assigns a connection ID and emits `agent.connected`
-3. Agent sends Request frames, receives Response frames
-4. Agent optionally subscribes to push events
-5. On disconnect, server cleans up subscriptions and emits `agent.disconnected`
-
----
-
 ## ContextVM transport mapping
 
 ContextVM is one of several transport adapters. It wraps the canonical API over Nostr:
@@ -1154,7 +710,6 @@ Each canonical operation maps to an MCP tool with the same name and argument sch
 | `memory.search` | `memory_search` | Underscore for MCP compat |
 | `memory.put` | `memory_put` | |
 | `memory.get` | `memory_get` | |
-| `memory.get_batch` | `memory_get_batch` | Batch fetch by d_tags |
 | `memory.list` | `memory_list` | |
 | `memory.delete` | `memory_delete` | |
 | `message.ingest` | `message_ingest` | |
@@ -1164,8 +719,6 @@ Each canonical operation maps to an MCP tool with the same name and argument sch
 | `entity.list` | `entity_list` | |
 | `entity.relationships` | `entity_relationships` | |
 | `memory.consolidate` | `memory_consolidate` | |
-| `memory.consolidate_prepare` | `memory_consolidate_prepare` | Two-phase: prepare batches |
-| `memory.consolidate_commit` | `memory_consolidate_commit` | Two-phase: commit extractions |
 | `memory.cluster` | `memory_cluster` | |
 | `memory.sync` | `memory_sync` | |
 | `memory.embed` | `memory_embed` | |
@@ -1175,9 +728,6 @@ Each canonical operation maps to an MCP tool with the same name and argument sch
 | `group.create` | `group_create` | |
 | `group.add_member` | `group_add_member` | |
 | `group.remove_member` | `group_remove_member` | |
-| `room.resolve` | `room_resolve` | Provider → d-tag lookup |
-| `room.bind` | `room_bind` | Bind provider ID to d-tag |
-| `room.unbind` | `room_unbind` | Unbind provider ID from d-tag |
 
 MCP tools use the same parameter names and types. The MCP response wraps the structured result as MCP content text (JSON-serialized).
 
@@ -1193,12 +743,10 @@ src/
 │   ├── errors.rs       — structured error model
 │   ├── dispatch.rs     — action name → handler routing
 │   └── operations/
-│       ├── memory.rs   — search, put, get, get_batch, list, delete
-│       ├── message.rs  — ingest, list, context, send
-│       ├── maintenance.rs — consolidate, prepare, commit, cluster, sync, embed, prune
-│       ├── group.rs    — list, members, create, add/remove member
-│       ├── room.rs     — resolve, bind, unbind
-│       └── entity.rs   — list, relationships
+│       ├── memory.rs   — search, put, get, list, delete
+│       ├── message.rs  — ingest, list, context
+│       ├── maintenance.rs — consolidate, cluster, sync, embed, prune
+│       └── group.rs    — list, members, create, add/remove member
 ├── http.rs             — HTTP transport (calls api::dispatch)
 ├── mcp.rs              — MCP transport (calls api::dispatch)
 ├── cvm.rs              — ContextVM transport (calls api::dispatch)

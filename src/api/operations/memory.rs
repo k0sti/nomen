@@ -84,8 +84,8 @@ pub async fn search(
         .map(|r| {
             json!({
                 "topic": r.topic,
-                "detail": r.detail,
-                "visibility": r.visibility,
+                "content": r.content,
+                "visibility": r.tier,
                 "scope": "",
                 "match_type": format!("{:?}", r.match_type).to_lowercase(),
                 "graph_edge": r.graph_edge,
@@ -107,40 +107,34 @@ pub async fn put(nomen: &Nomen, default_channel: &str, params: &Value) -> Result
         .and_then(|v| v.as_str())
         .unwrap_or("")
         .to_string();
-    // Accept "detail" or "content" (backward compat with OpenClaw) for body text
-    let detail = params
-        .get("detail")
-        .or_else(|| params.get("content"))
+    let content = params
+        .get("content")
+        .or_else(|| params.get("detail"))
         .and_then(|v| v.as_str())
         .unwrap_or("")
         .to_string();
 
-    if topic.is_empty() || detail.is_empty() {
-        return Err(ApiError::invalid_params("topic and detail are required"));
+    if topic.is_empty() || content.is_empty() {
+        return Err(ApiError::invalid_params("topic and content are required"));
     }
 
     let (vis, scope) = resolve_visibility_scope(params, nomen, default_channel)?;
     let visibility = vis.unwrap_or(Visibility::Public);
     let scope_str = scope.unwrap_or_default();
+    let tier = visibility.to_tier(&scope_str);
+
+    let importance = params.get("importance").and_then(|v| v.as_i64()).map(|v| v as i32);
 
     let mem = crate::NewMemory {
         topic: topic.clone(),
-        detail,
-        visibility: visibility.as_str().to_string(),
-        scope: scope_str,
+        content,
+        tier,
+        importance,
         source: Some("api/v2".to_string()),
         model: Some("api/v2".to_string()),
     };
 
     let d_tag = nomen.store(mem).await.map_err(ApiError::from_anyhow)?;
-
-    // Optional: set pinned state if provided
-    let pinned = params.get("pinned").and_then(|v| v.as_bool());
-    if let Some(pin) = pinned {
-        crate::db::set_pinned(&nomen.db(), &d_tag, pin)
-            .await
-            .map_err(ApiError::from_anyhow)?;
-    }
 
     // Check what version we ended up with
     let version = if let Ok(Some(record)) = nomen.get_by_raw_topic(&topic).await {
@@ -153,7 +147,6 @@ pub async fn put(nomen: &Nomen, default_channel: &str, params: &Value) -> Result
         "d_tag": d_tag,
         "topic": topic,
         "version": version,
-        "pinned": pinned,
     }))
 }
 
@@ -212,22 +205,12 @@ fn record_to_value(record: Option<crate::db::MemoryRecord>) -> Value {
     match record {
         Some(m) => json!({
             "topic": m.topic,
-            "detail": m.detail.unwrap_or_else(|| m.search_text.clone()),
-            "visibility": m.visibility,
+            "content": m.content,
+            "visibility": m.tier,
             "scope": m.scope,
             "version": m.version,
-            "source": m.source,
-            "model": m.model,
-            "nostr_id": m.nostr_id,
             "created_at": m.created_at,
-            "updated_at": m.updated_at,
             "d_tag": m.d_tag,
-            "importance": m.importance,
-            "access_count": m.access_count,
-            "consolidated_from": m.consolidated_from,
-            "consolidated_at": m.consolidated_at,
-            "pinned": m.pinned,
-            "embedded": m.embedded,
         }),
         None => Value::Null,
     }
@@ -242,14 +225,12 @@ pub async fn list(nomen: &Nomen, default_channel: &str, params: &Value) -> Resul
 
     let (vis, _scope) = resolve_visibility_scope(params, nomen, default_channel)?;
     let tier = vis.as_ref().map(|v| v.as_str().to_string());
-    let pinned = params.get("pinned").and_then(|v| v.as_bool());
 
     let report = nomen
         .list(crate::ListOptions {
             tier,
             limit,
             include_stats,
-            pinned,
         })
         .await
         .map_err(ApiError::from_anyhow)?;
@@ -260,22 +241,12 @@ pub async fn list(nomen: &Nomen, default_channel: &str, params: &Value) -> Resul
         .map(|m| {
             json!({
                 "topic": m.topic,
-                "detail": m.detail.as_ref().unwrap_or(&m.search_text),
-                "visibility": m.visibility,
+                "content": m.content,
+                "visibility": m.tier,
                 "scope": m.scope,
                 "version": m.version,
-                "source": m.source,
-                "model": m.model,
-                "nostr_id": m.nostr_id,
                 "created_at": m.created_at,
-                "updated_at": m.updated_at,
                 "d_tag": m.d_tag,
-                "importance": m.importance,
-                "access_count": m.access_count,
-                "consolidated_from": m.consolidated_from,
-                "consolidated_at": m.consolidated_at,
-                "pinned": m.pinned,
-                "embedded": m.embedded,
             })
         })
         .collect();
@@ -286,44 +257,11 @@ pub async fn list(nomen: &Nomen, default_channel: &str, params: &Value) -> Resul
     });
 
     if let Some(ref stats) = report.stats {
-        let mut stats_json = json!({
+        result["stats"] = json!({
             "total": stats.total,
             "named": stats.named,
             "pending": stats.pending,
         });
-        if let Some(ref detailed) = stats.detailed {
-            let by_tier: Vec<Value> = detailed
-                .memories_by_tier
-                .iter()
-                .map(|(tier, count)| json!({"tier": tier, "count": count}))
-                .collect();
-            stats_json["by_tier"] = json!(by_tier);
-
-            let channels: Vec<Value> = detailed
-                .channels
-                .iter()
-                .map(|ch| {
-                    let mut obj = json!({
-                        "channel": ch.channel,
-                        "unconsolidated": ch.unconsolidated,
-                        "consolidated": ch.consolidated,
-                    });
-                    if let Some(ref oldest) = ch.oldest_unconsolidated {
-                        obj["oldest_unconsolidated"] = json!(oldest);
-                    }
-                    if let Some(ref newest) = ch.newest_unconsolidated {
-                        obj["newest_unconsolidated"] = json!(newest);
-                    }
-                    obj
-                })
-                .collect();
-            stats_json["channels"] = json!(channels);
-
-            if let Some(ref last) = detailed.last_consolidation {
-                stats_json["last_consolidation"] = json!(last);
-            }
-        }
-        result["stats"] = stats_json;
     }
 
     Ok(result)
@@ -374,94 +312,4 @@ pub async fn delete(
         "d_tag": effective_topic,
         "relay_deleted": nomen.relay().is_some(),
     }))
-}
-
-pub async fn get_batch(
-    nomen: &Nomen,
-    _default_channel: &str,
-    params: &Value,
-) -> Result<Value, ApiError> {
-    let d_tags: Vec<String> = params
-        .get("d_tags")
-        .and_then(|v| v.as_array())
-        .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
-        .unwrap_or_default();
-
-    if d_tags.is_empty() {
-        return Err(ApiError::invalid_params("d_tags array is required and must not be empty"));
-    }
-
-    let records = nomen
-        .get_batch(&d_tags)
-        .await
-        .map_err(ApiError::from_anyhow)?;
-
-    let results: Vec<Value> = records
-        .iter()
-        .map(|m| {
-            json!({
-                "topic": m.topic,
-                "detail": m.detail.as_ref().unwrap_or(&m.search_text),
-                "visibility": m.visibility,
-                "scope": m.scope,
-                "version": m.version,
-                "created_at": m.created_at,
-                "d_tag": m.d_tag,
-            })
-        })
-        .collect();
-
-    let mut by_dtag = serde_json::Map::new();
-    for m in &records {
-        if let Some(ref dt) = m.d_tag {
-            by_dtag.insert(
-                dt.clone(),
-                json!({
-                    "topic": m.topic,
-                    "detail": m.detail.as_ref().unwrap_or(&m.search_text),
-                    "visibility": m.visibility,
-                    "scope": m.scope,
-                    "version": m.version,
-                    "created_at": m.created_at,
-                    "d_tag": m.d_tag,
-                }),
-            );
-        }
-    }
-
-    Ok(json!({
-        "count": results.len(),
-        "results": results,
-        "by_d_tag": Value::Object(by_dtag),
-    }))
-}
-
-pub async fn pin(
-    nomen: &Nomen,
-    _default_channel: &str,
-    params: &Value,
-) -> Result<Value, ApiError> {
-    let d_tag = params.get("d_tag").and_then(|v| v.as_str()).unwrap_or("");
-    if d_tag.is_empty() {
-        return Err(ApiError::invalid_params("d_tag is required"));
-    }
-    crate::db::set_pinned(&nomen.db(), d_tag, true)
-        .await
-        .map_err(ApiError::from_anyhow)?;
-    Ok(json!({ "pinned": true, "d_tag": d_tag }))
-}
-
-pub async fn unpin(
-    nomen: &Nomen,
-    _default_channel: &str,
-    params: &Value,
-) -> Result<Value, ApiError> {
-    let d_tag = params.get("d_tag").and_then(|v| v.as_str()).unwrap_or("");
-    if d_tag.is_empty() {
-        return Err(ApiError::invalid_params("d_tag is required"));
-    }
-    crate::db::set_pinned(&nomen.db(), d_tag, false)
-        .await
-        .map_err(ApiError::from_anyhow)?;
-    Ok(json!({ "pinned": false, "d_tag": d_tag }))
 }

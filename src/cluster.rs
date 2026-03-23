@@ -43,9 +43,7 @@ impl Default for ClusterConfig {
 /// A synthesized cluster summary from the LLM.
 #[derive(Debug, Clone)]
 pub struct ClusterSynthesis {
-    pub summary: String,
-    pub detail: String,
-    pub confidence: f64,
+    pub content: String,
 }
 
 /// Trait for LLM-powered cluster synthesis.
@@ -62,9 +60,7 @@ pub struct NoopClusterLlmProvider;
 impl ClusterLlmProvider for NoopClusterLlmProvider {
     async fn synthesize_cluster(&self, prefix: &str, context: &str) -> Result<ClusterSynthesis> {
         Ok(ClusterSynthesis {
-            summary: format!("Cluster summary for {prefix}"),
-            detail: context.to_string(),
-            confidence: 0.6,
+            content: format!("Cluster summary for {prefix}\n\n{context}"),
         })
     }
 }
@@ -128,14 +124,7 @@ struct ChatMessage {
 
 #[derive(Deserialize)]
 struct LlmClusterOutput {
-    summary: String,
-    detail: String,
-    #[serde(default = "default_confidence")]
-    confidence: f64,
-}
-
-fn default_confidence() -> f64 {
-    0.7
+    content: String,
 }
 
 #[async_trait]
@@ -144,12 +133,9 @@ impl ClusterLlmProvider for OpenAiClusterLlmProvider {
         let system_prompt = "You are a memory synthesis agent. Given a collection of related memories \
 grouped under the same topic namespace, produce a coherent, comprehensive summary that captures \
 the key information across all of them. \
-Return JSON with this exact structure: {\"summary\": \"one-line overview\", \"detail\": \"comprehensive synthesis\", \
-\"confidence\": 0.8}. \
-The summary should be a single clear sentence. \
-The detail should weave together all the information into a coherent narrative, \
-resolving any contradictions and noting important relationships. \
-Set confidence 0.5-1.0 based on how consistent and complete the source memories are.";
+Return JSON with this exact structure: {\"content\": \"comprehensive synthesis as plain text\"}. \
+The content should weave together all the information into a coherent narrative, \
+resolving any contradictions and noting important relationships.";
 
         let user_prompt = format!(
             "Synthesize these related memories under the namespace \"{prefix}\":\n\n{context}\n\n\
@@ -192,16 +178,12 @@ Set confidence 0.5-1.0 based on how consistent and complete the source memories 
         let output: LlmClusterOutput = serde_json::from_str(content).unwrap_or_else(|e| {
             warn!("Failed to parse LLM cluster response as JSON: {e}");
             LlmClusterOutput {
-                summary: format!("Cluster summary for {prefix}"),
-                detail: context.to_string(),
-                confidence: 0.6,
+                content: format!("Cluster summary for {prefix}\n\n{context}"),
             }
         });
 
         Ok(ClusterSynthesis {
-            summary: output.summary,
-            detail: output.detail,
-            confidence: output.confidence.clamp(0.0, 1.0),
+            content: output.content,
         })
     }
 }
@@ -236,8 +218,9 @@ pub struct ClusterDetail {
 struct ClusterableMemory {
     topic: String,
     d_tag: String,
+    summary: String,
     detail: String,
-    visibility: String,
+    tier: String,
 }
 
 /// Group memories by their topic namespace prefix at the given depth.
@@ -267,19 +250,24 @@ fn group_by_namespace(
 ///
 /// Uses the most restrictive tier among members:
 /// internal > personal > group > public
-fn derive_cluster_visibility(members: &[&ClusterableMemory]) -> String {
-    let has_internal = members.iter().any(|m| m.visibility == "internal");
+fn derive_cluster_tier(members: &[&ClusterableMemory]) -> String {
+    let has_internal = members.iter().any(|m| m.tier == "internal");
     let has_personal = members
         .iter()
-        .any(|m| m.visibility == "personal" || m.visibility == "private");
-    let has_group = members.iter().any(|m| m.visibility == "group");
+        .any(|m| m.tier == "personal" || m.tier == "private");
+    let has_group = members.iter().any(|m| m.tier.starts_with("group"));
 
     if has_internal {
         "internal".to_string()
     } else if has_personal {
         "personal".to_string()
     } else if has_group {
-        "group".to_string()
+        // Use the first group tier found
+        members
+            .iter()
+            .find(|m| m.tier.starts_with("group"))
+            .map(|m| m.tier.clone())
+            .unwrap_or_else(|| "group".to_string())
     } else {
         "public".to_string()
     }
@@ -306,7 +294,7 @@ pub async fn run_cluster_fusion(
     };
 
     // 1. Query all named memories
-    let all_memories = db::list_memories(db, None, 10000, None).await?;
+    let all_memories = db::list_memories(db, None, 10000).await?;
     report.memories_scanned = all_memories.len();
 
     if all_memories.is_empty() {
@@ -329,8 +317,9 @@ pub async fn run_cluster_fusion(
             Some(ClusterableMemory {
                 topic: m.topic.clone(),
                 d_tag: m.d_tag.unwrap_or_default(),
-                detail: m.detail.unwrap_or_default(),
-                visibility: m.visibility.clone(),
+                summary: m.summary.unwrap_or_default(),
+                detail: m.content,
+                tier: m.tier,
             })
         })
         .collect();
@@ -382,8 +371,7 @@ pub async fn run_cluster_fusion(
                 } else {
                     m.detail.clone()
                 };
-                let first_line = m.detail.lines().next().unwrap_or("");
-                format!("- [{}] {}\n  {}", m.topic, first_line, detail_preview)
+                format!("- [{}] {}\n  {}", m.topic, m.summary, detail_preview)
             })
             .collect::<Vec<_>>()
             .join("\n");
@@ -401,17 +389,17 @@ pub async fn run_cluster_fusion(
             }
         };
 
-        // Determine visibility from members
-        let tier = derive_cluster_visibility(members);
+        // Determine tier from members
+        let tier = derive_cluster_tier(members);
         let cluster_topic = format!("cluster/{prefix}");
         let author_hex = config.author_pubkey.as_deref().unwrap_or("");
 
         // Store as cluster memory using store_direct
         let mem = crate::NewMemory {
             topic: cluster_topic.clone(),
-            detail: format!("{}\n\n{}", synthesis.summary, synthesis.detail),
-            visibility: tier,
-            scope: String::new(),
+            content: synthesis.content,
+            tier,
+            importance: None,
             source: Some("cluster_fusion".to_string()),
             model: Some("nomen/cluster".to_string()),
         };
@@ -482,32 +470,37 @@ mod tests {
             ClusterableMemory {
                 topic: "user/k0/preferences".to_string(),
                 d_tag: "d1".to_string(),
-                detail: "prefs detail".to_string(),
-                visibility: "public".to_string(),
+                summary: "prefs".to_string(),
+                detail: "detail".to_string(),
+                tier: "public".to_string(),
             },
             ClusterableMemory {
                 topic: "user/k0/timezone".to_string(),
                 d_tag: "d2".to_string(),
-                detail: "tz detail".to_string(),
-                visibility: "public".to_string(),
+                summary: "tz".to_string(),
+                detail: "detail".to_string(),
+                tier: "public".to_string(),
             },
             ClusterableMemory {
                 topic: "user/k0/projects".to_string(),
                 d_tag: "d3".to_string(),
-                detail: "projects detail".to_string(),
-                visibility: "public".to_string(),
+                summary: "projects".to_string(),
+                detail: "detail".to_string(),
+                tier: "public".to_string(),
             },
             ClusterableMemory {
                 topic: "project/nomen/architecture".to_string(),
                 d_tag: "d4".to_string(),
-                detail: "arch detail".to_string(),
-                visibility: "public".to_string(),
+                summary: "arch".to_string(),
+                detail: "detail".to_string(),
+                tier: "public".to_string(),
             },
             ClusterableMemory {
                 topic: "shallow".to_string(),
                 d_tag: "d5".to_string(),
-                detail: "shallow detail".to_string(),
-                visibility: "public".to_string(),
+                summary: "shallow".to_string(),
+                detail: "detail".to_string(),
+                tier: "public".to_string(),
             },
         ];
 
@@ -525,20 +518,23 @@ mod tests {
             ClusterableMemory {
                 topic: "user/k0/preferences".to_string(),
                 d_tag: "d1".to_string(),
-                detail: "prefs detail".to_string(),
-                visibility: "public".to_string(),
+                summary: "prefs".to_string(),
+                detail: "detail".to_string(),
+                tier: "public".to_string(),
             },
             ClusterableMemory {
                 topic: "user/k0/timezone".to_string(),
                 d_tag: "d2".to_string(),
-                detail: "tz detail".to_string(),
-                visibility: "public".to_string(),
+                summary: "tz".to_string(),
+                detail: "detail".to_string(),
+                tier: "public".to_string(),
             },
             ClusterableMemory {
                 topic: "project/nomen/architecture".to_string(),
                 d_tag: "d3".to_string(),
-                detail: "arch detail".to_string(),
-                visibility: "public".to_string(),
+                summary: "arch".to_string(),
+                detail: "detail".to_string(),
+                tier: "public".to_string(),
             },
         ];
 
@@ -549,29 +545,30 @@ mod tests {
     }
 
     #[test]
-    fn test_derive_cluster_visibility() {
+    fn test_derive_cluster_tier() {
         let public = ClusterableMemory {
             topic: "t".to_string(),
             d_tag: "d".to_string(),
+            summary: "s".to_string(),
             detail: "d".to_string(),
-            visibility: "public".to_string(),
+            tier: "public".to_string(),
         };
         let personal = ClusterableMemory {
-            visibility: "personal".to_string(),
+            tier: "personal".to_string(),
             ..public.clone()
         };
         let internal = ClusterableMemory {
-            visibility: "internal".to_string(),
+            tier: "internal".to_string(),
             ..public.clone()
         };
 
         // All public → public
-        assert_eq!(derive_cluster_visibility(&[&public, &public]), "public");
+        assert_eq!(derive_cluster_tier(&[&public, &public]), "public");
         // Mixed with personal → personal
-        assert_eq!(derive_cluster_visibility(&[&public, &personal]), "personal");
+        assert_eq!(derive_cluster_tier(&[&public, &personal]), "personal");
         // Mixed with internal → internal (most restrictive)
         assert_eq!(
-            derive_cluster_visibility(&[&public, &personal, &internal]),
+            derive_cluster_tier(&[&public, &personal, &internal]),
             "internal"
         );
     }
