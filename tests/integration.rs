@@ -21,20 +21,14 @@ async fn test_store_and_search() -> Result<()> {
     // Store a memory
     let parsed = nomen::memory::ParsedMemory {
         tier: "public".to_string(),
+        visibility: "public".to_string(),
         topic: "rust/error-handling".to_string(),
-        version: "1".to_string(),
-        confidence: "0.92".to_string(),
         model: "test".to_string(),
-        summary: "Use anyhow for application errors".to_string(),
+        content: "Use anyhow for application errors\n\nanyhow provides easy error context chaining".to_string(),
         created_at: nostr_sdk::Timestamp::now(),
         d_tag: "snow:memory:rust/error-handling".to_string(),
         source: "test".to_string(),
-        content_raw: serde_json::json!({
-            "summary": "Use anyhow for application errors",
-            "detail": "anyhow provides easy error context chaining"
-        })
-        .to_string(),
-        detail: "anyhow provides easy error context chaining".to_string(),
+        importance: None,
     };
 
     nomen::db::store_memory_direct(&db, &parsed, "test-event-1").await?;

@@ -337,12 +337,8 @@ fn build_record(parsed: &ParsedMemory, nostr_id: &str) -> MemoryRecord {
 
     let scope = extract_scope(&parsed.d_tag);
 
-    // Store plain text in content for FTS indexing.
-    // Include topic so topic words are searchable too.
-    let searchable_content = format!("{} {}", parsed.topic, parsed.content);
-
     MemoryRecord {
-        content: searchable_content,
+        content: parsed.content.clone(),
         summary: None,
         embedding: None,
         tier: crate::memory::base_tier(&parsed.tier).to_string(),

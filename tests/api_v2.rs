@@ -307,7 +307,7 @@ mod operations_tests {
         let put_resp = nomen::api::dispatch(
             &nomen, "test",
             "memory.put",
-            &json!({"topic": "apiv2-test/roundtrip", "summary": "Test roundtrip memory", "detail": "Detailed info"}),
+            &json!({"topic": "apiv2-test/roundtrip", "content": "Test roundtrip memory"}),
         ).await;
         assert!(put_resp.ok, "put failed: {:?}", put_resp.error);
         let result = put_resp.result.unwrap();
@@ -325,7 +325,7 @@ mod operations_tests {
         assert!(get_resp.ok, "get failed: {:?}", get_resp.error);
         let mem = get_resp.result.unwrap();
         assert_eq!(mem["topic"], "apiv2-test/roundtrip");
-        assert_eq!(mem["summary"], "Test roundtrip memory");
+        assert_eq!(mem["content"], "Test roundtrip memory");
 
         // Cleanup
         nomen::api::dispatch(
@@ -344,7 +344,7 @@ mod operations_tests {
         nomen::api::dispatch(
             &nomen, "test",
             "memory.put",
-            &json!({"topic": "apiv2-test/search-target", "summary": "Unique xylophone melody searching"}),
+            &json!({"topic": "apiv2-test/search-target", "content": "Unique xylophone melody searching"}),
         ).await;
 
         let search_resp = nomen::api::dispatch(
@@ -380,7 +380,7 @@ mod operations_tests {
             &nomen,
             "test",
             "memory.put",
-            &json!({"topic": "apiv2-test/list-item", "summary": "A listable memory"}),
+            &json!({"topic": "apiv2-test/list-item", "content": "A listable memory"}),
         )
         .await;
 
@@ -410,7 +410,7 @@ mod operations_tests {
             &nomen,
             "test",
             "memory.put",
-            &json!({"topic": "apiv2-test/delete-me", "summary": "Will be deleted"}),
+            &json!({"topic": "apiv2-test/delete-me", "content": "Will be deleted"}),
         )
         .await;
 
