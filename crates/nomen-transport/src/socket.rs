@@ -151,11 +151,24 @@ impl SocketServer {
                                             error!("Failed to send response to conn {conn_id}: {e}");
                                             break;
                                         }
-                                    } else {
-                                        let backend: &dyn NomenBackend = match &conn_backend {
-                                            Some(b) => &**b,
-                                            None => &*state.nomen,
+                                    } else if conn_backend.is_none() {
+                                        // Require authentication before any other action
+                                        let response = nomen_wire::Response {
+                                            id: req.id,
+                                            ok: false,
+                                            result: None,
+                                            error: Some(nomen_wire::ErrorBody {
+                                                code: "auth_required".to_string(),
+                                                message: "Authentication required. Send identity.auth first.".to_string(),
+                                            }),
+                                            meta: serde_json::json!({"version": "v2"}),
                                         };
+                                        if let Err(e) = sink.send(Frame::Response(response)).await {
+                                            error!("Failed to send response to conn {conn_id}: {e}");
+                                            break;
+                                        }
+                                    } else {
+                                        let backend: &dyn NomenBackend = &**conn_backend.as_ref().unwrap();
                                         let response = handle_request_with_backend(backend, &state, conn_id, req).await;
                                         if let Err(e) = sink.send(Frame::Response(response)).await {
                                             error!("Failed to send response to conn {conn_id}: {e}");

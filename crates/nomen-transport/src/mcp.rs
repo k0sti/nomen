@@ -437,6 +437,8 @@ pub struct McpServer {
     /// The active backend — either base or a SessionBackend with per-session signer.
     active_nomen: Arc<dyn NomenBackend>,
     pub default_channel: String,
+    /// Whether the client has authenticated via identity.auth.
+    authenticated: bool,
 }
 
 impl McpServer {
@@ -445,6 +447,7 @@ impl McpServer {
             base_nomen: nomen.clone(),
             active_nomen: nomen,
             default_channel,
+            authenticated: false,
         }
     }
 
@@ -492,6 +495,19 @@ impl McpServer {
         // Intercept identity.auth to set up per-session signer
         if action == "identity.auth" {
             return self.handle_identity_auth(id, &arguments).await;
+        }
+
+        // Require authentication before any other action
+        if !self.authenticated {
+            return JsonRpcResponse::success(
+                id,
+                json!({
+                    "content": [{
+                        "type": "text",
+                        "text": "{\"ok\":false,\"error\":{\"code\":\"auth_required\",\"message\":\"Authentication required. Call identity_auth first.\"}}"
+                    }]
+                }),
+            );
         }
 
         let api_resp =
@@ -549,6 +565,7 @@ impl McpServer {
                     self.base_nomen.clone(),
                     signer,
                 ));
+                self.authenticated = true;
                 info!(pubkey = %pubkey_hex, "MCP: session identity set");
 
                 let result_json =

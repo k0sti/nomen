@@ -112,10 +112,25 @@ async fn api_dispatch(
 ) -> impl IntoResponse {
     let request_id = req.meta.as_ref().and_then(|m| m.request_id.clone());
 
-    // Check for per-request identity via Authorization header
+    // Require per-request identity via Authorization header
     let backend: Arc<dyn NomenBackend> = match extract_session_backend(&state, &headers) {
         Some(sb) => Arc::new(sb),
-        None => state.nomen.clone(),
+        None => {
+            // Allow health/stats endpoints and identity.auth without auth
+            if req.action == "identity.auth" {
+                // identity.auth validates nsec and returns pubkey — doesn't need a session
+                let resp = nomen_api::dispatch(
+                    &*state.nomen, &state.default_channel, &req.action, &req.params
+                ).await.with_request_id(request_id);
+                return Json(serde_json::to_value(&resp).unwrap_or_default());
+            }
+            let resp = nomen_core::api::types::ApiResponse::error(
+                nomen_core::api::errors::ApiError::unauthorized(
+                    "Authentication required. Provide Authorization: Nostr nsec1... header"
+                ),
+            ).with_request_id(request_id);
+            return Json(serde_json::to_value(&resp).unwrap_or_default());
+        }
     };
 
     let resp =
