@@ -1,7 +1,5 @@
 //! Search types: options, results, match types.
 
-use nostr_sdk::Timestamp;
-
 /// How a search result was matched.
 #[derive(Debug, Clone, Copy)]
 pub enum MatchType {
@@ -56,7 +54,7 @@ pub struct SearchResult {
     pub tier: String,
     pub topic: String,
     pub content: String,
-    pub created_at: Timestamp,
+    pub created_at: u64,
     pub score: f64,
     pub match_type: MatchType,
     /// The d_tag for access tracking.

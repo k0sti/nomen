@@ -4,6 +4,7 @@
 //! and parsing Nostr events into Nomen memory types.
 
 pub mod events;
+pub mod send;
 pub mod signer;
 
 use std::sync::Arc;

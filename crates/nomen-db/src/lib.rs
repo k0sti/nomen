@@ -19,6 +19,8 @@ pub mod entity;
 pub mod embed;
 pub mod graph;
 pub mod meta;
+pub mod search_engine;
+pub mod groups;
 
 // ── Re-exports ──────────────────────────────────────────────────────
 // All public items re-exported so callers can use `db::function_name()`.
@@ -43,6 +45,7 @@ pub use message::{
     ConsolidationSessionRecord, create_consolidation_session,
     get_consolidation_session, update_consolidation_session_status,
     cleanup_expired_consolidation_sessions,
+    ingest_message, get_messages,
 };
 
 pub use search::{
@@ -63,6 +66,12 @@ pub use graph::{
 };
 
 pub use meta::{get_meta, set_meta};
+
+pub use search_engine::search;
+
+pub use groups::{
+    GroupStoreExt, create_group, list_groups, get_members, add_member, remove_member,
+};
 
 // ── Shared deserializer helpers ─────────────────────────────────────
 

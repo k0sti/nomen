@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 use surrealdb::engine::local::Db;
 use surrealdb::types::{RecordId, SurrealValue};
 use surrealdb::Surreal;
+use tracing::debug;
 
 use nomen_core::ingest::{MessageQuery, RawMessage};
 use nomen_core::session::ResolvedSession;
@@ -428,4 +429,17 @@ pub async fn cleanup_expired_consolidation_sessions(db: &Surreal<Db>) -> Result<
             .check()?;
     }
     Ok(count)
+}
+
+// ── High-level wrappers (moved from root crate's ingest.rs) ─────────
+
+/// Ingest a raw message into SurrealDB.
+pub async fn ingest_message(db: &Surreal<Db>, msg: &RawMessage) -> Result<String> {
+    debug!(source = %msg.source, sender = %msg.sender, "Ingesting message");
+    store_raw_message(db, msg).await
+}
+
+/// Query raw messages with filters.
+pub async fn get_messages(db: &Surreal<Db>, opts: &MessageQuery) -> Result<Vec<crate::RawMessageRecord>> {
+    query_raw_messages(db, opts).await
 }

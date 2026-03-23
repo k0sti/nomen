@@ -2828,7 +2828,10 @@ dependencies = [
  "anyhow",
  "async-trait",
  "nomen-core",
+ "nomen-db",
  "nostr-sdk",
+ "serde_json",
+ "surrealdb",
  "tokio",
  "tracing",
 ]

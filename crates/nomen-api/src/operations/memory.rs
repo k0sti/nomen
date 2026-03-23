@@ -95,7 +95,7 @@ pub async fn search(
                 "match_type": format!("{:?}", r.match_type).to_lowercase(),
                 "graph_edge": r.graph_edge,
                 "contradicts": r.contradicts,
-                "created_at": r.created_at.to_human_datetime(),
+                "created_at": r.created_at,
             })
         })
         .collect();
