@@ -11,6 +11,7 @@ type NomenConfig = {
   apiUrl: string;
   visibility: string;
   timeoutMs: number;
+  nsec?: string;
 };
 
 const DEFAULT_CONFIG: NomenConfig = {
@@ -32,6 +33,7 @@ async function nomenRequest(
   action: string,
   params: Record<string, unknown>,
   timeoutMs: number,
+  nsec?: string,
 ): Promise<NomenResponse> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -39,7 +41,10 @@ async function nomenRequest(
   try {
     const res = await fetch(apiUrl, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        ...(nsec ? { "Authorization": `Nostr ${nsec}` } : {}),
+      },
       body: JSON.stringify({ action, params }),
       signal: controller.signal,
     });
@@ -114,6 +119,7 @@ const memoryNomenPlugin = {
       apiUrl: rawConfig.apiUrl ?? DEFAULT_CONFIG.apiUrl,
       visibility: rawConfig.visibility ?? DEFAULT_CONFIG.visibility,
       timeoutMs: rawConfig.timeoutMs ?? DEFAULT_CONFIG.timeoutMs,
+      nsec: rawConfig.nsec ?? undefined,
     };
 
     api.logger.info(
@@ -175,6 +181,7 @@ const memoryNomenPlugin = {
             "memory.search",
             { query, limit: maxResults },
             cfg.timeoutMs,
+            cfg.nsec,
           );
 
           if (!resp.ok) {
@@ -230,6 +237,7 @@ const memoryNomenPlugin = {
             "memory.get",
             { topic },
             cfg.timeoutMs,
+            cfg.nsec,
           );
 
           if (resp.ok && resp.result && (resp.result as any).topic != null) {
@@ -248,6 +256,7 @@ const memoryNomenPlugin = {
             "memory.get",
             { d_tag: topic },
             cfg.timeoutMs,
+            cfg.nsec,
           );
 
           if (resp2.ok && resp2.result && (resp2.result as any).topic != null) {
@@ -324,6 +333,7 @@ const memoryNomenPlugin = {
               ttl_minutes: params?.ttl_minutes ?? 60,
             },
             cfg.timeoutMs,
+            cfg.nsec,
           );
 
           if (!resp.ok) {
@@ -387,6 +397,7 @@ const memoryNomenPlugin = {
               extractions: params.extractions,
             },
             cfg.timeoutMs,
+            cfg.nsec,
           );
 
           if (!resp.ok) {
@@ -423,6 +434,7 @@ const memoryNomenPlugin = {
                 : ctx?.channelId || "unknown",
             },
             cfg.timeoutMs,
+            cfg.nsec,
           );
         } catch (err) {
           api.logger.warn(
@@ -454,6 +466,7 @@ const memoryNomenPlugin = {
                 : ctx?.channelId || "unknown",
             },
             cfg.timeoutMs,
+            cfg.nsec,
           );
         } catch (err) {
           api.logger.warn(
@@ -480,6 +493,7 @@ const memoryNomenPlugin = {
               "memory.list",
               {},
               cfg.timeoutMs,
+              cfg.nsec,
             );
             if (!resp.ok) {
               console.error("Nomen unreachable:", resp.error?.message);
@@ -502,6 +516,7 @@ const memoryNomenPlugin = {
               "memory.search",
               { query, limit: parseInt(opts.limit) },
               cfg.timeoutMs,
+              cfg.nsec,
             );
             if (!resp.ok) {
               console.error("Search failed:", resp.error?.message);

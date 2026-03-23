@@ -74,7 +74,7 @@ pub async fn cmd_list_local(backend: &Backend, nomen: Option<&Nomen>, ephemeral:
     }
 
     if ephemeral {
-        if matches!(backend, Backend::Http(_)) {
+        if matches!(backend, Backend::Http(..)) {
             bail!("This command requires direct DB access. Stop the nomen service first.");
         }
         let db_handle = db::init_db().await?;

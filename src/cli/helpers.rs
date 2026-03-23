@@ -104,7 +104,7 @@ pub async fn build_nomen(config: &Config) -> Result<Nomen> {
 // ── Backend detection ────────────────────────────────────────────────
 
 pub enum Backend {
-    Http(String), // dispatch base URL
+    Http(String, Option<String>), // dispatch base URL, optional nsec
     Direct,
 }
 
@@ -143,7 +143,8 @@ pub async fn detect_backend(config: &Config) -> Backend {
     if let Some(base_url) = resolve_http_url(config) {
         if check_service(&base_url).await {
             debug!("Service detected at {base_url}, using HTTP backend");
-            return Backend::Http(base_url);
+            let nsec = config.all_nsecs().into_iter().next();
+            return Backend::Http(base_url, nsec);
         }
     }
     Backend::Direct
@@ -154,12 +155,15 @@ pub async fn dispatch_http(
     base_url: &str,
     action: &str,
     params: &serde_json::Value,
+    nsec: Option<&str>,
 ) -> Result<serde_json::Value> {
     let url = format!("{base_url}/dispatch");
     let body = json!({ "action": action, "params": params });
-    let resp = reqwest::Client::new()
-        .post(&url)
-        .json(&body)
+    let mut req = reqwest::Client::new().post(&url).json(&body);
+    if let Some(nsec) = nsec {
+        req = req.header("Authorization", format!("Nostr {nsec}"));
+    }
+    let resp = req
         .send()
         .await
         .context("HTTP dispatch request failed")?;
@@ -182,7 +186,7 @@ pub async fn cli_dispatch(
     params: &serde_json::Value,
 ) -> Result<serde_json::Value> {
     match backend {
-        Backend::Http(base_url) => dispatch_http(base_url, action, params).await,
+        Backend::Http(base_url, nsec) => dispatch_http(base_url, action, params, nsec.as_deref()).await,
         Backend::Direct => {
             let nomen = nomen.expect("Direct backend requires a Nomen instance");
             let resp = nomen::api::dispatch(nomen, CLI_CHANNEL, action, params).await;

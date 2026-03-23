@@ -633,7 +633,7 @@ pub async fn start(dispatch: &DispatchFn, dir: &Path, poll_secs: u64, verbose: b
     let (fs_tx, mut fs_rx) = tokio::sync::mpsc::channel::<(PathBuf, &'static str)>(256);
 
     // Set up filesystem watcher
-    let dir_for_watcher = dir.to_path_buf();
+    let dir_for_watcher = dir.canonicalize().unwrap_or_else(|_| dir.to_path_buf());
     let mut watcher = notify::RecommendedWatcher::new(
         move |res: Result<notify::Event, notify::Error>| {
             if let Ok(event) = res {
@@ -651,6 +651,7 @@ pub async fn start(dispatch: &DispatchFn, dir: &Path, poll_secs: u64, verbose: b
                     _ => return,
                 };
                 for path in event.paths {
+                    let path = path.canonicalize().unwrap_or(path);
                     if is_watched_path(&dir_for_watcher, &path) {
                         let _ = fs_tx.blocking_send((path, label));
                     }

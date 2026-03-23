@@ -110,7 +110,7 @@ pub async fn cmd_messages(
 }
 
 pub async fn cmd_delete_ephemeral(backend: &Backend, nomen: Option<&Nomen>, older_than: Option<&str>) -> Result<()> {
-    if matches!(backend, Backend::Http(_)) {
+    if matches!(backend, Backend::Http(..)) {
         bail!("This command requires direct DB access. Stop the nomen service first.");
     }
     let older_than = older_than.ok_or_else(|| {

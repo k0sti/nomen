@@ -13,13 +13,22 @@
       "visibility": {
         "type": "string",
         "description": "Default visibility tier for search/store",
-        "enum": ["public", "group", "personal", "internal"],
+        "enum": ["public", "private", "group", "personal"],
         "default": "internal"
       },
       "timeoutMs": {
         "type": "number",
         "description": "Request timeout in milliseconds",
         "default": 10000
+      },
+      "nsec": {
+        "type": "string",
+        "description": "Nostr nsec for authentication with nomen API"
+      },
+      "roomScopes": {
+        "type": "object",
+        "description": "Chat ID to group scope mapping",
+        "additionalProperties": { "type": "string" }
       }
     }
   }

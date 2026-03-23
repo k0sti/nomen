@@ -13,11 +13,13 @@ use super::FsAction;
 /// Build a DispatchFn from the current backend.
 fn build_dispatch(backend: &Backend) -> fs::DispatchFn {
     match backend {
-        Backend::Http(base_url) => {
+        Backend::Http(base_url, nsec) => {
             let base_url = base_url.clone();
+            let nsec = nsec.clone();
             Box::new(move |action, params| {
                 let base_url = base_url.clone();
-                Box::pin(async move { dispatch_http(&base_url, &action, &params).await })
+                let nsec = nsec.clone();
+                Box::pin(async move { dispatch_http(&base_url, &action, &params, nsec.as_deref()).await })
             })
         }
         Backend::Direct => {
