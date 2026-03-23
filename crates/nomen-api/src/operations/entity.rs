@@ -1,20 +1,20 @@
-//! Entity domain operations: list.
+//! Entity domain operations: list, relationships.
 
 use serde_json::{json, Value};
 
-use crate::api::errors::ApiError;
-use crate::entities;
-use crate::Nomen;
+use nomen_core::api::errors::ApiError;
+use nomen_core::entities::EntityKind;
+use crate::NomenBackend;
 
 pub async fn list(
-    nomen: &Nomen,
+    nomen: &dyn NomenBackend,
     _default_channel: &str,
     params: &Value,
 ) -> Result<Value, ApiError> {
     let kind_filter = params.get("kind").and_then(|v| v.as_str());
 
     if let Some(k) = kind_filter {
-        if entities::EntityKind::from_str(k).is_none() {
+        if EntityKind::from_str(k).is_none() {
             return Err(ApiError::invalid_params(
                 "Unknown entity kind. Valid: person, project, concept, place, organization, technology",
             ));
@@ -56,7 +56,7 @@ pub async fn list(
 }
 
 pub async fn relationships(
-    nomen: &Nomen,
+    nomen: &dyn NomenBackend,
     _default_channel: &str,
     params: &Value,
 ) -> Result<Value, ApiError> {

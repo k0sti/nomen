@@ -2,13 +2,18 @@
 
 use serde_json::{json, Value};
 
-use crate::api::errors::ApiError;
-use crate::api::types::{resolve_visibility_scope, RetrievalParams, Visibility};
-use crate::search::SearchOptions;
-use crate::Nomen;
+use nomen_core::api::errors::ApiError;
+use nomen_core::api::types::{RetrievalParams, Visibility};
+use nomen_core::memory::build_v2_dtag;
+use nomen_core::ops::ListOptions;
+use nomen_core::search::SearchOptions;
+use nomen_core::NewMemory;
+use nomen_db::MemoryRecord;
+use crate::types::resolve_visibility_scope;
+use crate::NomenBackend;
 
 pub async fn search(
-    nomen: &Nomen,
+    nomen: &dyn NomenBackend,
     default_channel: &str,
     params: &Value,
 ) -> Result<Value, ApiError> {
@@ -101,7 +106,7 @@ pub async fn search(
     }))
 }
 
-pub async fn put(nomen: &Nomen, default_channel: &str, params: &Value) -> Result<Value, ApiError> {
+pub async fn put(nomen: &dyn NomenBackend, default_channel: &str, params: &Value) -> Result<Value, ApiError> {
     let topic = params
         .get("topic")
         .and_then(|v| v.as_str())
@@ -125,7 +130,7 @@ pub async fn put(nomen: &Nomen, default_channel: &str, params: &Value) -> Result
 
     let importance = params.get("importance").and_then(|v| v.as_i64()).map(|v| v as i32);
 
-    let mem = crate::NewMemory {
+    let mem = NewMemory {
         topic: topic.clone(),
         content,
         tier,
@@ -150,7 +155,7 @@ pub async fn put(nomen: &Nomen, default_channel: &str, params: &Value) -> Result
     }))
 }
 
-pub async fn get(nomen: &Nomen, default_channel: &str, params: &Value) -> Result<Value, ApiError> {
+pub async fn get(nomen: &dyn NomenBackend, default_channel: &str, params: &Value) -> Result<Value, ApiError> {
     let d_tag = params.get("d_tag").and_then(|v| v.as_str());
     let topic = params.get("topic").and_then(|v| v.as_str());
 
@@ -167,7 +172,7 @@ pub async fn get(nomen: &Nomen, default_channel: &str, params: &Value) -> Result
         return Ok(record_to_value(record));
     }
 
-    // Topic lookup — try to build d_tag from visibility+scope+topic
+    // Topic lookup -- try to build d_tag from visibility+scope+topic
     let topic = topic.unwrap();
     let (vis, scope) = resolve_visibility_scope(params, nomen, default_channel)?;
 
@@ -183,7 +188,7 @@ pub async fn get(nomen: &Nomen, default_channel: &str, params: &Value) -> Result
             Visibility::Circle => scope_str.to_string(),
             Visibility::Public => String::new(),
         };
-        let d_tag = crate::memory::build_v2_dtag(vis.as_str(), &context, topic);
+        let d_tag = build_v2_dtag(vis.as_str(), &context, topic);
         let record = nomen
             .get_by_topic(&d_tag)
             .await
@@ -201,7 +206,7 @@ pub async fn get(nomen: &Nomen, default_channel: &str, params: &Value) -> Result
     Ok(record_to_value(record))
 }
 
-fn record_to_value(record: Option<crate::db::MemoryRecord>) -> Value {
+fn record_to_value(record: Option<MemoryRecord>) -> Value {
     match record {
         Some(m) => json!({
             "topic": m.topic,
@@ -216,7 +221,7 @@ fn record_to_value(record: Option<crate::db::MemoryRecord>) -> Value {
     }
 }
 
-pub async fn list(nomen: &Nomen, default_channel: &str, params: &Value) -> Result<Value, ApiError> {
+pub async fn list(nomen: &dyn NomenBackend, default_channel: &str, params: &Value) -> Result<Value, ApiError> {
     let limit = params.get("limit").and_then(|v| v.as_u64()).unwrap_or(100) as usize;
     let include_stats = params
         .get("stats")
@@ -227,7 +232,7 @@ pub async fn list(nomen: &Nomen, default_channel: &str, params: &Value) -> Resul
     let tier = vis.as_ref().map(|v| v.as_str().to_string());
 
     let report = nomen
-        .list(crate::ListOptions {
+        .list(ListOptions {
             tier,
             limit,
             include_stats,
@@ -268,7 +273,7 @@ pub async fn list(nomen: &Nomen, default_channel: &str, params: &Value) -> Resul
 }
 
 pub async fn delete(
-    nomen: &Nomen,
+    nomen: &dyn NomenBackend,
     default_channel: &str,
     params: &Value,
 ) -> Result<Value, ApiError> {
@@ -294,7 +299,7 @@ pub async fn delete(
                 Visibility::Group => scope_str.to_string(),
                 _ => String::new(),
             };
-            Some(crate::memory::build_v2_dtag(vis.as_str(), &context, topic))
+            Some(build_v2_dtag(vis.as_str(), &context, topic))
         } else {
             Some(topic.to_string())
         }
@@ -310,6 +315,6 @@ pub async fn delete(
     Ok(json!({
         "deleted": true,
         "d_tag": effective_topic,
-        "relay_deleted": nomen.relay().is_some(),
+        "relay_deleted": nomen.has_relay(),
     }))
 }

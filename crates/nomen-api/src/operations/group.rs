@@ -2,11 +2,11 @@
 
 use serde_json::{json, Value};
 
-use crate::api::errors::ApiError;
-use crate::Nomen;
+use nomen_core::api::errors::ApiError;
+use crate::NomenBackend;
 
 pub async fn list(
-    nomen: &Nomen,
+    nomen: &dyn NomenBackend,
     _default_channel: &str,
     _params: &Value,
 ) -> Result<Value, ApiError> {
@@ -32,7 +32,7 @@ pub async fn list(
 }
 
 pub async fn members(
-    nomen: &Nomen,
+    nomen: &dyn NomenBackend,
     _default_channel: &str,
     params: &Value,
 ) -> Result<Value, ApiError> {
@@ -55,7 +55,7 @@ pub async fn members(
 }
 
 pub async fn create(
-    nomen: &Nomen,
+    nomen: &dyn NomenBackend,
     _default_channel: &str,
     params: &Value,
 ) -> Result<Value, ApiError> {
@@ -92,7 +92,7 @@ pub async fn create(
 }
 
 pub async fn add_member(
-    nomen: &Nomen,
+    nomen: &dyn NomenBackend,
     _default_channel: &str,
     params: &Value,
 ) -> Result<Value, ApiError> {
@@ -116,7 +116,7 @@ pub async fn add_member(
 }
 
 pub async fn remove_member(
-    nomen: &Nomen,
+    nomen: &dyn NomenBackend,
     _default_channel: &str,
     params: &Value,
 ) -> Result<Value, ApiError> {

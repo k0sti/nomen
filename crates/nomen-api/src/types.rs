@@ -4,14 +4,15 @@ pub use nomen_core::api::types::*;
 
 use serde_json::Value;
 
-use super::errors::ApiError;
+use nomen_core::api::errors::ApiError;
+use crate::NomenBackend;
 
-// -- Scope resolution (needs Nomen) --
+// -- Scope resolution (needs NomenBackend) --
 
 /// Resolve visibility and scope from params, with legacy fallback.
 pub fn resolve_visibility_scope(
     params: &Value,
-    nomen: &crate::Nomen,
+    nomen: &dyn NomenBackend,
     default_channel: &str,
 ) -> Result<(Option<Visibility>, Option<String>), ApiError> {
     // Try canonical fields first

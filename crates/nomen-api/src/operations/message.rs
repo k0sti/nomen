@@ -2,13 +2,13 @@
 
 use serde_json::{json, Value};
 
-use crate::api::errors::ApiError;
-use crate::ingest;
-use crate::send;
-use crate::Nomen;
+use nomen_core::api::errors::ApiError;
+use nomen_core::ingest::{MessageQuery, RawMessage};
+use nomen_core::send::{parse_recipient, SendOptions};
+use crate::NomenBackend;
 
 pub async fn ingest(
-    nomen: &Nomen,
+    nomen: &dyn NomenBackend,
     _default_channel: &str,
     params: &Value,
 ) -> Result<Value, ApiError> {
@@ -42,7 +42,7 @@ pub async fn ingest(
         .map(String::from);
     let metadata = params.get("metadata").map(|v| v.to_string());
 
-    let msg = ingest::RawMessage {
+    let msg = RawMessage {
         source: source.clone(),
         source_id,
         sender: sender.clone(),
@@ -65,11 +65,11 @@ pub async fn ingest(
 }
 
 pub async fn list(
-    nomen: &Nomen,
+    nomen: &dyn NomenBackend,
     _default_channel: &str,
     params: &Value,
 ) -> Result<Value, ApiError> {
-    let opts = ingest::MessageQuery {
+    let opts = MessageQuery {
         source: params
             .get("source")
             .and_then(|v| v.as_str())
@@ -116,7 +116,7 @@ pub async fn list(
 }
 
 pub async fn context(
-    nomen: &Nomen,
+    nomen: &dyn NomenBackend,
     _default_channel: &str,
     params: &Value,
 ) -> Result<Value, ApiError> {
@@ -133,7 +133,7 @@ pub async fn context(
     let after = params.get("after").and_then(|v| v.as_u64()).unwrap_or(5) as usize;
 
     // Get the target message first to find its channel and timestamp
-    let target_opts = ingest::MessageQuery {
+    let target_opts = MessageQuery {
         source: None,
         channel: None,
         sender: None,
@@ -185,7 +185,7 @@ pub async fn context(
 }
 
 pub async fn send_message(
-    nomen: &Nomen,
+    nomen: &dyn NomenBackend,
     _default_channel: &str,
     params: &Value,
 ) -> Result<Value, ApiError> {
@@ -206,8 +206,8 @@ pub async fn send_message(
         ));
     }
 
-    let target = send::parse_recipient(recipient).map_err(ApiError::from_anyhow)?;
-    let opts = send::SendOptions {
+    let target = parse_recipient(recipient).map_err(ApiError::from_anyhow)?;
+    let opts = SendOptions {
         target,
         content: content.to_string(),
         channel,

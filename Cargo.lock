@@ -2731,6 +2731,7 @@ dependencies = [
  "hex",
  "http",
  "http-body-util",
+ "nomen-api",
  "nomen-core",
  "nomen-db",
  "nomen-llm",
@@ -2752,6 +2753,22 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "ulid",
+]
+
+[[package]]
+name = "nomen-api"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "nomen-core",
+ "nomen-db",
+ "nomen-llm",
+ "nomen-relay",
+ "nostr-sdk",
+ "serde",
+ "serde_json",
+ "tracing",
 ]
 
 [[package]]

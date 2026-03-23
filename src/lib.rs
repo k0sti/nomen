@@ -43,6 +43,7 @@ mod nomen_message;
 mod nomen_sync;
 mod nomen_consolidate;
 mod nomen_admin;
+mod nomen_backend;
 
 use anyhow::Result;
 use surrealdb::engine::local::Db;
@@ -68,6 +69,9 @@ pub struct Nomen {
 }
 
 pub use nomen_core::NewMemory;
+pub use nomen_core::ops::{
+    ClusterParams, ConsolidateParams, EmbedReport, ListOptions, ListStats, SyncReport,
+};
 
 /// Options for consolidation.
 pub struct ConsolidateOptions {
@@ -212,45 +216,8 @@ impl Nomen {
 
 // ── Report structs ──────────────────────────────────────────────────
 
-/// Report from a sync operation.
-pub struct SyncReport {
-    pub stored: usize,
-    pub skipped: usize,
-    pub errors: usize,
-}
-
-/// Report from an embed operation.
-pub struct EmbedReport {
-    pub embedded: usize,
-    pub total: usize,
-}
-
-/// Options for listing memories.
-pub struct ListOptions {
-    pub tier: Option<String>,
-    pub limit: usize,
-    pub include_stats: bool,
-}
-
-impl Default for ListOptions {
-    fn default() -> Self {
-        Self {
-            tier: None,
-            limit: 100,
-            include_stats: false,
-        }
-    }
-}
-
 /// Report from a list operation.
 pub struct ListReport {
     pub memories: Vec<db::MemoryRecord>,
     pub stats: Option<ListStats>,
-}
-
-/// Memory statistics.
-pub struct ListStats {
-    pub total: usize,
-    pub named: usize,
-    pub pending: usize,
 }

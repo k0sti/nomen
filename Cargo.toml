@@ -1,5 +1,5 @@
 [workspace]
-members = [".", "nomen-wire", "crates/nomen-core", "crates/nomen-db", "crates/nomen-relay", "crates/nomen-llm"]
+members = [".", "nomen-wire", "crates/nomen-core", "crates/nomen-db", "crates/nomen-relay", "crates/nomen-llm", "crates/nomen-api"]
 
 [package]
 name = "nomen"
@@ -80,6 +80,9 @@ nomen-relay = { path = "crates/nomen-relay" }
 
 # LLM layer (embeddings, consolidation, entity extraction, cluster fusion)
 nomen-llm = { path = "crates/nomen-llm" }
+
+# API layer (dispatch, operations, NomenBackend trait)
+nomen-api = { path = "crates/nomen-api" }
 
 # Socket protocol
 nomen-wire = { path = "nomen-wire" }

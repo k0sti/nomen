@@ -1,17 +1,17 @@
-//! Action name → handler routing for the canonical API v2.
+//! Action name -> handler routing for the canonical API v2.
 
 use serde_json::Value;
 
-use super::errors::ApiError;
-use super::operations;
-use super::types::ApiResponse;
-use crate::Nomen;
+use nomen_core::api::errors::ApiError;
+use nomen_core::api::types::ApiResponse;
+use crate::NomenBackend;
+use crate::operations;
 
 /// Dispatch a canonical API v2 action.
 ///
 /// This is the single entry point for both CVM and MCP transports.
 pub async fn dispatch(
-    nomen: &Nomen,
+    nomen: &dyn NomenBackend,
     default_channel: &str,
     action: &str,
     params: &Value,
@@ -24,7 +24,7 @@ pub async fn dispatch(
 }
 
 async fn dispatch_inner(
-    nomen: &Nomen,
+    nomen: &dyn NomenBackend,
     default_channel: &str,
     action: &str,
     params: &Value,
@@ -79,9 +79,9 @@ async fn dispatch_inner(
 
 /// Map an MCP underscore-format tool name to a v2 action name.
 ///
-/// E.g., `memory_search` → `memory.search`.
+/// E.g., `memory_search` -> `memory.search`.
 pub fn mcp_tool_to_action(tool_name: &str) -> Option<String> {
-    // v2 tools use underscore in MCP: memory_search → memory.search
+    // v2 tools use underscore in MCP: memory_search -> memory.search
     let parts: Vec<&str> = tool_name.splitn(2, '_').collect();
     if parts.len() == 2 {
         let candidate = format!("{}.{}", parts[0], parts[1]);

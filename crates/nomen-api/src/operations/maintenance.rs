@@ -2,11 +2,13 @@
 
 use serde_json::{json, Value};
 
-use crate::api::errors::ApiError;
-use crate::Nomen;
+use nomen_core::api::errors::ApiError;
+use nomen_core::ops::{ClusterParams, ConsolidateParams};
+use nomen_llm::consolidate::BatchExtraction;
+use crate::NomenBackend;
 
 pub async fn consolidate(
-    nomen: &Nomen,
+    nomen: &dyn NomenBackend,
     _default_channel: &str,
     params: &Value,
 ) -> Result<Value, ApiError> {
@@ -19,10 +21,9 @@ pub async fn consolidate(
         .and_then(|v| v.as_u64())
         .unwrap_or(3) as usize;
 
-    let opts = crate::ConsolidateOptions {
+    let opts = ConsolidateParams {
         batch_size,
         min_messages,
-        ..Default::default()
     };
 
     let report = nomen
@@ -39,7 +40,7 @@ pub async fn consolidate(
 }
 
 pub async fn consolidate_prepare(
-    nomen: &Nomen,
+    nomen: &dyn NomenBackend,
     _default_channel: &str,
     params: &Value,
 ) -> Result<Value, ApiError> {
@@ -56,10 +57,9 @@ pub async fn consolidate_prepare(
         .and_then(|v| v.as_u64())
         .unwrap_or(60) as u32;
 
-    let opts = crate::ConsolidateOptions {
+    let opts = ConsolidateParams {
         batch_size,
         min_messages,
-        ..Default::default()
     };
 
     let result = nomen
@@ -71,7 +71,7 @@ pub async fn consolidate_prepare(
 }
 
 pub async fn consolidate_commit(
-    nomen: &Nomen,
+    nomen: &dyn NomenBackend,
     _default_channel: &str,
     params: &Value,
 ) -> Result<Value, ApiError> {
@@ -80,7 +80,7 @@ pub async fn consolidate_commit(
         .and_then(|v| v.as_str())
         .ok_or_else(|| ApiError::invalid_params("session_id is required"))?;
 
-    let extractions: Vec<crate::consolidate::BatchExtraction> = params
+    let extractions: Vec<BatchExtraction> = params
         .get("extractions")
         .ok_or_else(|| ApiError::invalid_params("extractions is required"))?
         .as_array()
@@ -99,7 +99,7 @@ pub async fn consolidate_commit(
 }
 
 pub async fn cluster(
-    nomen: &Nomen,
+    nomen: &dyn NomenBackend,
     _default_channel: &str,
     params: &Value,
 ) -> Result<Value, ApiError> {
@@ -120,12 +120,11 @@ pub async fn cluster(
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
 
-    let opts = crate::ClusterOptions {
+    let opts = ClusterParams {
         min_members,
         namespace_depth,
         dry_run,
         prefix_filter: prefix,
-        ..Default::default()
     };
 
     let report = nomen
@@ -156,7 +155,7 @@ pub async fn cluster(
 }
 
 pub async fn sync(
-    nomen: &Nomen,
+    nomen: &dyn NomenBackend,
     _default_channel: &str,
     _params: &Value,
 ) -> Result<Value, ApiError> {
@@ -170,7 +169,7 @@ pub async fn sync(
 }
 
 pub async fn embed(
-    nomen: &Nomen,
+    nomen: &dyn NomenBackend,
     _default_channel: &str,
     params: &Value,
 ) -> Result<Value, ApiError> {
@@ -185,7 +184,7 @@ pub async fn embed(
 }
 
 pub async fn prune(
-    nomen: &Nomen,
+    nomen: &dyn NomenBackend,
     _default_channel: &str,
     params: &Value,
 ) -> Result<Value, ApiError> {

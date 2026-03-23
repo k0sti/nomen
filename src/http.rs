@@ -106,7 +106,7 @@ async fn api_dispatch(
 ) -> impl IntoResponse {
     let request_id = req.meta.as_ref().and_then(|m| m.request_id.clone());
     let resp =
-        crate::api::dispatch(&state.nomen, &state.default_channel, &req.action, &req.params)
+        crate::api::dispatch(&*state.nomen, &state.default_channel, &req.action, &req.params)
             .await
             .with_request_id(request_id);
     Json(serde_json::to_value(&resp).unwrap_or_default())

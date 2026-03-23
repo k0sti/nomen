@@ -13,6 +13,9 @@ pub mod groups;
 pub mod ingest;
 pub mod kinds;
 pub mod memory;
+pub mod ops;
+pub mod search;
+pub mod send;
 pub mod session;
 pub mod signer;
 

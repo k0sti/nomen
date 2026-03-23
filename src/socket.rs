@@ -232,7 +232,7 @@ async fn handle_request(
         // Canonical dispatch — same semantics as HTTP/MCP/CVM
         _ => {
             let api_resp = crate::api::dispatch(
-                &state.nomen,
+                &*state.nomen,
                 &state.default_channel,
                 &req.action,
                 &req.params,
