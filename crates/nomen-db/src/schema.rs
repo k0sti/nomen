@@ -4,6 +4,11 @@
 pub const SCHEMA: &str = SCHEMA_BASE;
 pub(crate) const SCHEMA_BASE: &str = r#"
 DEFINE TABLE IF NOT EXISTS memory SCHEMAFULL;
+-- Remove stale fields from previous schema versions
+REMOVE FIELD IF EXISTS search_text ON memory;
+REMOVE FIELD IF EXISTS detail ON memory;
+REMOVE FIELD IF EXISTS pinned ON memory;
+REMOVE FIELD IF EXISTS visibility ON memory;
 DEFINE FIELD IF NOT EXISTS content    ON memory TYPE string;
 DEFINE FIELD IF NOT EXISTS summary    ON memory TYPE option<string>;
 DEFINE FIELD IF NOT EXISTS embedding  ON memory TYPE option<array<float>>;

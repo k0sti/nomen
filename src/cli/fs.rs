@@ -65,10 +65,11 @@ pub async fn cmd_fs(backend: &Backend, action: FsAction) -> Result<()> {
             dir,
             poll_secs,
             verbose,
+            clean,
         } => {
             let dir = dir.unwrap_or_else(|| PathBuf::from("."));
             let dispatch = build_dispatch(backend);
-            fs::start(&dispatch, &dir, poll_secs, verbose).await?;
+            fs::start(&dispatch, &dir, poll_secs, verbose, clean).await?;
         }
         FsAction::Stop { dir } => {
             let dir = dir.unwrap_or_else(|| PathBuf::from("."));

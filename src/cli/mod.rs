@@ -293,6 +293,9 @@ pub enum FsAction {
         /// Verbose output
         #[arg(long)]
         verbose: bool,
+        /// Remove local files not in memory DB
+        #[arg(long)]
+        clean: bool,
     },
     /// Stop the sync daemon
     Stop {

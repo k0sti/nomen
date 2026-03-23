@@ -566,7 +566,7 @@ const WRITE_SUPPRESS_MS: u64 = 1500;
 /// Watches the filesystem for changes (inotify) and polls the DB for remote updates.
 /// File changes are debounced (500ms) before pushing. Conflicts are saved to
 /// `.nomen-fs/conflicts/`.
-pub async fn start(dispatch: &DispatchFn, dir: &Path, poll_secs: u64, verbose: bool) -> Result<()> {
+pub async fn start(dispatch: &DispatchFn, dir: &Path, poll_secs: u64, verbose: bool, clean: bool) -> Result<()> {
     use notify::{EventKind, RecursiveMode, Watcher};
     use std::time::{Duration, Instant};
 
@@ -600,6 +600,33 @@ pub async fn start(dispatch: &DispatchFn, dir: &Path, poll_secs: u64, verbose: b
     let pulled = pull(dispatch, dir).await?;
     if pulled > 0 {
         println!("Initial pull: {pulled} files");
+    }
+
+    // Detect orphan local files (not tracked in any memory)
+    let orphans = find_orphan_files(dispatch, dir).await?;
+    if !orphans.is_empty() {
+        if verbose || clean {
+            println!("\n{} orphan file(s) not in memory:", orphans.len());
+            for f in &orphans {
+                let rel = f.strip_prefix(dir).unwrap_or(f);
+                println!("  {}", rel.display());
+            }
+        }
+        if clean {
+            for f in &orphans {
+                if let Err(e) = std::fs::remove_file(f) {
+                    warn!(path = %f.display(), "Failed to remove orphan: {e}");
+                } else if verbose {
+                    let rel = f.strip_prefix(dir).unwrap_or(f);
+                    println!("[clean] removed {}", rel.display());
+                }
+            }
+            // Clean up empty directories
+            clean_empty_dirs(dir)?;
+            println!("Cleaned {} orphan file(s)", orphans.len());
+        } else if verbose {
+            println!("  (use --clean to remove)");
+        }
     }
 
     // Channel to receive filesystem events in the async runtime
@@ -1152,4 +1179,82 @@ fn walk_dir_recursive(base: &Path, current: &Path, files: &mut Vec<PathBuf>) -> 
     }
 
     Ok(())
+}
+
+// ── Orphan detection ─────────────────────────────────────────────────
+
+/// Find local .md files that have no corresponding memory in the DB.
+async fn find_orphan_files(dispatch: &DispatchFn, dir: &Path) -> Result<Vec<PathBuf>> {
+    let result = dispatch(
+        "memory.list".to_string(),
+        serde_json::json!({"limit": 10000}),
+    )
+    .await?;
+
+    let memories = result["memories"]
+        .as_array()
+        .context("memory.list did not return memories array")?;
+
+    // Build set of expected file paths from memory d-tags
+    let expected: std::collections::HashSet<PathBuf> = memories
+        .iter()
+        .filter_map(|m| m["d_tag"].as_str())
+        .filter(|d| !d.is_empty())
+        .map(|d| dir.join(dtag_to_path(d)))
+        .collect();
+
+    // Walk local files and find ones not in the expected set
+    let local_files = walk_md_files(dir)?;
+    let orphans: Vec<PathBuf> = local_files
+        .into_iter()
+        .filter(|f| !expected.contains(f))
+        .collect();
+
+    Ok(orphans)
+}
+
+/// Remove empty directories recursively (bottom-up), excluding the sync root.
+fn clean_empty_dirs(dir: &Path) -> Result<()> {
+    for tier in &["public", "private", "personal", "internal", "group", "circle"] {
+        let tier_dir = dir.join(tier);
+        if tier_dir.is_dir() {
+            clean_empty_dirs_recursive(&tier_dir)?;
+        }
+    }
+    Ok(())
+}
+
+fn clean_empty_dirs_recursive(dir: &Path) -> Result<bool> {
+    let mut all_empty = true;
+    let entries: Vec<_> = std::fs::read_dir(dir)?
+        .filter_map(|e| e.ok())
+        .collect();
+
+    for entry in &entries {
+        let path = entry.path();
+        if path.is_dir() {
+            if !clean_empty_dirs_recursive(&path)? {
+                all_empty = false;
+            }
+        } else {
+            all_empty = false;
+        }
+    }
+
+    if all_empty && entries.is_empty() {
+        std::fs::remove_dir(dir)?;
+        return Ok(true);
+    }
+    // Re-check after potential child removals
+    if all_empty {
+        let remaining: Vec<_> = std::fs::read_dir(dir)?
+            .filter_map(|e| e.ok())
+            .collect();
+        if remaining.is_empty() {
+            std::fs::remove_dir(dir)?;
+            return Ok(true);
+        }
+    }
+
+    Ok(false)
 }
