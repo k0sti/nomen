@@ -244,6 +244,7 @@ pub fn base_tier(tier: &str) -> &str {
 // -- Legacy v0.2 builder (kept for backward compat during migration) --
 
 /// Build a v0.2 d-tag from visibility, context, and topic.
+#[deprecated(note = "Use build_dtag() for v0.3 format")]
 pub fn build_v2_dtag(visibility: &str, context: &str, topic: &str) -> String {
     format!("{visibility}:{context}:{topic}")
 }

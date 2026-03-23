@@ -112,7 +112,7 @@ pub struct ParsedMemoryFile {
 /// - `personal/d29fe7c1.../projects/nomen` → `personal/d29fe7c1.../projects/nomen.md`
 pub fn dtag_to_path(d_tag: &str) -> PathBuf {
     let (visibility, scope) = memory::extract_visibility_scope(d_tag);
-    let topic = memory::v2_dtag_topic(d_tag).unwrap_or(d_tag);
+    let topic = memory::dtag_topic(d_tag).unwrap_or(d_tag);
 
     let mut path = PathBuf::new();
     path.push(&visibility);
@@ -1044,7 +1044,7 @@ async fn push_changed_files(
         };
 
         let topic = if !d_tag.is_empty() {
-            memory::v2_dtag_topic(&d_tag)
+            memory::dtag_topic(&d_tag)
                 .unwrap_or(&parsed.frontmatter.topic)
                 .to_string()
         } else {
