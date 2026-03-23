@@ -2736,6 +2736,7 @@ dependencies = [
  "nomen-db",
  "nomen-llm",
  "nomen-relay",
+ "nomen-transport",
  "nomen-wire",
  "nostr-sdk",
  "reqwest 0.12.28",
@@ -2829,6 +2830,28 @@ dependencies = [
  "nomen-core",
  "nostr-sdk",
  "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "nomen-transport"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "axum",
+ "contextvm-sdk",
+ "dirs",
+ "futures-util",
+ "nomen-api",
+ "nomen-core",
+ "nomen-db",
+ "nomen-wire",
+ "nostr-sdk",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tokio-util",
+ "tower-http",
  "tracing",
 ]
 

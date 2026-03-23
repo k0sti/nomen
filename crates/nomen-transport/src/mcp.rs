@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use tracing::{debug, error, info};
 
-use crate::Nomen;
+use nomen_api::NomenBackend;
 
 // ── JSON-RPC types ──────────────────────────────────────────────────
 
@@ -417,12 +417,12 @@ fn v2_tools_list() -> Value {
 
 // ── MCP Server ──────────────────────────────────────────────────────
 
-pub struct McpServer {
-    pub nomen: Nomen,
+pub struct McpServer<'a> {
+    pub nomen: &'a dyn NomenBackend,
     pub default_channel: String,
 }
 
-impl McpServer {
+impl<'a> McpServer<'a> {
     pub async fn handle_request(&self, req: &JsonRpcRequest) -> JsonRpcResponse {
         let id = req.id.clone().unwrap_or(Value::Null);
 
@@ -443,7 +443,7 @@ impl McpServer {
         debug!(tool = tool_name, "MCP tool call");
 
         // Map underscore tool name to dot action name
-        let action = match crate::api::dispatch::mcp_tool_to_action(tool_name) {
+        let action = match nomen_api::mcp_tool_to_action(tool_name) {
             Some(a) => a,
             None => {
                 return JsonRpcResponse::success(
@@ -460,7 +460,7 @@ impl McpServer {
         };
 
         let api_resp =
-            crate::api::dispatch(&self.nomen, &self.default_channel, &action, &arguments).await;
+            nomen_api::dispatch(self.nomen, &self.default_channel, &action, &arguments).await;
 
         let result_json = serde_json::to_value(&api_resp).unwrap_or_else(|_| json!({"ok": false}));
 
@@ -478,7 +478,7 @@ impl McpServer {
 
 // ── Stdio event loop ────────────────────────────────────────────────
 
-pub async fn serve_stdio(nomen: Nomen, default_channel: String) -> Result<()> {
+pub async fn serve_stdio(nomen: &dyn NomenBackend, default_channel: String) -> Result<()> {
     let server = McpServer {
         nomen,
         default_channel,

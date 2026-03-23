@@ -123,7 +123,7 @@ async fn store_test_memory(nomen: &nomen::Nomen, topic: &str, summary: &str) -> 
 // the canonical `Value` envelope.
 
 /// Direct `api::dispatch()`.
-async fn dispatch_direct(nomen: &nomen::Nomen, f: &Fixture) -> Value {
+async fn dispatch_direct(nomen: &dyn nomen_api::NomenBackend, f: &Fixture) -> Value {
     let resp = nomen::api::dispatch(nomen, "test", f.action, &f.params).await;
     serde_json::to_value(&resp).unwrap()
 }
@@ -181,7 +181,7 @@ async fn dispatch_cvm_tools_call(handler: &CvmHandler, f: &Fixture) -> Value {
 }
 
 /// MCP tools/call dispatch — returns the inner ApiResponse envelope.
-async fn dispatch_mcp(mcp: &McpServer, f: &Fixture) -> Value {
+async fn dispatch_mcp(mcp: &McpServer<'_>, f: &Fixture) -> Value {
     let req = nomen::mcp::JsonRpcRequest {
         jsonrpc: "2.0".to_string(),
         id: Some(json!(1)),
@@ -219,16 +219,18 @@ async fn dispatch_socket(
 // ── Transport factory helpers ────────────────────────────────────────
 
 fn make_handler(nomen: nomen::Nomen) -> CvmHandler {
-    CvmHandler::new(nomen, vec![], 100, "test".to_string())
+    CvmHandler::new(Box::new(nomen), vec![], 100, "test".to_string())
 }
 
-fn make_mcp_server(nomen: nomen::Nomen) -> McpServer {
-    McpServer { nomen, default_channel: "test".to_string() }
+fn make_mcp_server(nomen: nomen::Nomen) -> McpServer<'static> {
+    // Leak the nomen instance to get a 'static reference for tests
+    let nomen_ref: &'static dyn nomen_api::NomenBackend = Box::leak(Box::new(nomen));
+    McpServer { nomen: nomen_ref, default_channel: "test".to_string() }
 }
 
 fn build_test_router(nomen: nomen::Nomen) -> axum::Router {
     let state = nomen::http::AppState {
-        nomen: std::sync::Arc::new(nomen),
+        nomen: std::sync::Arc::new(nomen) as std::sync::Arc<dyn nomen_api::NomenBackend>,
         default_channel: "test".to_string(),
         config: std::sync::Arc::new(tokio::sync::RwLock::new(nomen::config::Config::default())),
     };
@@ -255,7 +257,7 @@ async fn setup_socket_server(
     };
 
     let server = std::sync::Arc::new(SocketServer::new(
-        std::sync::Arc::new(nomen),
+        std::sync::Arc::new(nomen) as std::sync::Arc<dyn nomen_api::NomenBackend>,
         &config,
         "test".to_string(),
         None,
@@ -553,7 +555,7 @@ async fn mcp_tools_call_memory_put_get() {
     assert_eq!(get["result"]["content"], "Stored via MCP adapter");
 
     // Cross-transport: get via direct dispatch
-    let direct = dispatch_direct(&mcp.nomen, &fixtures::memory_get(d_tag)).await;
+    let direct = dispatch_direct(mcp.nomen, &fixtures::memory_get(d_tag)).await;
     assert_ok(&direct, "direct get");
     assert_eq!(direct["result"]["topic"], "conformance/mcp-put");
 }

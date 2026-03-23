@@ -27,15 +27,25 @@ pub mod migrate;
 
 // Binary-only modules — not part of the public library API.
 #[doc(hidden)]
-pub mod cvm;
-#[doc(hidden)]
 pub mod display;
+
+// Re-export transport modules from the nomen-transport crate.
 #[doc(hidden)]
-pub mod http;
+pub mod cvm {
+    pub use nomen_transport::cvm::*;
+}
 #[doc(hidden)]
-pub mod mcp;
+pub mod http {
+    pub use nomen_transport::http::*;
+}
 #[doc(hidden)]
-pub mod socket;
+pub mod mcp {
+    pub use nomen_transport::mcp::*;
+}
+#[doc(hidden)]
+pub mod socket {
+    pub use nomen_transport::socket::*;
+}
 
 // Split impl Nomen blocks
 mod nomen_memory;

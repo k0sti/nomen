@@ -164,6 +164,19 @@ impl NomenBackend for Nomen {
         self.prune(days, dry_run).await
     }
 
+    async fn count_memories(&self) -> Result<(usize, usize, usize)> {
+        Nomen::count_memories(self).await
+    }
+
+    async fn get_meta(&self, key: &str) -> Result<Option<String>> {
+        nomen_db::get_meta(&self.db, key).await
+    }
+
+    async fn entity_count(&self, kind: Option<&str>) -> Result<usize> {
+        let entities = self.entities(kind).await?;
+        Ok(entities.len())
+    }
+
     fn signer(&self) -> Option<&Arc<dyn NomenSigner>> {
         self.signer.as_ref()
     }

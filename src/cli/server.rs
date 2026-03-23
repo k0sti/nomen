@@ -78,7 +78,7 @@ pub async fn cmd_serve(
 
         Some(
             cvm::CvmServer::new(
-                cvm_nomen,
+                Box::new(cvm_nomen),
                 cvm_keys,
                 &cvm_relay,
                 cvm_encryption,
@@ -113,7 +113,7 @@ pub async fn cmd_serve(
         socket_nomen.set_event_emitter(event_tx.clone());
 
         let server = nomen::socket::SocketServer::new(
-            std::sync::Arc::new(socket_nomen),
+            std::sync::Arc::new(socket_nomen) as std::sync::Arc<dyn nomen_api::NomenBackend>,
             &sock_config,
             default_channel.clone(),
             Some(event_tx),
@@ -174,7 +174,7 @@ pub async fn cmd_serve(
             };
 
             let http_state = nomen::http::AppState {
-                nomen: std::sync::Arc::new(nomen_instance),
+                nomen: std::sync::Arc::new(nomen_instance) as std::sync::Arc<dyn nomen_api::NomenBackend>,
                 default_channel: default_channel.clone(),
                 config: std::sync::Arc::new(tokio::sync::RwLock::new(config.clone())),
             };
@@ -203,7 +203,7 @@ pub async fn cmd_serve(
                 } else {
                     nomen::Nomen::open_with_db(config, shared_db.clone()).await?
                 };
-                let mcp_fut = mcp::serve_stdio(mcp_nomen, default_channel);
+                let mcp_fut = mcp::serve_stdio(&mcp_nomen, default_channel);
                 let cvm_fut = cvm.run();
                 tokio::select! {
                     result = mcp_fut => result,
@@ -222,7 +222,7 @@ pub async fn cmd_serve(
             } else {
                 nomen::Nomen::open_with_db(config, shared_db.clone()).await?
             };
-            mcp::serve_stdio(nomen_instance, default_channel).await
+            mcp::serve_stdio(&nomen_instance, default_channel).await
         }
     }
 }

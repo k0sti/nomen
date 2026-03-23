@@ -14,12 +14,13 @@ use tower_http::cors::CorsLayer;
 use tower_http::services::ServeDir;
 use tracing::info;
 
-use crate::config::Config;
+use nomen_api::NomenBackend;
+use nomen_core::config::Config;
 
 // ── Shared state ─────────────────────────────────────────────────
 
 pub struct AppState {
-    pub nomen: Arc<crate::Nomen>,
+    pub nomen: Arc<dyn NomenBackend>,
     pub default_channel: String,
     pub config: Arc<RwLock<Config>>,
 }
@@ -102,11 +103,11 @@ pub async fn serve(
 
 async fn api_dispatch(
     State(state): State<SharedState>,
-    Json(req): Json<crate::api::types::ApiRequest>,
+    Json(req): Json<nomen_core::api::types::ApiRequest>,
 ) -> impl IntoResponse {
     let request_id = req.meta.as_ref().and_then(|m| m.request_id.clone());
     let resp =
-        crate::api::dispatch(&*state.nomen, &state.default_channel, &req.action, &req.params)
+        nomen_api::dispatch(&*state.nomen, &state.default_channel, &req.action, &req.params)
             .await
             .with_request_id(request_id);
     Json(serde_json::to_value(&resp).unwrap_or_default())
@@ -203,9 +204,10 @@ async fn api_stats(State(state): State<SharedState>) -> impl IntoResponse {
         .count_memories()
         .await
         .unwrap_or((0, 0, 0));
-    let entities = crate::db::list_entities(state.nomen.db(), None)
+    let entities = state
+        .nomen
+        .entity_count(None)
         .await
-        .map(|e| e.len())
         .unwrap_or(0);
     let groups = state
         .nomen
@@ -213,11 +215,14 @@ async fn api_stats(State(state): State<SharedState>) -> impl IntoResponse {
         .await
         .map(|g| g.len())
         .unwrap_or(0);
-    let last_consolidation =
-        crate::db::get_meta(state.nomen.db(), "last_consolidation_run")
-            .await
-            .unwrap_or(None);
-    let last_prune = crate::db::get_meta(state.nomen.db(), "last_prune_run")
+    let last_consolidation = state
+        .nomen
+        .get_meta("last_consolidation_run")
+        .await
+        .unwrap_or(None);
+    let last_prune = state
+        .nomen
+        .get_meta("last_prune_run")
         .await
         .unwrap_or(None);
 

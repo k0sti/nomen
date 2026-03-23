@@ -13,15 +13,15 @@ use tokio::sync::{broadcast, RwLock};
 use tokio_util::codec::Framed;
 use tracing::{debug, error, info, warn};
 
-use crate::config::SocketConfig;
-use crate::Nomen;
+use nomen_api::NomenBackend;
+use nomen_core::config::SocketConfig;
 
 /// A connection ID for tracking subscriptions.
 type ConnId = u64;
 
 /// Socket server state shared across connection tasks.
 struct ServerState {
-    nomen: Arc<Nomen>,
+    nomen: Arc<dyn NomenBackend>,
     default_channel: String,
     /// Subscription registry: connection ID -> subscribed event types.
     subscriptions: RwLock<HashMap<ConnId, HashSet<String>>>,
@@ -40,7 +40,7 @@ pub struct SocketServer {
 
 impl SocketServer {
     pub fn new(
-        nomen: Arc<Nomen>,
+        nomen: Arc<dyn NomenBackend>,
         config: &SocketConfig,
         default_channel: String,
         event_tx: Option<broadcast::Sender<Event>>,
@@ -231,7 +231,7 @@ async fn handle_request(
         "unsubscribe" => handle_unsubscribe(state, conn_id, &req).await,
         // Canonical dispatch — same semantics as HTTP/MCP/CVM
         _ => {
-            let api_resp = crate::api::dispatch(
+            let api_resp = nomen_api::dispatch(
                 &*state.nomen,
                 &state.default_channel,
                 &req.action,

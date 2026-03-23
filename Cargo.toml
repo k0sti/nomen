@@ -1,5 +1,5 @@
 [workspace]
-members = [".", "nomen-wire", "crates/nomen-core", "crates/nomen-db", "crates/nomen-relay", "crates/nomen-llm", "crates/nomen-api"]
+members = [".", "nomen-wire", "crates/nomen-core", "crates/nomen-db", "crates/nomen-relay", "crates/nomen-llm", "crates/nomen-api", "crates/nomen-transport"]
 
 [package]
 name = "nomen"
@@ -83,6 +83,9 @@ nomen-llm = { path = "crates/nomen-llm" }
 
 # API layer (dispatch, operations, NomenBackend trait)
 nomen-api = { path = "crates/nomen-api" }
+
+# Transport layer (HTTP, socket, CVM, MCP servers)
+nomen-transport = { path = "crates/nomen-transport" }
 
 # Socket protocol
 nomen-wire = { path = "nomen-wire" }

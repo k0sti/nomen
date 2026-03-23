@@ -146,6 +146,17 @@ pub trait NomenBackend: Send + Sync {
     /// Prune old memories and messages.
     async fn prune(&self, days: u64, dry_run: bool) -> Result<PruneReport>;
 
+    // -- Stats / meta --
+
+    /// Count memories: returns (total, named, pending/ephemeral).
+    async fn count_memories(&self) -> Result<(usize, usize, usize)>;
+
+    /// Get a metadata value by key.
+    async fn get_meta(&self, key: &str) -> Result<Option<String>>;
+
+    /// Count entities, optionally filtered by kind.
+    async fn entity_count(&self, kind: Option<&str>) -> Result<usize>;
+
     // -- Accessors --
 
     /// Get the signer, if available.
