@@ -2733,6 +2733,7 @@ dependencies = [
  "http-body-util",
  "nomen-core",
  "nomen-db",
+ "nomen-relay",
  "nomen-wire",
  "nostr-sdk",
  "reqwest 0.12.28",
@@ -2778,6 +2779,18 @@ dependencies = [
  "serde",
  "serde_json",
  "surrealdb",
+ "tracing",
+]
+
+[[package]]
+name = "nomen-relay"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "nomen-core",
+ "nostr-sdk",
+ "tokio",
  "tracing",
 ]
 

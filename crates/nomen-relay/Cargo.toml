@@ -1,0 +1,12 @@
+[package]
+name = "nomen-relay"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+nomen-core = { path = "../nomen-core" }
+nostr-sdk = { version = "0.43", features = ["nip44"] }
+anyhow = "1.0"
+async-trait = "0.1"
+tracing = "0.1"
+tokio = { version = "1", features = ["sync"] }

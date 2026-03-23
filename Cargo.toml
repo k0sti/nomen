@@ -1,5 +1,5 @@
 [workspace]
-members = [".", "nomen-wire", "crates/nomen-core", "crates/nomen-db"]
+members = [".", "nomen-wire", "crates/nomen-core", "crates/nomen-db", "crates/nomen-relay"]
 
 [package]
 name = "nomen"
@@ -74,6 +74,9 @@ nomen-core = { path = "crates/nomen-core" }
 
 # Database layer (SurrealDB operations)
 nomen-db = { path = "crates/nomen-db" }
+
+# Relay layer (Nostr relay management, event parsing, key signing)
+nomen-relay = { path = "crates/nomen-relay" }
 
 # Socket protocol
 nomen-wire = { path = "nomen-wire" }
