@@ -14,13 +14,13 @@ pub trait AccessCheckable {
 /// - public: everyone can access
 /// - group: requester must be a member of the memory's scope group
 /// - personal: only the author (source) can access (user-auditable knowledge)
-/// - internal: only the author (source) can access (agent-only reasoning)
-/// - private: legacy alias for personal, treated identically
+/// - private: only the author (source) can access (agent-only reasoning)
+/// - internal: legacy alias for private, treated identically
 pub fn can_access(memory: &dyn AccessCheckable, requester_npub: &str, group_store: &GroupStore) -> bool {
     match memory.tier() {
         "public" => true,
         "group" => group_store.is_member(memory.scope(), requester_npub),
-        "personal" | "internal" | "private" => memory.source() == requester_npub,
+        "personal" | "private" | "internal" => memory.source() == requester_npub,
         _ => false,
     }
 }
@@ -53,8 +53,8 @@ pub fn build_query_filters(
         "public".to_string(),
         "group".to_string(),
         "personal".to_string(),
-        "internal".to_string(),
-        "private".to_string(), // legacy alias for personal
+        "private".to_string(),
+        "internal".to_string(), // legacy alias for private
     ];
     let scopes = build_scope_filter(requester_npub, group_store);
     (tiers, scopes)

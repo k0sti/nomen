@@ -98,13 +98,13 @@ pub(crate) fn derive_tier_from_messages(messages: &[RawMessageRecord]) -> String
     }
 }
 
-/// Enforce cross-group consolidation guard: personal/internal sources must never
+/// Enforce cross-group consolidation guard: personal/private sources must never
 /// produce group or public tier memories. Returns the tier, potentially downgraded.
 pub(crate) fn enforce_tier_guard(derived_tier: &str, source_tier: &str) -> String {
     match source_tier {
-        "personal" | "internal" | "private" => {
-            // Personal/internal sources can only produce personal memories
-            if derived_tier != "personal" && derived_tier != "internal" && derived_tier != "private"
+        "personal" | "private" | "internal" => {
+            // Personal/private sources can only produce personal memories
+            if derived_tier != "personal" && derived_tier != "private" && derived_tier != "internal"
             {
                 warn!(
                     derived = derived_tier,

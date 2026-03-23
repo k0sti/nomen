@@ -248,16 +248,18 @@ fn group_by_namespace(
 /// Derive the cluster tier from its member memories.
 ///
 /// Uses the most restrictive tier among members:
-/// internal > personal > group > public
+/// private > personal > group > public
 fn derive_cluster_tier(members: &[&ClusterableMemory]) -> String {
-    let has_internal = members.iter().any(|m| m.tier == "internal");
+    let has_private = members
+        .iter()
+        .any(|m| m.tier == "private" || m.tier == "internal");
     let has_personal = members
         .iter()
-        .any(|m| m.tier == "personal" || m.tier == "private");
+        .any(|m| m.tier == "personal");
     let has_group = members.iter().any(|m| m.tier.starts_with("group"));
 
-    if has_internal {
-        "internal".to_string()
+    if has_private {
+        "private".to_string()
     } else if has_personal {
         "personal".to_string()
     } else if has_group {
@@ -556,8 +558,8 @@ mod tests {
             tier: "personal".to_string(),
             ..public.clone()
         };
-        let internal = ClusterableMemory {
-            tier: "internal".to_string(),
+        let private = ClusterableMemory {
+            tier: "private".to_string(),
             ..public.clone()
         };
 
@@ -565,10 +567,10 @@ mod tests {
         assert_eq!(derive_cluster_tier(&[&public, &public]), "public");
         // Mixed with personal -> personal
         assert_eq!(derive_cluster_tier(&[&public, &personal]), "personal");
-        // Mixed with internal -> internal (most restrictive)
+        // Mixed with private -> private (most restrictive)
         assert_eq!(
-            derive_cluster_tier(&[&public, &personal, &internal]),
-            "internal"
+            derive_cluster_tier(&[&public, &personal, &private]),
+            "private"
         );
     }
 }

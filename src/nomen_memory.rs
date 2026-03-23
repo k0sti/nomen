@@ -28,14 +28,8 @@ impl Nomen {
             .unwrap_or_default();
 
         let base_tier = memory::base_tier(&mem.tier);
-        let context = if base_tier == "personal" || base_tier == "internal" {
-            author_pubkey_hex.clone()
-        } else if let Some(group_id) = mem.tier.strip_prefix("group:") {
-            group_id.to_string()
-        } else {
-            String::new()
-        };
-        let d_tag = memory::build_v2_dtag(base_tier, &context, &mem.topic);
+        let d_tag = memory::build_dtag_from_tier(&mem.tier, &author_pubkey_hex, &mem.topic);
+        let (_vis, scope) = memory::extract_visibility_scope(&d_tag);
 
         let source = mem.source.as_deref().unwrap_or("api");
         let model = mem.model.as_deref().unwrap_or("nomen/api");
@@ -83,8 +77,8 @@ impl Nomen {
 
         // Publish to relay if available
         if let Some(ref relay) = self.relay {
-            // NIP-44 encrypt for personal/internal tier
-            let final_content = if base_tier == "personal" || base_tier == "internal" {
+            // NIP-44 encrypt for personal/private tier
+            let final_content = if base_tier == "personal" || base_tier == "private" {
                 relay.signer().encrypt(&content_str).unwrap_or(content_str)
             } else {
                 content_str
@@ -98,7 +92,7 @@ impl Nomen {
                 ),
                 nostr_sdk::Tag::custom(
                     nostr_sdk::TagKind::Custom("scope".into()),
-                    vec![context.clone()],
+                    vec![scope.clone()],
                 ),
                 nostr_sdk::Tag::custom(
                     nostr_sdk::TagKind::Custom("model".into()),
@@ -156,7 +150,7 @@ impl Nomen {
         self.emit_event("memory.updated", serde_json::json!({
             "topic": mem.topic,
             "visibility": base_tier,
-            "scope": context,
+            "scope": scope,
             "author": author_pubkey_hex,
             "source": source,
         }));

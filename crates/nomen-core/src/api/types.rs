@@ -144,18 +144,20 @@ pub enum Visibility {
     Group,
     Circle,
     Personal,
-    Internal,
+    Private,
 }
 
 impl Visibility {
-    /// Parse from string, supporting legacy "private" -> Personal.
+    /// Parse from string, supporting legacy aliases:
+    /// - "internal" -> Private (v0.2 compat)
+    /// - "private" -> Private (v0.3 canonical)
     pub fn parse(s: &str) -> Option<Self> {
         match s {
             "public" => Some(Self::Public),
             "group" => Some(Self::Group),
             "circle" => Some(Self::Circle),
-            "personal" | "private" => Some(Self::Personal),
-            "internal" => Some(Self::Internal),
+            "personal" => Some(Self::Personal),
+            "private" | "internal" => Some(Self::Private),
             _ => None,
         }
     }
@@ -166,17 +168,17 @@ impl Visibility {
             Self::Group => "group",
             Self::Circle => "circle",
             Self::Personal => "personal",
-            Self::Internal => "internal",
+            Self::Private => "private",
         }
     }
 
-    /// Convert to legacy tier string used by Nomen internals.
+    /// Convert to tier string used by Nomen internals.
     pub fn to_tier(&self, scope: &str) -> String {
         match self {
             Self::Public => "public".to_string(),
             Self::Group => format!("group:{scope}"),
             Self::Personal => "personal".to_string(),
-            Self::Internal => "internal".to_string(),
+            Self::Private => "private".to_string(),
             Self::Circle => format!("circle:{scope}"),
         }
     }

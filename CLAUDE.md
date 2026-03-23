@@ -129,24 +129,27 @@ pub trait NomenSigner: Send + Sync {
 - CLI reads nsec from config/flags → wraps in `KeysSigner` → passes to `RelayManager`.
 - Library consumers implement `NomenSigner` with their own key management.
 
-### Memory Tiers (4-tier model)
+### Memory Tiers
 
 - **public** — readable by anyone, plaintext
 - **group** — readable by group members (NIP-29), plaintext (relay handles access)
-- **personal** — user-auditable knowledge, NIP-44 self-encrypted
-- **internal** — agent-only reasoning, NIP-44 self-encrypted
+- **personal** — user-auditable knowledge, scope is counterparty pubkey, NIP-44 self-encrypted
+- **private** — agent-only reasoning, no scope needed, NIP-44 self-encrypted
 - **circle** — ad-hoc npub sets with deterministic hash. NIP-44 encrypted to participant set. Not yet implemented — requires MLS key agreement (e.g., Marmot / NIP-104) or similar group encryption scheme for practical use.
-- Legacy `private` is accepted on read and normalized to `personal`
+- Legacy `internal` is accepted on read and normalized to `private`
 
-### D-Tag Format (v0.2)
+### D-Tag Format (v0.3)
 
-D-tags encode `{visibility}:{context}:{topic}`:
-- `public::rust-error-handling`
-- `group:techteam:deployment-process`
-- `personal:{hex-pubkey}:ssh-config`
-- `internal:{hex-pubkey}:agent-reasoning`
+D-tags use `/`-separated paths: `{tier}/{topic}` or `{tier}/{scope}/{topic}`:
+- `public/rust-error-handling`
+- `private/agent-reasoning`
+- `personal/{hex-pubkey}/ssh-config`
+- `group/techteam/deployment-process`
+- `circle/{hash}/shared-notes`
 
-The parser (`memory.rs`) supports dual-format read (v0.1 prefixes + v0.2 format). New writes use v0.2 only. See `docs/migration.md`.
+Topics can be hierarchical: `public/rust/error-handling`, `private/planning/weekly-review`.
+
+The parser (`memory.rs`) supports dual-format read (v0.2 `:` separator + v0.3 `/` separator). New writes use v0.3 only. See `docs/dtag-v3-spec.md`.
 
 ### Event Kinds
 
@@ -168,7 +171,7 @@ Full pipeline in `consolidate.rs`:
 6. Extract entities from consolidated content
 7. Mark raw messages as consolidated
 8. Publish NIP-09 deletion events for consumed ephemeral Nostr events
-9. Publish consolidated memories to relay as kind 31234 (NIP-44 encrypted for personal/internal)
+9. Publish consolidated memories to relay as kind 31234 (NIP-44 encrypted for personal/private)
 
 ### Search Scoring
 

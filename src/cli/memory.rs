@@ -215,7 +215,7 @@ pub async fn cmd_search(
         let tier_display = format!("[{}]", vis);
         let tier_colored = match vis {
             "public" => tier_display.green(),
-            "personal" | "internal" => tier_display.red(),
+            "personal" | "private" | "internal" => tier_display.red(),
             _ => tier_display.yellow(),
         };
 

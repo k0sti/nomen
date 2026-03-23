@@ -143,23 +143,23 @@ pub fn path_to_dtag(rel_path: &Path) -> Option<String> {
 
     if !matches!(
         visibility,
-        "public" | "group" | "circle" | "personal" | "internal"
+        "public" | "group" | "circle" | "personal" | "private" | "internal"
     ) {
         return None;
     }
 
     let rest = components.next().unwrap_or("");
 
-    if visibility == "public" {
-        // public/{topic}
+    if visibility == "public" || visibility == "private" || visibility == "internal" {
+        // Unscoped tiers: {tier}/{topic}
         if rest.is_empty() {
             return None;
         }
-        return Some(memory::build_v2_dtag("public", "", rest));
+        let vis = memory::normalize_tier_name(visibility);
+        return Some(memory::build_dtag(&vis, "", rest));
     }
 
-    // For other visibilities: {scope}/{topic}
-    // Scope is the first component of rest
+    // Scoped tiers (personal, group, circle): {tier}/{scope}/{topic}
     let mut parts = rest.splitn(2, '/');
     let scope = parts.next().unwrap_or("");
     let topic = parts.next();
@@ -169,7 +169,7 @@ pub fn path_to_dtag(rel_path: &Path) -> Option<String> {
     }
 
     match topic {
-        Some(t) if !t.is_empty() => Some(memory::build_v2_dtag(visibility, scope, t)),
+        Some(t) if !t.is_empty() => Some(memory::build_dtag(visibility, scope, t)),
         _ => None,
     }
 }
@@ -280,7 +280,7 @@ pub fn init_sync_dir(dir: &Path) -> Result<()> {
         .with_context(|| format!("Failed to create {}", meta.display()))?;
 
     // Create tier directories
-    for tier in &["public", "group", "personal", "internal"] {
+    for tier in &["public", "group", "personal", "private"] {
         let tier_dir = dir.join(tier);
         std::fs::create_dir_all(&tier_dir)?;
     }
@@ -436,9 +436,9 @@ pub async fn push(dispatch: &DispatchFn, dir: &Path) -> Result<usize> {
             }
         };
 
-        // Extract clean topic from d-tag (handles both old colon and new slash formats)
+        // Extract clean topic from d-tag (handles both v0.2 colon and v0.3 slash formats)
         let topic = if !d_tag.is_empty() {
-            memory::v2_dtag_topic(&d_tag)
+            memory::dtag_topic(&d_tag)
                 .unwrap_or(&parsed.frontmatter.topic)
                 .to_string()
         } else {

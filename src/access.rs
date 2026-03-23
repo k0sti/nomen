@@ -45,17 +45,17 @@ mod tests {
     }
 
     #[test]
-    fn test_can_access_internal() {
+    fn test_can_access_private() {
         let store = GroupStore::from_config(&[]);
-        let mem = make_memory("internal", "npub1author", "npub1author");
+        let mem = make_memory("private", "npub1author", "npub1author");
         assert!(can_access(&mem, "npub1author", &store));
         assert!(!can_access(&mem, "npub1other", &store));
     }
 
     #[test]
-    fn test_can_access_private_legacy() {
+    fn test_can_access_internal_legacy() {
         let store = GroupStore::from_config(&[]);
-        let mem = make_memory("private", "npub1author", "npub1author");
+        let mem = make_memory("internal", "npub1author", "npub1author");
         assert!(can_access(&mem, "npub1author", &store));
         assert!(!can_access(&mem, "npub1other", &store));
     }

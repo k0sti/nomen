@@ -8,35 +8,20 @@ use nomen_core::signer::NomenSigner;
 /// Parse tier from event tags.
 ///
 /// Reads `visibility` tag first, then falls back to d-tag prefix.
-/// Normalizes "private" -> "personal".
+/// Normalizes legacy "internal" → "private".
+/// Supports both v0.2 (`:` separator) and v0.3 (`/` separator) d-tag formats.
 pub fn parse_tier(tags: &Tags) -> String {
-    // Try visibility tag first (canonical v0.2)
+    // Try visibility tag first (canonical)
     let tier_val = if let Some(vis) = get_tag_value(tags, "visibility") {
-        vis
+        nomen_core::memory::normalize_tier_name(&vis)
     } else {
-        // Fall back to d-tag prefix
+        // Fall back to d-tag prefix (supports both : and / separators)
         if let Some(d) = get_tag_value(tags, "d") {
-            if let Some(vis) = d.split(':').next() {
-                match vis {
-                    "public" | "group" | "personal" | "internal" | "circle" => {
-                        vis.to_string()
-                    }
-                    "private" => "personal".to_string(),
-                    _ => "unknown".to_string(),
-                }
-            } else {
-                "unknown".to_string()
-            }
+            let (vis, _scope) = nomen_core::memory::extract_visibility_scope(&d);
+            vis
         } else {
             "unknown".to_string()
         }
-    };
-
-    // Normalize legacy "private" -> "personal"
-    let tier_val = if tier_val == "private" {
-        "personal".to_string()
-    } else {
-        tier_val
     };
 
     if tier_val == "group" {
@@ -94,7 +79,7 @@ pub fn parse_event(event: &Event, signer: &dyn NomenSigner) -> ParsedMemory {
     let model = get_tag_value(tags, "model").unwrap_or_else(|| "unknown".to_string());
     let importance = get_tag_value(tags, "importance").and_then(|v| v.parse::<i32>().ok());
 
-    let content_str = if tier == "personal" || tier == "internal" {
+    let content_str = if tier == "personal" || tier == "private" {
         match try_decrypt_content(event, signer) {
             Some(decrypted) => decrypted,
             None => event.content.to_string(),

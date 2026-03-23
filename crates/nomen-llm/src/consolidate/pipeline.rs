@@ -415,9 +415,9 @@ pub async fn consolidate(
             if let Some(relay) = relay {
                 let content_str = content_for_entities.clone();
 
-                // Encrypt if personal/internal tier
+                // Encrypt if personal/private tier
                 let base = nomen_core::memory::base_tier(&tier);
-                let final_content = if base == "personal" || base == "internal" {
+                let final_content = if base == "personal" || base == "private" {
                     match relay.signer().encrypt(&content_str) {
                         Ok(encrypted) => encrypted,
                         Err(e) => {

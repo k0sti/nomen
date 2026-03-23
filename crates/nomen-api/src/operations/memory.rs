@@ -4,7 +4,7 @@ use serde_json::{json, Value};
 
 use nomen_core::api::errors::ApiError;
 use nomen_core::api::types::{RetrievalParams, Visibility};
-use nomen_core::memory::build_v2_dtag;
+use nomen_core::memory::build_dtag;
 use nomen_core::ops::ListOptions;
 use nomen_core::search::SearchOptions;
 use nomen_core::NewMemory;
@@ -183,12 +183,12 @@ pub async fn get(nomen: &dyn NomenBackend, default_channel: &str, params: &Value
             .map(|s| s.public_key().to_hex())
             .unwrap_or_default();
         let context = match vis {
-            Visibility::Personal | Visibility::Internal => author_pubkey.clone(),
+            Visibility::Personal | Visibility::Private => author_pubkey.clone(),
             Visibility::Group => scope_str.to_string(),
             Visibility::Circle => scope_str.to_string(),
             Visibility::Public => String::new(),
         };
-        let d_tag = build_v2_dtag(vis.as_str(), &context, topic);
+        let d_tag = build_dtag(vis.as_str(), &context, topic);
         let record = nomen
             .get_by_topic(&d_tag)
             .await
@@ -295,11 +295,11 @@ pub async fn delete(
                 .map(|s| s.public_key().to_hex())
                 .unwrap_or_default();
             let context = match vis {
-                Visibility::Personal | Visibility::Internal => author_pubkey,
+                Visibility::Personal | Visibility::Private => author_pubkey,
                 Visibility::Group => scope_str.to_string(),
                 _ => String::new(),
             };
-            Some(build_v2_dtag(vis.as_str(), &context, topic))
+            Some(build_dtag(vis.as_str(), &context, topic))
         } else {
             Some(topic.to_string())
         }

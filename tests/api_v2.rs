@@ -33,12 +33,13 @@ mod types_tests {
         assert_eq!(Visibility::parse("group"), Some(Visibility::Group));
         assert_eq!(Visibility::parse("circle"), Some(Visibility::Circle));
         assert_eq!(Visibility::parse("personal"), Some(Visibility::Personal));
-        assert_eq!(Visibility::parse("internal"), Some(Visibility::Internal));
+        assert_eq!(Visibility::parse("private"), Some(Visibility::Private));
     }
 
     #[test]
-    fn visibility_parse_legacy_private() {
-        assert_eq!(Visibility::parse("private"), Some(Visibility::Personal));
+    fn visibility_parse_legacy_internal() {
+        // "internal" is the v0.2 name for "private"
+        assert_eq!(Visibility::parse("internal"), Some(Visibility::Private));
     }
 
     #[test]
@@ -55,7 +56,7 @@ mod types_tests {
             ("group", Visibility::Group),
             ("circle", Visibility::Circle),
             ("personal", Visibility::Personal),
-            ("internal", Visibility::Internal),
+            ("private", Visibility::Private),
         ] {
             assert_eq!(v.as_str(), *s);
             assert_eq!(Visibility::parse(s), Some(v.clone()));
@@ -70,7 +71,7 @@ mod types_tests {
             "group:engineering"
         );
         assert_eq!(Visibility::Personal.to_tier(""), "personal");
-        assert_eq!(Visibility::Internal.to_tier(""), "internal");
+        assert_eq!(Visibility::Private.to_tier(""), "private");
         assert_eq!(Visibility::Circle.to_tier("abc123"), "circle:abc123");
     }
 

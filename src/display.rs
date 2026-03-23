@@ -32,7 +32,7 @@ pub fn display_memories(npubs: &[String], memories: &[ParsedMemory], lesson_coun
     for mem in memories {
         match mem.visibility.as_str() {
             "public" => public_count += 1,
-            "personal" | "internal" | "private" => personal_count += 1,
+            "personal" | "private" | "internal" => personal_count += 1,
             t if t.starts_with("group") => group_count += 1,
             _ => public_count += 1,
         }
@@ -42,7 +42,7 @@ pub fn display_memories(npubs: &[String], memories: &[ParsedMemory], lesson_coun
         let tier_display = format!("[{}]", mem.visibility);
         let tier_colored = match mem.visibility.as_str() {
             "public" => tier_display.green(),
-            "personal" | "internal" | "private" => tier_display.red(),
+            "personal" | "private" | "internal" => tier_display.red(),
             _ => tier_display.yellow(),
         };
 
