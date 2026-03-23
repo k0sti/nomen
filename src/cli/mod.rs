@@ -1,6 +1,7 @@
 //! CLI types and subcommand definitions.
 
 pub mod admin;
+pub mod fs;
 pub mod group;
 pub mod helpers;
 pub mod memory;
@@ -222,6 +223,11 @@ pub enum Command {
         #[arg(long)]
         non_interactive: bool,
     },
+    /// Bidirectional filesystem sync (markdown ↔ DB)
+    Fs {
+        #[command(subcommand)]
+        action: FsAction,
+    },
     /// Validate config and check connectivity
     Doctor,
     /// Start MCP server (JSON-RPC over stdio) or HTTP server
@@ -247,6 +253,52 @@ pub enum Command {
         /// Allowed npubs for Context-VM requests (comma-separated hex or bech32)
         #[arg(long, value_delimiter = ',')]
         allowed_npubs: Vec<String>,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum FsAction {
+    /// Initialize a sync directory
+    Init {
+        /// Directory to initialize (default: current directory)
+        #[arg(long)]
+        dir: Option<PathBuf>,
+    },
+    /// Pull memories from DB to filesystem
+    Pull {
+        /// Sync directory (default: current directory)
+        #[arg(long)]
+        dir: Option<PathBuf>,
+    },
+    /// Push changed files back to DB
+    Push {
+        /// Sync directory (default: current directory)
+        #[arg(long)]
+        dir: Option<PathBuf>,
+    },
+    /// Show sync status
+    Status {
+        /// Sync directory (default: current directory)
+        #[arg(long)]
+        dir: Option<PathBuf>,
+    },
+    /// Start real-time bidirectional sync daemon
+    Start {
+        /// Sync directory (default: current directory)
+        #[arg(long)]
+        dir: Option<PathBuf>,
+        /// DB poll interval in seconds
+        #[arg(long, default_value = "30")]
+        poll_secs: u64,
+        /// Verbose output
+        #[arg(long)]
+        verbose: bool,
+    },
+    /// Stop the sync daemon
+    Stop {
+        /// Sync directory (default: current directory)
+        #[arg(long)]
+        dir: Option<PathBuf>,
     },
 }
 

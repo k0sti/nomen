@@ -288,6 +288,9 @@ async fn main() -> Result<()> {
             )
             .await?;
         }
+        Command::Fs { action } => {
+            cli::fs::cmd_fs(&backend, action).await?;
+        }
         Command::Init { .. } | Command::Doctor => unreachable!("handled above"),
     }
 

@@ -34,6 +34,7 @@ tokio = { version = "1", features = ["full"] }
 # Serialization
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+serde_yaml_ng = "0.10"
 
 # Error handling
 anyhow = "1.0"
@@ -51,6 +52,9 @@ chrono = "0.4"
 # Terminal output
 colored = "2"
 dialoguer = "0.11"
+
+# Filesystem watching
+notify = "7"
 
 # Config
 toml = "0.8"

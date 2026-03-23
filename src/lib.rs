@@ -12,6 +12,7 @@ pub mod consolidate;
 pub mod db;
 pub mod embed;
 pub mod entities;
+pub mod fs;
 pub mod groups;
 pub mod ingest;
 pub mod kinds;
