@@ -1,5 +1,5 @@
 [workspace]
-members = [".", "nomen-wire", "crates/nomen-core", "crates/nomen-db", "crates/nomen-relay", "crates/nomen-llm", "crates/nomen-api", "crates/nomen-transport"]
+members = [".", "crates/nomen-wire", "crates/nomen-core", "crates/nomen-db", "crates/nomen-relay", "crates/nomen-llm", "crates/nomen-api", "crates/nomen-transport"]
 
 [package]
 name = "nomen"
@@ -92,7 +92,7 @@ nomen-api = { path = "crates/nomen-api" }
 nomen-transport = { path = "crates/nomen-transport" }
 
 # Socket protocol
-nomen-wire = { path = "nomen-wire" }
+nomen-wire = { path = "crates/nomen-wire" }
 futures-util = { version = "0.3", features = ["sink"] }
 tokio-util = { version = "0.7", features = ["codec"] }
 
