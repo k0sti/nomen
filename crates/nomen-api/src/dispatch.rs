@@ -64,6 +64,9 @@ async fn dispatch_inner(
         "memory.embed" => operations::maintenance::embed(nomen, default_channel, params).await,
         "memory.prune" => operations::maintenance::prune(nomen, default_channel, params).await,
 
+        // Identity domain
+        "identity.auth" => operations::identity::auth(nomen, default_channel, params).await,
+
         // Group domain
         "group.list" => operations::group::list(nomen, default_channel, params).await,
         "group.members" => operations::group::members(nomen, default_channel, params).await,
@@ -103,6 +106,7 @@ pub fn mcp_tool_to_action(tool_name: &str) -> Option<String> {
             | "memory.sync"
             | "memory.embed"
             | "memory.prune"
+            | "identity.auth"
             | "entity.list"
             | "entity.relationships"
             | "group.list"

@@ -203,7 +203,8 @@ pub async fn cmd_serve(
                 } else {
                     nomen::Nomen::open_with_db(config, shared_db.clone()).await?
                 };
-                let mcp_fut = mcp::serve_stdio(&mcp_nomen, default_channel);
+                let mcp_nomen_arc: std::sync::Arc<dyn nomen_api::NomenBackend> = std::sync::Arc::new(mcp_nomen);
+                let mcp_fut = mcp::serve_stdio_arc(mcp_nomen_arc, default_channel);
                 let cvm_fut = cvm.run();
                 tokio::select! {
                     result = mcp_fut => result,
@@ -222,7 +223,8 @@ pub async fn cmd_serve(
             } else {
                 nomen::Nomen::open_with_db(config, shared_db.clone()).await?
             };
-            mcp::serve_stdio(&nomen_instance, default_channel).await
+            let nomen_arc: std::sync::Arc<dyn nomen_api::NomenBackend> = std::sync::Arc::new(nomen_instance);
+            mcp::serve_stdio_arc(nomen_arc, default_channel).await
         }
     }
 }

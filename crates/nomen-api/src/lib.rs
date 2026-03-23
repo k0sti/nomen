@@ -6,9 +6,11 @@
 
 pub mod dispatch;
 pub mod operations;
+pub mod session_backend;
 pub mod types;
 
 pub use dispatch::{dispatch, mcp_tool_to_action};
+pub use session_backend::SessionBackend;
 pub use nomen_core::api::errors;
 pub use nomen_core::api::types::ApiResponse;
 

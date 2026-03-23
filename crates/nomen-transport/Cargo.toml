@@ -7,6 +7,7 @@ edition = "2021"
 nomen-core = { path = "../nomen-core" }
 nomen-db = { path = "../nomen-db" }
 nomen-api = { path = "../nomen-api" }
+nomen-relay = { path = "../nomen-relay" }
 nomen-wire = { path = "../../nomen-wire" }
 
 # Nostr (for CVM)

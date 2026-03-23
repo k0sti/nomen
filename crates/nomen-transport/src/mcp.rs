@@ -2,8 +2,10 @@
 //!
 //! Implements JSON-RPC 2.0 over stdio for MCP-compatible agents.
 //! Routes all tool calls through the canonical `api::dispatch` layer.
+//! Supports per-session identity via `identity_auth` tool call.
 
 use std::io::{self, BufRead, Write};
+use std::sync::Arc;
 
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
@@ -11,6 +13,7 @@ use serde_json::{json, Value};
 use tracing::{debug, error, info};
 
 use nomen_api::NomenBackend;
+use nomen_core::signer::NomenSigner;
 
 // ── JSON-RPC types ──────────────────────────────────────────────────
 
@@ -97,6 +100,17 @@ pub fn v2_tools_list_value() -> Value {
 fn v2_tools_list() -> Value {
     json!({
         "tools": [
+            {
+                "name": "identity_auth",
+                "description": "Authenticate this session with a Nostr nsec. All subsequent operations will use this identity for signing and encryption.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "nsec": { "type": "string", "description": "nsec1... bech32-encoded secret key" }
+                    },
+                    "required": ["nsec"]
+                }
+            },
             {
                 "name": "memory_search",
                 "description": "Search memories using hybrid semantic + full-text search with optional graph expansion",
@@ -417,13 +431,29 @@ fn v2_tools_list() -> Value {
 
 // ── MCP Server ──────────────────────────────────────────────────────
 
-pub struct McpServer<'a> {
-    pub nomen: &'a dyn NomenBackend,
+pub struct McpServer {
+    /// The base backend (global identity).
+    base_nomen: Arc<dyn NomenBackend>,
+    /// The active backend — either base or a SessionBackend with per-session signer.
+    active_nomen: Arc<dyn NomenBackend>,
     pub default_channel: String,
 }
 
-impl<'a> McpServer<'a> {
-    pub async fn handle_request(&self, req: &JsonRpcRequest) -> JsonRpcResponse {
+impl McpServer {
+    pub fn new(nomen: Arc<dyn NomenBackend>, default_channel: String) -> Self {
+        Self {
+            base_nomen: nomen.clone(),
+            active_nomen: nomen,
+            default_channel,
+        }
+    }
+
+    /// Get a reference to the active backend (for cross-transport testing).
+    pub fn backend(&self) -> &dyn NomenBackend {
+        &*self.active_nomen
+    }
+
+    pub async fn handle_request(&mut self, req: &JsonRpcRequest) -> JsonRpcResponse {
         let id = req.id.clone().unwrap_or(Value::Null);
 
         match req.method.as_str() {
@@ -436,7 +466,7 @@ impl<'a> McpServer<'a> {
         }
     }
 
-    pub async fn handle_tool_call(&self, id: Value, params: &Value) -> JsonRpcResponse {
+    pub async fn handle_tool_call(&mut self, id: Value, params: &Value) -> JsonRpcResponse {
         let tool_name = params.get("name").and_then(|n| n.as_str()).unwrap_or("");
         let arguments = params.get("arguments").cloned().unwrap_or(json!({}));
 
@@ -459,8 +489,14 @@ impl<'a> McpServer<'a> {
             }
         };
 
+        // Intercept identity.auth to set up per-session signer
+        if action == "identity.auth" {
+            return self.handle_identity_auth(id, &arguments).await;
+        }
+
         let api_resp =
-            nomen_api::dispatch(self.nomen, &self.default_channel, &action, &arguments).await;
+            nomen_api::dispatch(&*self.active_nomen, &self.default_channel, &action, &arguments)
+                .await;
 
         let result_json = serde_json::to_value(&api_resp).unwrap_or_else(|_| json!({"ok": false}));
 
@@ -474,15 +510,125 @@ impl<'a> McpServer<'a> {
             }),
         )
     }
+
+    /// Handle identity.auth: parse nsec, create KeysSigner, wrap backend.
+    async fn handle_identity_auth(&mut self, id: Value, arguments: &Value) -> JsonRpcResponse {
+        // Use dispatch to validate the nsec and get the pubkey
+        let api_resp = nomen_api::dispatch(
+            &*self.base_nomen,
+            &self.default_channel,
+            "identity.auth",
+            arguments,
+        )
+        .await;
+
+        if !api_resp.ok {
+            let result_json =
+                serde_json::to_value(&api_resp).unwrap_or_else(|_| json!({"ok": false}));
+            return JsonRpcResponse::success(
+                id,
+                json!({
+                    "content": [{
+                        "type": "text",
+                        "text": result_json.to_string()
+                    }]
+                }),
+            );
+        }
+
+        // Now create the session signer
+        let nsec = arguments
+            .get("nsec")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        match nostr_sdk::Keys::parse(nsec) {
+            Ok(keys) => {
+                let signer = Arc::new(nomen_relay::signer::KeysSigner::new(keys));
+                let pubkey_hex = signer.public_key().to_hex();
+                self.active_nomen = Arc::new(nomen_api::SessionBackend::new(
+                    self.base_nomen.clone(),
+                    signer,
+                ));
+                info!(pubkey = %pubkey_hex, "MCP: session identity set");
+
+                let result_json =
+                    serde_json::to_value(&api_resp).unwrap_or_else(|_| json!({"ok": false}));
+                JsonRpcResponse::success(
+                    id,
+                    json!({
+                        "content": [{
+                            "type": "text",
+                            "text": result_json.to_string()
+                        }]
+                    }),
+                )
+            }
+            Err(e) => {
+                let err = json!({"ok": false, "error": {"code": "invalid_params", "message": format!("invalid nsec: {e}")}});
+                JsonRpcResponse::success(
+                    id,
+                    json!({
+                        "content": [{
+                            "type": "text",
+                            "text": err.to_string()
+                        }]
+                    }),
+                )
+            }
+        }
+    }
 }
 
 // ── Stdio event loop ────────────────────────────────────────────────
 
+/// Serve MCP over stdio (legacy reference-based, no session identity support).
 pub async fn serve_stdio(nomen: &dyn NomenBackend, default_channel: String) -> Result<()> {
-    let server = McpServer {
-        nomen,
-        default_channel,
-    };
+    info!("Nomen MCP server starting on stdio (legacy ref mode)");
+
+    let stdin = io::stdin();
+    let mut stdout = io::stdout();
+
+    for line in stdin.lock().lines() {
+        let line = match line {
+            Ok(l) => l,
+            Err(e) => {
+                error!("Failed to read stdin: {e}");
+                break;
+            }
+        };
+
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+
+        let req: JsonRpcRequest = match serde_json::from_str(line) {
+            Ok(r) => r,
+            Err(e) => {
+                let err_resp =
+                    JsonRpcResponse::error(Value::Null, -32700, format!("Parse error: {e}"));
+                let _ = write_response(&mut stdout, &err_resp);
+                continue;
+            }
+        };
+
+        // Notifications (no id) don't get responses
+        let is_notification = req.id.is_none() || req.method.starts_with("notifications/");
+
+        let response = handle_legacy_request(nomen, &default_channel, &req).await;
+
+        if !is_notification {
+            write_response(&mut stdout, &response)?;
+        }
+    }
+
+    info!("MCP server shutting down");
+    Ok(())
+}
+
+/// Serve MCP over stdio with session identity support.
+pub async fn serve_stdio_arc(nomen: Arc<dyn NomenBackend>, default_channel: String) -> Result<()> {
+    let mut server = McpServer::new(nomen, default_channel);
 
     info!("Nomen MCP server starting on stdio");
 
@@ -525,6 +671,69 @@ pub async fn serve_stdio(nomen: &dyn NomenBackend, default_channel: String) -> R
 
     info!("MCP server shutting down");
     Ok(())
+}
+
+/// Legacy request handler for backward compat (no session identity).
+async fn handle_legacy_request(
+    nomen: &dyn NomenBackend,
+    default_channel: &str,
+    req: &JsonRpcRequest,
+) -> JsonRpcResponse {
+    let id = req.id.clone().unwrap_or(Value::Null);
+
+    match req.method.as_str() {
+        "initialize" => JsonRpcResponse::success(id, server_info()),
+        "notifications/initialized" => JsonRpcResponse::success(id, json!({})),
+        "tools/list" => JsonRpcResponse::success(id, v2_tools_list()),
+        "tools/call" => {
+            let tool_name = req
+                .params
+                .get("name")
+                .and_then(|n| n.as_str())
+                .unwrap_or("");
+            let arguments = req
+                .params
+                .get("arguments")
+                .cloned()
+                .unwrap_or(json!({}));
+
+            debug!(tool = tool_name, "MCP tool call");
+
+            let action = match nomen_api::mcp_tool_to_action(tool_name) {
+                Some(a) => a,
+                None => {
+                    return JsonRpcResponse::success(
+                        id,
+                        json!({
+                            "content": [{
+                                "type": "text",
+                                "text": format!("Unknown tool: {tool_name}")
+                            }],
+                            "isError": true
+                        }),
+                    );
+                }
+            };
+
+            let api_resp =
+                nomen_api::dispatch(nomen, default_channel, &action, &arguments).await;
+
+            let result_json =
+                serde_json::to_value(&api_resp).unwrap_or_else(|_| json!({"ok": false}));
+
+            JsonRpcResponse::success(
+                id,
+                json!({
+                    "content": [{
+                        "type": "text",
+                        "text": result_json.to_string()
+                    }]
+                }),
+            )
+        }
+        "ping" => JsonRpcResponse::success(id, json!({})),
+        _ => JsonRpcResponse::method_not_found(id, &req.method),
+    }
 }
 
 fn write_response(stdout: &mut io::Stdout, response: &JsonRpcResponse) -> Result<()> {

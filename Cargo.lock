@@ -2920,6 +2920,7 @@ dependencies = [
  "nomen-api",
  "nomen-core",
  "nomen-db",
+ "nomen-relay",
  "nomen-wire",
  "nostr-sdk",
  "serde",

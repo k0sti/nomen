@@ -1,10 +1,13 @@
 //! HTTP server: REST API + static file serving for the web UI.
+//!
+//! Supports per-request identity via `Authorization: Nostr nsec1...` header.
 
 use std::path::PathBuf;
 use std::sync::Arc;
 
 use anyhow::Result;
 use axum::extract::State;
+use axum::http::HeaderMap;
 use axum::response::{IntoResponse, Json, Redirect};
 use axum::routing::{get, post};
 use axum::Router;
@@ -12,10 +15,11 @@ use serde_json::{json, Value};
 use tokio::sync::RwLock;
 use tower_http::cors::CorsLayer;
 use tower_http::services::ServeDir;
-use tracing::info;
+use tracing::{debug, info};
 
 use nomen_api::NomenBackend;
 use nomen_core::config::Config;
+use nomen_core::signer::NomenSigner;
 
 // ── Shared state ─────────────────────────────────────────────────
 
@@ -103,14 +107,45 @@ pub async fn serve(
 
 async fn api_dispatch(
     State(state): State<SharedState>,
+    headers: HeaderMap,
     Json(req): Json<nomen_core::api::types::ApiRequest>,
 ) -> impl IntoResponse {
     let request_id = req.meta.as_ref().and_then(|m| m.request_id.clone());
+
+    // Check for per-request identity via Authorization header
+    let backend: Arc<dyn NomenBackend> = match extract_session_backend(&state, &headers) {
+        Some(sb) => Arc::new(sb),
+        None => state.nomen.clone(),
+    };
+
     let resp =
-        nomen_api::dispatch(&*state.nomen, &state.default_channel, &req.action, &req.params)
+        nomen_api::dispatch(&*backend, &state.default_channel, &req.action, &req.params)
             .await
             .with_request_id(request_id);
     Json(serde_json::to_value(&resp).unwrap_or_default())
+}
+
+/// Extract a SessionBackend from the Authorization header if present.
+///
+/// Supports: `Authorization: Nostr nsec1...`
+fn extract_session_backend(
+    state: &AppState,
+    headers: &HeaderMap,
+) -> Option<nomen_api::SessionBackend> {
+    let auth = headers.get("authorization")?.to_str().ok()?;
+    let nsec = auth.strip_prefix("Nostr ")?;
+
+    let keys = match nostr_sdk::Keys::parse(nsec) {
+        Ok(k) => k,
+        Err(e) => {
+            debug!("HTTP: invalid nsec in Authorization header: {e}");
+            return None;
+        }
+    };
+
+    let signer = Arc::new(nomen_relay::signer::KeysSigner::new(keys));
+    debug!(pubkey = %signer.public_key().to_hex(), "HTTP: per-request session identity");
+    Some(nomen_api::SessionBackend::new(state.nomen.clone(), signer))
 }
 
 async fn api_health(State(state): State<SharedState>) -> impl IntoResponse {

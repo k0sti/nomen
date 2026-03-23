@@ -1,4 +1,6 @@
 //! Unix domain socket server for the Nomen wire protocol.
+//!
+//! Supports per-connection identity via `identity.auth` action.
 
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
@@ -15,6 +17,7 @@ use tracing::{debug, error, info, warn};
 
 use nomen_api::NomenBackend;
 use nomen_core::config::SocketConfig;
+use nomen_core::signer::NomenSigner;
 
 /// A connection ID for tracking subscriptions.
 type ConnId = u64;
@@ -128,16 +131,36 @@ impl SocketServer {
                 // Subscribe to events broadcast for this connection
                 let mut event_rx = state.event_tx.subscribe();
 
+                // Per-connection backend override (set by identity.auth)
+                let mut conn_backend: Option<Arc<dyn NomenBackend>> = None;
+
                 loop {
                     tokio::select! {
                         // Handle incoming frames from client
                         frame = stream.next() => {
                             match frame {
                                 Some(Ok(Frame::Request(req))) => {
-                                    let response = handle_request(&state, conn_id, req).await;
-                                    if let Err(e) = sink.send(Frame::Response(response)).await {
-                                        error!("Failed to send response to conn {conn_id}: {e}");
-                                        break;
+                                    // Intercept identity.auth to set per-connection signer
+                                    if req.action == "identity.auth" {
+                                        let (response, new_backend) =
+                                            handle_identity_auth(&state, conn_id, &req).await;
+                                        if let Some(b) = new_backend {
+                                            conn_backend = Some(b);
+                                        }
+                                        if let Err(e) = sink.send(Frame::Response(response)).await {
+                                            error!("Failed to send response to conn {conn_id}: {e}");
+                                            break;
+                                        }
+                                    } else {
+                                        let backend: &dyn NomenBackend = match &conn_backend {
+                                            Some(b) => &**b,
+                                            None => &*state.nomen,
+                                        };
+                                        let response = handle_request_with_backend(backend, &state, conn_id, req).await;
+                                        if let Err(e) = sink.send(Frame::Response(response)).await {
+                                            error!("Failed to send response to conn {conn_id}: {e}");
+                                            break;
+                                        }
                                     }
                                 }
                                 Some(Ok(_)) => {
@@ -212,7 +235,7 @@ async fn is_subscribed(state: &ServerState, conn_id: ConnId, event_type: &str) -
     }
 }
 
-/// Handle a single request frame.
+/// Handle a single request frame using a specific backend.
 ///
 /// Request routing:
 /// 1. **Transport capabilities** — `subscribe` and `unsubscribe` are socket-specific
@@ -220,7 +243,8 @@ async fn is_subscribed(state: &ServerState, conn_id: ConnId, event_type: &str) -
 ///    and are handled directly by the socket layer.
 /// 2. **Canonical dispatch** — all other actions are routed through `api::dispatch()`,
 ///    producing the same canonical request/response envelope as HTTP, MCP, and CVM.
-async fn handle_request(
+async fn handle_request_with_backend(
+    backend: &dyn NomenBackend,
     state: &ServerState,
     conn_id: ConnId,
     req: nomen_wire::Request,
@@ -232,7 +256,7 @@ async fn handle_request(
         // Canonical dispatch — same semantics as HTTP/MCP/CVM
         _ => {
             let api_resp = nomen_api::dispatch(
-                &*state.nomen,
+                backend,
                 &state.default_channel,
                 &req.action,
                 &req.params,
@@ -251,6 +275,75 @@ async fn handle_request(
                 }),
                 meta: resp_value.get("meta").cloned().unwrap_or_default(),
             }
+        }
+    }
+}
+
+/// Handle identity.auth: create per-connection SessionBackend.
+async fn handle_identity_auth(
+    state: &ServerState,
+    conn_id: ConnId,
+    req: &nomen_wire::Request,
+) -> (Response, Option<Arc<dyn NomenBackend>>) {
+    // Dispatch to validate the nsec
+    let api_resp = nomen_api::dispatch(
+        &*state.nomen,
+        &state.default_channel,
+        "identity.auth",
+        &req.params,
+    )
+    .await;
+
+    if !api_resp.ok {
+        let resp_value = serde_json::to_value(&api_resp).unwrap_or_default();
+        return (
+            Response {
+                id: req.id.clone(),
+                ok: api_resp.ok,
+                result: api_resp.result,
+                error: api_resp.error.map(|e| nomen_wire::ErrorBody {
+                    code: e.code,
+                    message: e.message,
+                }),
+                meta: resp_value.get("meta").cloned().unwrap_or_default(),
+            },
+            None,
+        );
+    }
+
+    // Create the session backend
+    let nsec = req
+        .params
+        .get("nsec")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+
+    match nostr_sdk::Keys::parse(nsec) {
+        Ok(keys) => {
+            let signer = Arc::new(nomen_relay::signer::KeysSigner::new(keys));
+            info!(conn_id, pubkey = %signer.public_key().to_hex(), "Socket: session identity set");
+            let session_backend: Arc<dyn NomenBackend> = Arc::new(
+                nomen_api::SessionBackend::new(state.nomen.clone(), signer),
+            );
+
+            let resp_value = serde_json::to_value(&api_resp).unwrap_or_default();
+            (
+                Response {
+                    id: req.id.clone(),
+                    ok: api_resp.ok,
+                    result: api_resp.result,
+                    error: None,
+                    meta: resp_value.get("meta").cloned().unwrap_or_default(),
+                },
+                Some(session_backend),
+            )
+        }
+        Err(e) => {
+            warn!(conn_id, "Socket: identity.auth failed to parse nsec: {e}");
+            (
+                Response::error(req.id.clone(), "invalid_params", &format!("invalid nsec: {e}")),
+                None,
+            )
         }
     }
 }

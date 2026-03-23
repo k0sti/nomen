@@ -181,7 +181,7 @@ async fn dispatch_cvm_tools_call(handler: &CvmHandler, f: &Fixture) -> Value {
 }
 
 /// MCP tools/call dispatch — returns the inner ApiResponse envelope.
-async fn dispatch_mcp(mcp: &McpServer<'_>, f: &Fixture) -> Value {
+async fn dispatch_mcp(mcp: &mut McpServer, f: &Fixture) -> Value {
     let req = nomen::mcp::JsonRpcRequest {
         jsonrpc: "2.0".to_string(),
         id: Some(json!(1)),
@@ -222,10 +222,9 @@ fn make_handler(nomen: nomen::Nomen) -> CvmHandler {
     CvmHandler::new(Box::new(nomen), vec![], 100, "test".to_string())
 }
 
-fn make_mcp_server(nomen: nomen::Nomen) -> McpServer<'static> {
-    // Leak the nomen instance to get a 'static reference for tests
-    let nomen_ref: &'static dyn nomen_api::NomenBackend = Box::leak(Box::new(nomen));
-    McpServer { nomen: nomen_ref, default_channel: "test".to_string() }
+fn make_mcp_server(nomen: nomen::Nomen) -> McpServer {
+    let nomen_arc: std::sync::Arc<dyn nomen_api::NomenBackend> = std::sync::Arc::new(nomen);
+    McpServer::new(nomen_arc, "test".to_string())
 }
 
 fn build_test_router(nomen: nomen::Nomen) -> axum::Router {
@@ -531,8 +530,8 @@ async fn http_health_endpoint() {
 async fn mcp_tools_call_memory_list() {
     let (nomen, _tmp) = test_nomen().await.unwrap();
     let direct = dispatch_direct(&nomen, &fixtures::memory_list()).await;
-    let mcp = make_mcp_server(nomen);
-    let mcp_val = dispatch_mcp(&mcp, &fixtures::memory_list()).await;
+    let mut mcp = make_mcp_server(nomen);
+    let mcp_val = dispatch_mcp(&mut mcp, &fixtures::memory_list()).await;
 
     assert_ok(&direct, "direct");
     assert_ok(&mcp_val, "MCP");
@@ -543,19 +542,19 @@ async fn mcp_tools_call_memory_list() {
 #[tokio::test]
 async fn mcp_tools_call_memory_put_get() {
     let (nomen, _tmp) = test_nomen().await.unwrap();
-    let mcp = make_mcp_server(nomen);
+    let mut mcp = make_mcp_server(nomen);
 
-    let put = dispatch_mcp(&mcp, &fixtures::memory_put("conformance/mcp-put", "Stored via MCP adapter")).await;
+    let put = dispatch_mcp(&mut mcp, &fixtures::memory_put("conformance/mcp-put", "Stored via MCP adapter")).await;
     assert_ok(&put, "MCP put");
     let d_tag = put["result"]["d_tag"].as_str().unwrap();
 
-    let get = dispatch_mcp(&mcp, &fixtures::memory_get(d_tag)).await;
+    let get = dispatch_mcp(&mut mcp, &fixtures::memory_get(d_tag)).await;
     assert_ok(&get, "MCP get");
     assert_eq!(get["result"]["topic"], "conformance/mcp-put");
     assert_eq!(get["result"]["content"], "Stored via MCP adapter");
 
     // Cross-transport: get via direct dispatch
-    let direct = dispatch_direct(mcp.nomen, &fixtures::memory_get(d_tag)).await;
+    let direct = dispatch_direct(mcp.backend(), &fixtures::memory_get(d_tag)).await;
     assert_ok(&direct, "direct get");
     assert_eq!(direct["result"]["topic"], "conformance/mcp-put");
 }
@@ -563,7 +562,7 @@ async fn mcp_tools_call_memory_put_get() {
 #[tokio::test]
 async fn mcp_tools_call_unknown_tool() {
     let (nomen, _tmp) = test_nomen().await.unwrap();
-    let mcp = make_mcp_server(nomen);
+    let mut mcp = make_mcp_server(nomen);
 
     let req = nomen::mcp::JsonRpcRequest {
         jsonrpc: "2.0".to_string(),
@@ -582,8 +581,8 @@ async fn mcp_tools_call_error_equivalence() {
     let f = fixtures::memory_search_missing_query();
 
     let direct = dispatch_direct(&nomen, &f).await;
-    let mcp = make_mcp_server(nomen);
-    let mcp_val = dispatch_mcp(&mcp, &f).await;
+    let mut mcp = make_mcp_server(nomen);
+    let mcp_val = dispatch_mcp(&mut mcp, &f).await;
 
     assert_err(&direct, "direct");
     assert_err(&mcp_val, "MCP");
@@ -593,7 +592,7 @@ async fn mcp_tools_call_error_equivalence() {
 #[tokio::test]
 async fn mcp_tools_list_returns_all_actions() {
     let (nomen, _tmp) = test_nomen().await.unwrap();
-    let mcp = make_mcp_server(nomen);
+    let mut mcp = make_mcp_server(nomen);
 
     let req = nomen::mcp::JsonRpcRequest {
         jsonrpc: "2.0".to_string(),
@@ -635,7 +634,7 @@ async fn mcp_vs_cvm_vs_http_memory_list() {
 
     let f = fixtures::memory_list();
     let direct = dispatch_direct(&nomen1, &f).await;
-    let mcp_val = dispatch_mcp(&make_mcp_server(nomen2), &f).await;
+    let mcp_val = dispatch_mcp(&mut make_mcp_server(nomen2), &f).await;
     let cvm_val = dispatch_cvm(&make_handler(nomen3), &f).await;
     let http_val = dispatch_http(build_test_router(nomen4), &f).await;
 
