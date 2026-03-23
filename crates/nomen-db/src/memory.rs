@@ -1,13 +1,12 @@
 use anyhow::Result;
-use nostr_sdk::prelude::*;
 use serde::{Deserialize, Serialize};
 use surrealdb::engine::local::Db;
 use surrealdb::types::SurrealValue;
 use surrealdb::Surreal;
 
-use crate::memory::ParsedMemory;
+use nomen_core::memory::ParsedMemory;
 
-use super::{deserialize_option_string, MemoryRecord};
+use crate::{deserialize_option_string, MemoryRecord};
 
 /// Version check result
 #[derive(Debug, Deserialize, SurrealValue)]
@@ -30,7 +29,7 @@ fn build_record(parsed: &ParsedMemory, nostr_id: &str) -> MemoryRecord {
         content: parsed.content.clone(),
         summary: None,
         embedding: None,
-        tier: crate::memory::base_tier(&parsed.tier).to_string(),
+        tier: nomen_core::memory::base_tier(&parsed.tier).to_string(),
         scope,
         topic: parsed.topic.clone(),
         confidence: None,
@@ -46,8 +45,10 @@ fn build_record(parsed: &ParsedMemory, nostr_id: &str) -> MemoryRecord {
 }
 
 /// Store a parsed memory into SurrealDB. Returns Ok(true) if inserted/updated, Ok(false) if skipped.
-pub async fn store_memory(db: &Surreal<Db>, parsed: &ParsedMemory, event: &Event) -> Result<bool> {
-    let record = build_record(parsed, &event.id.to_hex());
+///
+/// `event_id` should be the hex-encoded Nostr event ID string.
+pub async fn store_memory(db: &Surreal<Db>, parsed: &ParsedMemory, event_id: &str) -> Result<bool> {
+    let record = build_record(parsed, event_id);
 
     // Check existing version
     let d_tag_owned = record.d_tag.clone().unwrap_or_default();
@@ -379,9 +380,9 @@ pub async fn prune_memories(db: &Surreal<Db>, days: u64, dry_run: bool) -> Resul
     let cutoff = chrono::Utc::now() - chrono::Duration::days(days as i64);
     let cutoff_str = cutoff.to_rfc3339();
     let raw_messages_pruned = if dry_run {
-        super::message::count_old_messages(db, &cutoff_str).await?
+        crate::message::count_old_messages(db, &cutoff_str).await?
     } else {
-        super::message::prune_old_messages(db, &cutoff_str).await?
+        crate::message::prune_old_messages(db, &cutoff_str).await?
     };
 
     Ok(PruneReport {
@@ -398,7 +399,7 @@ pub async fn prune_memories(db: &Surreal<Db>, days: u64, dry_run: bool) -> Resul
 /// Returns the context segment as scope (e.g., pubkey hex for personal, group id for group).
 fn extract_scope(d_tag: &str) -> String {
     // v0.2 format: {visibility}:{context}:{topic}
-    if crate::memory::is_v2_dtag(d_tag) {
+    if nomen_core::memory::is_v2_dtag(d_tag) {
         let mut parts = d_tag.splitn(3, ':');
         let _visibility = parts.next();
         let context = parts.next().unwrap_or("");

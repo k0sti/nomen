@@ -3,7 +3,9 @@ use surrealdb::engine::local::Db;
 use surrealdb::types::RecordId;
 use surrealdb::Surreal;
 
-use crate::entities::{EntityKind, EntityRecord};
+use nomen_core::entities::EntityKind;
+
+use crate::{EntityRecord, RelationshipRecord};
 
 /// Store an entity (upsert by name).
 pub async fn store_entity(db: &Surreal<Db>, name: &str, kind: &EntityKind) -> Result<String> {
@@ -106,8 +108,8 @@ pub async fn create_typed_edge(
 pub async fn list_entity_relationships(
     db: &Surreal<Db>,
     entity_name: Option<&str>,
-) -> Result<Vec<crate::entities::RelationshipRecord>> {
-    let results: Vec<crate::entities::RelationshipRecord> = if let Some(name) = entity_name {
+) -> Result<Vec<RelationshipRecord>> {
+    let results: Vec<RelationshipRecord> = if let Some(name) = entity_name {
         db.query(
             "SELECT in.name AS from_name, out.name AS to_name, relation, detail, created_at \
              FROM related_to \

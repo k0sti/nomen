@@ -4,7 +4,10 @@ use surrealdb::engine::local::Db;
 use surrealdb::types::{RecordId, SurrealValue};
 use surrealdb::Surreal;
 
-use crate::ingest::{MessageQuery, RawMessage, RawMessageRecord};
+use nomen_core::ingest::{MessageQuery, RawMessage};
+use nomen_core::session::ResolvedSession;
+
+use crate::{RawMessageRecord, SessionRecord};
 
 /// Store a raw message into SurrealDB.
 pub async fn store_raw_message(db: &Surreal<Db>, msg: &RawMessage) -> Result<String> {
@@ -262,12 +265,10 @@ pub async fn prune_old_messages(db: &Surreal<Db>, before: &str) -> Result<usize>
 
 // ── Session CRUD ─────────────────────────────────────────────────────
 
-use crate::session::SessionRecord;
-
 /// Create or update a session record.
 pub async fn create_session(
     db: &Surreal<Db>,
-    session: &crate::session::ResolvedSession,
+    session: &ResolvedSession,
 ) -> Result<String> {
     let now = chrono::Utc::now().to_rfc3339();
 

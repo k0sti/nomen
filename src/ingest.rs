@@ -1,44 +1,10 @@
 pub use nomen_core::ingest::*;
+pub use nomen_db::RawMessageRecord;
 
 use anyhow::Result;
-use serde::{Deserialize, Serialize};
 use surrealdb::engine::local::Db;
-#[allow(unused_imports)]
-use surrealdb::types::SurrealValue;
 use surrealdb::Surreal;
 use tracing::debug;
-
-/// A raw message as stored in SurrealDB (with DB-assigned id and consolidated flag).
-#[derive(Debug, Clone, Serialize, Deserialize, SurrealValue)]
-pub struct RawMessageRecord {
-    #[serde(default, deserialize_with = "crate::db::deserialize_thing_as_string")]
-    #[surreal(default)]
-    pub id: String,
-    #[serde(default)]
-    #[surreal(default)]
-    pub source: String,
-    #[serde(default)]
-    #[surreal(default)]
-    pub source_id: String,
-    #[serde(default)]
-    #[surreal(default)]
-    pub sender: String,
-    #[serde(default)]
-    #[surreal(default)]
-    pub channel: String,
-    #[serde(default)]
-    #[surreal(default)]
-    pub content: String,
-    #[serde(default)]
-    #[surreal(default)]
-    pub metadata: String,
-    #[serde(default)]
-    #[surreal(default)]
-    pub created_at: String,
-    #[serde(default)]
-    #[surreal(default)]
-    pub consolidated: bool,
-}
 
 /// Ingest a raw message into SurrealDB.
 pub async fn ingest_message(db: &Surreal<Db>, msg: &RawMessage) -> Result<String> {

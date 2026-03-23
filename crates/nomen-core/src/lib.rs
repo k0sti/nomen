@@ -8,6 +8,7 @@ pub mod access;
 pub mod api;
 pub mod config;
 pub mod embed;
+pub mod entities;
 pub mod groups;
 pub mod ingest;
 pub mod kinds;

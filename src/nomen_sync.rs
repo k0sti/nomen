@@ -37,7 +37,7 @@ impl Nomen {
             }
 
             let parsed = memory::parse_event(&event, signer.as_ref());
-            match db::store_memory(&self.db, &parsed, &event).await {
+            match db::store_memory(&self.db, &parsed, &event.id.to_hex()).await {
                 Ok(true) => stored += 1,
                 Ok(false) => skipped += 1,
                 Err(e) => {

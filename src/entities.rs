@@ -1,50 +1,10 @@
 use anyhow::Result;
 use async_trait::async_trait;
-use serde::{Deserialize, Serialize};
-use surrealdb::types::SurrealValue;
+use serde::Deserialize;
 use tracing::warn;
 
-/// Kind of entity extracted from text.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub enum EntityKind {
-    Person,
-    Project,
-    Concept,
-    Place,
-    Organization,
-    Technology,
-}
-
-impl EntityKind {
-    pub fn as_str(&self) -> &str {
-        match self {
-            EntityKind::Person => "person",
-            EntityKind::Project => "project",
-            EntityKind::Concept => "concept",
-            EntityKind::Place => "place",
-            EntityKind::Organization => "organization",
-            EntityKind::Technology => "technology",
-        }
-    }
-
-    pub fn from_str(s: &str) -> Option<Self> {
-        match s {
-            "person" => Some(EntityKind::Person),
-            "project" => Some(EntityKind::Project),
-            "concept" => Some(EntityKind::Concept),
-            "place" => Some(EntityKind::Place),
-            "organization" => Some(EntityKind::Organization),
-            "technology" => Some(EntityKind::Technology),
-            _ => None,
-        }
-    }
-}
-
-impl std::fmt::Display for EntityKind {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.as_str())
-    }
-}
+pub use nomen_core::entities::EntityKind;
+pub use nomen_db::{EntityRecord, RelationshipRecord};
 
 /// An entity extracted from text.
 #[derive(Debug, Clone)]
@@ -61,28 +21,6 @@ pub struct ExtractedRelationship {
     pub to: String,
     pub relation: String,
     pub detail: Option<String>,
-}
-
-/// An entity record from SurrealDB.
-#[derive(Debug, Clone, Serialize, Deserialize, SurrealValue)]
-pub struct EntityRecord {
-    #[serde(default)]
-    pub id: String,
-    pub name: String,
-    pub kind: String,
-    pub attributes: Option<serde_json::Value>,
-    pub created_at: String,
-}
-
-/// A relationship record from SurrealDB.
-#[derive(Debug, Clone, Serialize, Deserialize, SurrealValue)]
-pub struct RelationshipRecord {
-    pub from_name: String,
-    pub to_name: String,
-    pub relation: String,
-    #[serde(default)]
-    pub detail: String,
-    pub created_at: String,
 }
 
 /// Trait for entity extraction strategies.

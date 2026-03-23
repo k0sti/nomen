@@ -1,5 +1,5 @@
 [workspace]
-members = [".", "nomen-wire", "crates/nomen-core"]
+members = [".", "nomen-wire", "crates/nomen-core", "crates/nomen-db"]
 
 [package]
 name = "nomen"
@@ -71,6 +71,9 @@ async-trait = "0.1"
 
 # Core types (pure, no heavy deps)
 nomen-core = { path = "crates/nomen-core" }
+
+# Database layer (SurrealDB operations)
+nomen-db = { path = "crates/nomen-db" }
 
 # Socket protocol
 nomen-wire = { path = "nomen-wire" }

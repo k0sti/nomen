@@ -1,3 +1,9 @@
+//! nomen-db — SurrealDB storage layer for the Nomen memory system.
+//!
+//! Contains all database operations: CRUD, search, graph, embeddings, schema.
+//! Depends on nomen-core for pure types (ParsedMemory, RawMessage, etc.)
+//! but does NOT depend on nostr-sdk directly.
+
 use anyhow::{Context, Result};
 use serde::{Deserialize, Deserializer, Serialize};
 use surrealdb::engine::local::{Db, SurrealKv};
@@ -162,6 +168,7 @@ where
 /// SurrealDB memory record
 #[derive(Debug, Clone, Serialize, Deserialize, SurrealValue)]
 pub struct MemoryRecord {
+
     pub content: String,
     /// Legacy field — kept as Option for migration reads, never written.
     #[serde(default)]
@@ -184,9 +191,90 @@ pub struct MemoryRecord {
     pub ephemeral: bool,
 }
 
+impl nomen_core::access::AccessCheckable for MemoryRecord {
+    fn tier(&self) -> &str {
+        &self.tier
+    }
+    fn scope(&self) -> &str {
+        &self.scope
+    }
+    fn source(&self) -> &str {
+        &self.source
+    }
+}
+
+/// A raw message as stored in SurrealDB (with DB-assigned id and consolidated flag).
+#[derive(Debug, Clone, Serialize, Deserialize, SurrealValue)]
+pub struct RawMessageRecord {
+    #[serde(default, deserialize_with = "deserialize_thing_as_string")]
+    #[surreal(default)]
+    pub id: String,
+    #[serde(default)]
+    #[surreal(default)]
+    pub source: String,
+    #[serde(default)]
+    #[surreal(default)]
+    pub source_id: String,
+    #[serde(default)]
+    #[surreal(default)]
+    pub sender: String,
+    #[serde(default)]
+    #[surreal(default)]
+    pub channel: String,
+    #[serde(default)]
+    #[surreal(default)]
+    pub content: String,
+    #[serde(default)]
+    #[surreal(default)]
+    pub metadata: String,
+    #[serde(default)]
+    #[surreal(default)]
+    pub created_at: String,
+    #[serde(default)]
+    #[surreal(default)]
+    pub consolidated: bool,
+}
+
+/// SurrealDB session record.
+#[derive(Debug, Clone, Serialize, Deserialize, SurrealValue)]
+pub struct SessionRecord {
+    #[serde(default, deserialize_with = "deserialize_thing_as_string")]
+    pub id: String,
+    pub session_id: String,
+    pub tier: String,
+    pub scope: String,
+    pub channel: String,
+    pub group_id: String,
+    pub participants: Vec<String>,
+    pub created_at: String,
+    pub last_active: String,
+}
+
+/// An entity record from SurrealDB.
+#[derive(Debug, Clone, Serialize, Deserialize, SurrealValue)]
+pub struct EntityRecord {
+    #[serde(default)]
+    pub id: String,
+    pub name: String,
+    pub kind: String,
+    pub attributes: Option<serde_json::Value>,
+    pub created_at: String,
+}
+
+/// A relationship record from SurrealDB.
+#[derive(Debug, Clone, Serialize, Deserialize, SurrealValue)]
+pub struct RelationshipRecord {
+    pub from_name: String,
+    pub to_name: String,
+    pub relation: String,
+    #[serde(default)]
+    pub detail: String,
+    pub created_at: String,
+}
+
 // ── Database initialization ─────────────────────────────────────────
 
-pub(crate) fn db_path() -> std::path::PathBuf {
+pub fn db_path() -> std::path::PathBuf {
     dirs::home_dir()
         .unwrap_or_else(|| std::path::PathBuf::from("."))
         .join(".nomen")

@@ -1,23 +1,12 @@
 pub use nomen_core::access::*;
 
-use crate::db::MemoryRecord;
-
-impl AccessCheckable for MemoryRecord {
-    fn tier(&self) -> &str {
-        &self.tier
-    }
-    fn scope(&self) -> &str {
-        &self.scope
-    }
-    fn source(&self) -> &str {
-        &self.source
-    }
-}
+// The `impl AccessCheckable for MemoryRecord` is in nomen-db (where both types are visible).
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::config::GroupConfig;
+    use crate::db::MemoryRecord;
     use crate::groups::GroupStore;
 
     fn make_memory(tier: &str, scope: &str, source: &str) -> MemoryRecord {

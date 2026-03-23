@@ -1,11 +1,10 @@
 use anyhow::Result;
-use nostr_sdk::prelude::*;
 use serde::Deserialize;
 use surrealdb::engine::local::Db;
 use surrealdb::types::SurrealValue;
 use surrealdb::Surreal;
 
-use super::deserialize_option_string;
+use crate::deserialize_option_string;
 
 /// Search result from SurrealDB (text-only search)
 #[derive(Debug, Deserialize, SurrealValue)]
@@ -50,12 +49,14 @@ pub struct MissingEmbeddingRow {
     pub content: String,
 }
 
-/// Formatted search result for display
+/// Formatted search result for display.
+///
+/// `created_at` is a Unix timestamp (seconds since epoch) as u64.
 pub struct SearchDisplayResult {
     pub tier: String,
     pub topic: String,
     pub content: String,
-    pub created_at: Timestamp,
+    pub created_at: u64,
 }
 
 /// Full-text search for memories.
@@ -97,8 +98,8 @@ pub async fn search_memories(
         .into_iter()
         .map(|r| {
             let ts = chrono::DateTime::parse_from_rfc3339(&r.created_at)
-                .map(|dt| Timestamp::from(dt.timestamp() as u64))
-                .unwrap_or(Timestamp::from(0));
+                .map(|dt| dt.timestamp() as u64)
+                .unwrap_or(0);
 
             SearchDisplayResult {
                 tier: r.tier,
