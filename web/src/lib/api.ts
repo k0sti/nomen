@@ -93,7 +93,6 @@ export interface SystemStats {
 
 export interface PruneResult {
   memories_pruned: number;
-  raw_messages_pruned: number;
   dry_run: boolean;
   pruned: { topic: string; confidence: number | null; age_days: number }[];
 }

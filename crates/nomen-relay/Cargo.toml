@@ -8,6 +8,7 @@ nomen-core = { path = "../nomen-core" }
 nomen-db = { path = "../nomen-db" }
 nostr-sdk = { version = "0.43", features = ["nip44"] }
 surrealdb = { version = "3", features = ["kv-surrealkv"] }
+chrono = "0.4"
 serde_json = "1.0"
 anyhow = "1.0"
 async-trait = "0.1"

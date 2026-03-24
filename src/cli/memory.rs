@@ -78,7 +78,7 @@ pub async fn cmd_list_local(backend: &Backend, nomen: Option<&Nomen>, ephemeral:
             bail!("This command requires direct DB access. Stop the nomen service first.");
         }
         let db_handle = db::init_db().await?;
-        let messages = db::get_unconsolidated_messages(&db_handle, 200).await?;
+        let messages = db::get_unconsolidated_collected(&db_handle, 200, None).await?;
         if messages.is_empty() {
             println!("No ephemeral messages pending consolidation.");
             return Ok(());
@@ -90,15 +90,18 @@ pub async fn cmd_list_local(backend: &Backend, nomen: Option<&Nomen>, ephemeral:
             "═".repeat(60)
         );
         for msg in &messages {
-            let channel_display = if msg.channel.is_empty() {
+            let platform = msg.platform.as_deref().unwrap_or("unknown");
+            let sender = msg.sender_id.as_deref().unwrap_or("unknown");
+            let chat = msg.chat_id.as_deref().unwrap_or("");
+            let channel_display = if chat.is_empty() {
                 String::new()
             } else {
-                format!(" #{}", msg.channel)
+                format!(" #{chat}")
             };
             println!(
                 "  [{}] {}{}: {}",
-                msg.source,
-                msg.sender.bold(),
+                platform,
+                sender.bold(),
                 channel_display,
                 if msg.content.len() > 80 {
                     format!("{}...", &msg.content[..80])
@@ -106,7 +109,10 @@ pub async fn cmd_list_local(backend: &Backend, nomen: Option<&Nomen>, ephemeral:
                     msg.content.clone()
                 }
             );
-            println!("    {}", msg.created_at.dimmed());
+            let ts = chrono::DateTime::from_timestamp(msg.created_at, 0)
+                .map(|dt| dt.to_rfc3339())
+                .unwrap_or_default();
+            println!("    {}", ts.dimmed());
         }
         println!("\n{}: {} messages\n", "Total".bold(), messages.len());
     }

@@ -1,7 +1,7 @@
 //! nomen-db — SurrealDB storage layer for the Nomen memory system.
 //!
 //! Contains all database operations: CRUD, search, graph, embeddings, schema.
-//! Depends on nomen-core for pure types (ParsedMemory, RawMessage, etc.)
+//! Depends on nomen-core for pure types (ParsedMemory, CollectedEvent, etc.)
 //! but does NOT depend on nostr-sdk directly.
 
 use anyhow::{Context, Result};
@@ -30,22 +30,26 @@ pub use schema::SCHEMA;
 pub use memory::{
     store_memory, store_memory_direct, list_memories, get_memory_by_dtag, get_memory_by_topic,
     delete_memory_by_topic, delete_memory_by_dtag, delete_memory_by_nostr_id,
-    set_consolidation_tags, set_importance, count_memories_by_type, delete_ephemeral_before,
+    set_consolidation_tags, set_importance, count_memories_by_type, delete_collected_before,
     update_access_tracking, update_access_tracking_batch,
     find_prunable_memories, delete_memories_by_dtags, prune_memories,
     PrunableMemory, PruneReport,
 };
 
+pub mod collected;
+
 pub use message::{
-    store_raw_message, query_raw_messages, mark_messages_consolidated,
-    get_unconsolidated_messages, get_unconsolidated_messages_filtered,
-    get_ephemeral_messages_before, count_unconsolidated_messages,
-    query_messages_around, count_old_messages, prune_old_messages,
     create_session, get_session, update_session_last_active, list_sessions,
     ConsolidationSessionRecord, create_consolidation_session,
     get_consolidation_session, update_consolidation_session_status,
     cleanup_expired_consolidation_sessions,
-    ingest_message, get_messages,
+};
+
+pub use collected::{
+    store_collected_event, query_collected_events, get_collected_event,
+    count_collected_events, get_unconsolidated_collected, mark_collected_consolidated,
+    search_collected_events, count_unconsolidated_collected,
+    migrate_raw_to_collected, CollectedMessageRecord, CollectedSearchResult,
 };
 
 pub use search::{

@@ -2805,6 +2805,7 @@ dependencies = [
  "nomen-core",
  "nomen-db",
  "nomen-llm",
+ "nomen-media",
  "nomen-relay",
  "nomen-transport",
  "nomen-wire",
@@ -2834,9 +2835,12 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
+ "base64",
+ "chrono",
  "nomen-core",
  "nomen-db",
  "nomen-llm",
+ "nomen-media",
  "nomen-relay",
  "nostr-sdk",
  "serde",
@@ -2894,11 +2898,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "nomen-media"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "dirs",
+ "hex",
+ "serde",
+ "sha2",
+ "tempfile",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "nomen-relay"
 version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
+ "chrono",
  "nomen-core",
  "nomen-db",
  "nostr-sdk",

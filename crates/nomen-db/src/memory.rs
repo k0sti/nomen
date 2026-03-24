@@ -247,9 +247,9 @@ pub async fn count_memories_by_type(db: &Surreal<Db>) -> Result<(usize, usize, u
         .check()?
         .take(0)?;
 
-    // Unconsolidated raw messages
+    // Unconsolidated collected messages
     let pending: Option<CountRow> = db
-        .query("SELECT count() AS count FROM raw_message WHERE consolidated = false GROUP ALL")
+        .query("SELECT count() AS count FROM collected_message WHERE consolidated = false GROUP ALL")
         .await?
         .check()?
         .take(0)?;
@@ -261,22 +261,24 @@ pub async fn count_memories_by_type(db: &Surreal<Db>) -> Result<(usize, usize, u
     Ok((total_count, named_count, pending_count))
 }
 
-/// Delete ephemeral raw messages older than a cutoff.
-pub async fn delete_ephemeral_before(db: &Surreal<Db>, before: &str) -> Result<usize> {
+/// Delete old collected messages before a cutoff timestamp (unix seconds).
+///
+/// Only deletes messages that have already been consolidated.
+pub async fn delete_collected_before(db: &Surreal<Db>, before_ts: i64) -> Result<usize> {
     #[derive(Deserialize, SurrealValue)]
     struct CountResult {
         count: usize,
     }
     let count_result: Option<CountResult> = db
-        .query("SELECT count() AS count FROM raw_message WHERE created_at < $before GROUP ALL")
-        .bind(("before", before.to_string()))
+        .query("SELECT count() AS count FROM collected_message WHERE consolidated = true AND created_at < $before GROUP ALL")
+        .bind(("before", before_ts))
         .await?
         .check()?
         .take(0)?;
     let count = count_result.map(|r| r.count).unwrap_or(0);
     if count > 0 {
-        db.query("DELETE FROM raw_message WHERE created_at < $before")
-            .bind(("before", before.to_string()))
+        db.query("DELETE FROM collected_message WHERE consolidated = true AND created_at < $before")
+            .bind(("before", before_ts))
             .await?
             .check()?;
     }
@@ -360,7 +362,6 @@ pub async fn delete_memories_by_dtags(db: &Surreal<Db>, d_tags: &[String]) -> Re
 #[derive(Debug, Serialize)]
 pub struct PruneReport {
     pub memories_pruned: usize,
-    pub raw_messages_pruned: usize,
     pub dry_run: bool,
     pub pruned: Vec<PrunableMemory>,
 }
@@ -376,18 +377,8 @@ pub async fn prune_memories(db: &Surreal<Db>, days: u64, dry_run: bool) -> Resul
         prunable.len()
     };
 
-    // Also prune old consolidated raw messages
-    let cutoff = chrono::Utc::now() - chrono::Duration::days(days as i64);
-    let cutoff_str = cutoff.to_rfc3339();
-    let raw_messages_pruned = if dry_run {
-        crate::message::count_old_messages(db, &cutoff_str).await?
-    } else {
-        crate::message::prune_old_messages(db, &cutoff_str).await?
-    };
-
     Ok(PruneReport {
         memories_pruned,
-        raw_messages_pruned,
         dry_run,
         pruned: prunable,
     })

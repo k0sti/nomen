@@ -21,3 +21,11 @@ pub const LEGACY_LESSON_KIND: u16 = 4129;
 /// Raw source event (regular, non-replaceable).
 /// Append-only ground-truth layer for ingested messages from any provider.
 pub const RAW_SOURCE_KIND: u16 = 1235;
+
+/// Collected message (parameterized replaceable).
+/// Bridged or native messages from any platform, stored as Nostr events.
+pub const COLLECTED_MESSAGE_KIND: u16 = 30100;
+
+/// Chat metadata (parameterized replaceable).
+/// One per chat, updated when metadata changes.
+pub const CHAT_METADATA_KIND: u16 = 30101;

@@ -49,18 +49,6 @@ DEFINE FIELD IF NOT EXISTS nostr_group ON nomen_group TYPE option<string>;
 DEFINE FIELD IF NOT EXISTS created_at ON nomen_group TYPE string;
 DEFINE INDEX IF NOT EXISTS group_id   ON nomen_group FIELDS id UNIQUE;
 
-DEFINE TABLE IF NOT EXISTS raw_message SCHEMALESS;
-DEFINE FIELD IF NOT EXISTS source       ON raw_message TYPE string;
-DEFINE FIELD IF NOT EXISTS source_id    ON raw_message TYPE option<string>;
-DEFINE FIELD IF NOT EXISTS sender       ON raw_message TYPE string;
-DEFINE FIELD IF NOT EXISTS channel      ON raw_message TYPE option<string>;
-DEFINE FIELD IF NOT EXISTS content      ON raw_message TYPE string;
-DEFINE FIELD IF NOT EXISTS metadata     ON raw_message TYPE option<string>;
-DEFINE FIELD IF NOT EXISTS created_at   ON raw_message TYPE string;
-DEFINE FIELD IF NOT EXISTS consolidated ON raw_message TYPE bool DEFAULT false;
-DEFINE INDEX IF NOT EXISTS raw_msg_time    ON raw_message FIELDS created_at;
-DEFINE INDEX IF NOT EXISTS raw_msg_channel ON raw_message FIELDS channel;
-
 DEFINE TABLE IF NOT EXISTS entity SCHEMAFULL;
 DEFINE FIELD IF NOT EXISTS name       ON entity TYPE string;
 DEFINE FIELD IF NOT EXISTS kind       ON entity TYPE string;
@@ -73,14 +61,15 @@ DEFINE TABLE IF NOT EXISTS consolidated_from SCHEMALESS;
 DEFINE TABLE IF NOT EXISTS references SCHEMALESS;
 DEFINE TABLE IF NOT EXISTS related_to SCHEMALESS;
 
-DEFINE INDEX IF NOT EXISTS raw_msg_source ON raw_message FIELDS source, source_id UNIQUE;
-DEFINE INDEX IF NOT EXISTS raw_msg_sender ON raw_message FIELDS sender;
-
 DEFINE TABLE IF NOT EXISTS meta SCHEMAFULL;
 DEFINE FIELD IF NOT EXISTS key        ON meta TYPE string;
 DEFINE FIELD IF NOT EXISTS value      ON meta TYPE string;
 DEFINE FIELD IF NOT EXISTS updated_at ON meta TYPE string;
 DEFINE INDEX IF NOT EXISTS meta_key   ON meta FIELDS key UNIQUE;
+
+-- Key-value meta store (used by consolidation pipeline, migrations, etc.)
+DEFINE TABLE IF NOT EXISTS kv_meta SCHEMALESS;
+DEFINE INDEX IF NOT EXISTS kv_meta_key ON kv_meta FIELDS key UNIQUE;
 
 DEFINE TABLE IF NOT EXISTS session SCHEMAFULL;
 DEFINE FIELD IF NOT EXISTS session_id    ON session TYPE string;
@@ -97,4 +86,31 @@ DEFINE INDEX IF NOT EXISTS session_sid   ON session FIELDS session_id UNIQUE;
 -- Consolidation sessions (two-phase agent mode)
 DEFINE TABLE IF NOT EXISTS consolidation_session SCHEMALESS;
 DEFINE INDEX IF NOT EXISTS cons_session_sid ON consolidation_session FIELDS session_id UNIQUE;
+
+-- Collected messages (kind 30100 events)
+DEFINE TABLE IF NOT EXISTS collected_message SCHEMAFULL;
+DEFINE FIELD IF NOT EXISTS event_json ON collected_message TYPE string;
+DEFINE FIELD IF NOT EXISTS d_tag ON collected_message TYPE string;
+DEFINE FIELD IF NOT EXISTS kind ON collected_message TYPE int;
+DEFINE FIELD IF NOT EXISTS pubkey ON collected_message TYPE string;
+DEFINE FIELD IF NOT EXISTS created_at ON collected_message TYPE int;
+DEFINE FIELD IF NOT EXISTS content ON collected_message TYPE string;
+DEFINE FIELD IF NOT EXISTS platform ON collected_message TYPE option<string>;
+DEFINE FIELD IF NOT EXISTS chat_id ON collected_message TYPE option<string>;
+DEFINE FIELD IF NOT EXISTS sender_id ON collected_message TYPE option<string>;
+DEFINE FIELD IF NOT EXISTS thread_id ON collected_message TYPE option<string>;
+DEFINE FIELD IF NOT EXISTS chat_type ON collected_message TYPE option<string>;
+DEFINE FIELD IF NOT EXISTS chat_name ON collected_message TYPE option<string>;
+DEFINE FIELD IF NOT EXISTS consolidated ON collected_message TYPE bool DEFAULT false;
+DEFINE INDEX IF NOT EXISTS cm_d_tag ON collected_message FIELDS d_tag UNIQUE;
+DEFINE INDEX IF NOT EXISTS cm_platform ON collected_message FIELDS platform;
+DEFINE INDEX IF NOT EXISTS cm_chat_id ON collected_message FIELDS chat_id;
+DEFINE INDEX IF NOT EXISTS cm_sender_id ON collected_message FIELDS sender_id;
+DEFINE INDEX IF NOT EXISTS cm_thread_id ON collected_message FIELDS thread_id;
+DEFINE INDEX IF NOT EXISTS cm_chat_type ON collected_message FIELDS chat_type;
+DEFINE INDEX IF NOT EXISTS cm_created_at ON collected_message FIELDS created_at;
+DEFINE INDEX IF NOT EXISTS cm_platform_chat ON collected_message FIELDS platform, chat_id;
+DEFINE INDEX IF NOT EXISTS cm_chat_thread ON collected_message FIELDS chat_id, thread_id;
+DEFINE ANALYZER IF NOT EXISTS message_analyzer TOKENIZERS class FILTERS ascii, lowercase, snowball(english);
+DEFINE INDEX IF NOT EXISTS cm_fulltext ON collected_message FIELDS content FULLTEXT ANALYZER message_analyzer BM25;
 "#;

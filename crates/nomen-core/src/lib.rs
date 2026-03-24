@@ -6,11 +6,11 @@
 
 pub mod access;
 pub mod api;
+pub mod collected;
 pub mod config;
 pub mod embed;
 pub mod entities;
 pub mod groups;
-pub mod ingest;
 pub mod kinds;
 pub mod memory;
 pub mod ops;

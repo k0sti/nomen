@@ -25,7 +25,7 @@ pub async fn cmd_ingest(
     });
 
     let result = cli_dispatch(backend, nomen, "message.ingest", &params).await?;
-    let id = result["id"].as_str().unwrap_or("");
+    let d_tag = result["d_tag"].as_str().unwrap_or("");
     println!(
         "{} message from {} [{}]{}",
         "Ingested".green().bold(),
@@ -33,7 +33,7 @@ pub async fn cmd_ingest(
         source,
         channel.map(|c| format!(" #{c}")).unwrap_or_default()
     );
-    debug!("Record ID: {id}");
+    debug!("d_tag: {d_tag}");
     Ok(())
 }
 
@@ -48,83 +48,122 @@ pub async fn cmd_messages(
     around: Option<&str>,
     context_count: usize,
 ) -> Result<()> {
-    let result = if let Some(source_id) = around {
+    let result = if let Some(_around_id) = around {
+        // Context query requires #chat filter
+        if channel.is_none() {
+            bail!("--around requires --channel to be set");
+        }
         let params = json!({
-            "source_id": source_id,
-            "before": context_count,
-            "after": context_count,
+            "#chat": [channel.unwrap()],
+            "limit": context_count * 2 + 1,
         });
         cli_dispatch(backend, nomen, "message.context", &params).await?
     } else {
-        let params = json!({
-            "source": source,
-            "channel": channel,
-            "sender": sender,
-            "since": since,
-            "limit": limit,
-        });
-        cli_dispatch(backend, nomen, "message.list", &params).await?
+        let mut params = json!({ "limit": limit });
+        if let Some(p) = source {
+            params["#proxy"] = json!([p]);
+        }
+        if let Some(c) = channel {
+            params["#chat"] = json!([c]);
+        }
+        if let Some(s) = sender {
+            params["#sender"] = json!([s]);
+        }
+        if let Some(s) = since {
+            if let Ok(ts) = s.parse::<i64>() {
+                params["since"] = json!(ts);
+            }
+        }
+        cli_dispatch(backend, nomen, "message.query", &params).await?
     };
 
-    let messages = result["messages"].as_array();
-    if messages.map(|m| m.is_empty()).unwrap_or(true) {
+    // message.query returns { events: [...] }, message.context returns { messages: [...] }
+    let events = result["events"].as_array().or_else(|| result["messages"].as_array());
+    if events.map(|m| m.is_empty()).unwrap_or(true) {
         println!("No messages found.");
         return Ok(());
     }
-    let messages = messages.unwrap();
+    let events = events.unwrap();
 
-    println!("\n{}\n{}", "Raw Messages".bold(), "═".repeat(60));
+    println!("\n{}\n{}", "Messages".bold(), "═".repeat(60));
 
-    for msg in messages {
-        let msg_source = msg["source"].as_str().unwrap_or("");
-        let msg_sender = msg["sender"].as_str().unwrap_or("");
-        let msg_channel = msg["channel"].as_str().unwrap_or("");
-        let msg_content = msg["content"].as_str().unwrap_or("");
-        let msg_created = msg["created_at"].as_str().unwrap_or("");
-        let consolidated = msg["consolidated"].as_bool().unwrap_or(false);
+    for event in events {
+        // Try 30100 event format first (from message.query)
+        let tags = event["tags"].as_array();
+        if let Some(tags) = tags {
+            let sender_tag = tags.iter().find(|t| t[0] == "sender");
+            let chat_tag = tags.iter().find(|t| t[0] == "chat");
+            let proxy_tag = tags.iter().find(|t| t[0] == "proxy");
 
-        let channel_display = if msg_channel.is_empty() {
-            String::new()
+            let msg_sender = sender_tag.and_then(|t| t[1].as_str()).unwrap_or("");
+            let msg_chat = chat_tag.and_then(|t| t[1].as_str()).unwrap_or("");
+            let msg_platform = proxy_tag.and_then(|t| t[2].as_str()).unwrap_or("");
+            let msg_content = event["content"].as_str().unwrap_or("");
+            let msg_created = event["created_at"].as_i64().unwrap_or(0);
+
+            let chat_display = if msg_chat.is_empty() {
+                String::new()
+            } else {
+                format!(" #{msg_chat}")
+            };
+
+            println!(
+                "\n  [{}] {}{}\n    {}",
+                msg_platform,
+                msg_sender.bold(),
+                chat_display,
+                msg_content
+            );
+            if msg_created > 0 {
+                println!("    {}", format!("{msg_created}").dimmed());
+            }
         } else {
-            format!(" #{}", msg_channel)
-        };
-        let consolidated_marker = if consolidated {
-            " [consolidated]".dimmed().to_string()
-        } else {
-            String::new()
-        };
+            // Flat format (from message.context)
+            let msg_sender = event["sender"].as_str().unwrap_or("");
+            let msg_chat = event["chat"].as_str().unwrap_or("");
+            let msg_platform = event["platform"].as_str().unwrap_or("");
+            let msg_content = event["content"].as_str().unwrap_or("");
+            let msg_created = event["created_at"].as_i64().unwrap_or(0);
 
-        println!(
-            "\n  [{}] {}{}{}\n    {}",
-            msg_source,
-            msg_sender.bold(),
-            channel_display,
-            consolidated_marker,
-            msg_content
-        );
-        println!("    {}", msg_created.dimmed());
+            let chat_display = if msg_chat.is_empty() {
+                String::new()
+            } else {
+                format!(" #{msg_chat}")
+            };
+
+            println!(
+                "\n  [{}] {}{}\n    {}",
+                msg_platform,
+                msg_sender.bold(),
+                chat_display,
+                msg_content
+            );
+            if msg_created > 0 {
+                println!("    {}", format!("{msg_created}").dimmed());
+            }
+        }
     }
 
-    println!("\n{}: {} messages\n", "Total".bold(), messages.len());
+    println!("\n{}: {} messages\n", "Total".bold(), events.len());
     Ok(())
 }
 
-pub async fn cmd_delete_ephemeral(backend: &Backend, nomen: Option<&Nomen>, older_than: Option<&str>) -> Result<()> {
+pub async fn cmd_delete_old_messages(backend: &Backend, nomen: Option<&Nomen>, older_than: Option<&str>) -> Result<()> {
     if matches!(backend, Backend::Http(..)) {
         bail!("This command requires direct DB access. Stop the nomen service first.");
     }
     let older_than = older_than.ok_or_else(|| {
-        anyhow::anyhow!("--older-than is required with --ephemeral (e.g. --older-than 7d)")
+        anyhow::anyhow!("--older-than is required (e.g. --older-than 7d)")
     })?;
 
     let nomen = nomen.expect("Direct backend requires a Nomen instance");
-    let count = nomen.delete_ephemeral(older_than).await?;
+    let count = nomen.delete_old_messages(older_than).await?;
 
     if count == 0 {
-        println!("No ephemeral messages older than {older_than} to delete.");
+        println!("No consolidated messages older than {older_than} to delete.");
     } else {
         println!(
-            "{}: {} ephemeral messages deleted (older than {older_than})",
+            "{}: {} consolidated messages deleted (older than {older_than})",
             "Deleted".red().bold(),
             count
         );

@@ -14,7 +14,9 @@ use anyhow::{Context, Result};
 use nostr_sdk::prelude::*;
 use tracing::{debug, info, warn};
 
-use nomen_core::kinds::{LEGACY_APP_DATA_KIND, LEGACY_LESSON_KIND, LESSON_KIND, MEMORY_KIND};
+use nomen_core::kinds::{
+    COLLECTED_MESSAGE_KIND, LEGACY_APP_DATA_KIND, LEGACY_LESSON_KIND, LESSON_KIND, MEMORY_KIND,
+};
 use nomen_core::signer::NomenSigner;
 
 /// Result of publishing an event to relays.
@@ -124,6 +126,72 @@ impl RelayManager {
 
         info!(count = events.len(), "Fetched memory events");
         Ok(events)
+    }
+
+    /// Fetch collected message events (kind 30100) for the given pubkeys.
+    pub async fn fetch_collected_messages(&self, pubkeys: &[PublicKey]) -> Result<Events> {
+        let filter = Filter::new()
+            .kinds(vec![Kind::Custom(COLLECTED_MESSAGE_KIND)])
+            .authors(pubkeys.to_vec());
+
+        debug!("Fetching collected messages for {} pubkeys", pubkeys.len());
+        let events = self
+            .client
+            .fetch_events(filter, self.config.timeout)
+            .await
+            .context("Failed to fetch collected messages from relay")?;
+
+        info!(count = events.len(), "Fetched collected message events");
+        Ok(events)
+    }
+
+    /// Sign an event builder, publish, and return the signed event alongside relay status.
+    ///
+    /// Use this when you need the signed event's id/sig (e.g. to store in DB).
+    pub async fn sign_and_publish(&self, builder: EventBuilder) -> Result<(Event, PublishResult)> {
+        let signed = self
+            .client
+            .sign_event_builder(builder)
+            .await
+            .context("Failed to sign event")?;
+
+        let output = self
+            .client
+            .send_event(&signed)
+            .await
+            .context("Failed to publish signed event")?;
+
+        let event_id = signed.id;
+
+        let accepted: Vec<String> = output.success.iter().map(|url| url.to_string()).collect();
+        let rejected: Vec<(String, String)> = output
+            .failed
+            .iter()
+            .map(|(url, reason)| (url.to_string(), reason.clone()))
+            .collect();
+
+        if accepted.is_empty() && !rejected.is_empty() {
+            warn!(
+                event_id = %event_id,
+                "Event rejected by all relays: {:?}",
+                rejected
+            );
+        } else {
+            debug!(
+                event_id = %event_id,
+                accepted = accepted.len(),
+                rejected = rejected.len(),
+                "Event signed and published"
+            );
+        }
+
+        let publish_result = PublishResult {
+            event_id,
+            accepted,
+            rejected,
+        };
+
+        Ok((signed, publish_result))
     }
 
     /// Publish an event and inspect the Output for accepted/rejected relay status.

@@ -46,7 +46,6 @@ pub async fn cmd_prune(backend: &Backend, nomen: Option<&Nomen>, days: u64, dry_
     let result = cli_dispatch(backend, nomen, "memory.prune", &json!({"days": days, "dry_run": dry_run})).await?;
 
     let memories_pruned = result["memories_pruned"].as_u64().unwrap_or(0);
-    let raw_messages_pruned = result["raw_messages_pruned"].as_u64().unwrap_or(0);
 
     if let Some(pruned) = result["pruned"].as_array() {
         if pruned.is_empty() {
@@ -84,22 +83,6 @@ pub async fn cmd_prune(backend: &Backend, nomen: Option<&Nomen>, days: u64, dry_
         }
     } else {
         println!("No memories eligible for pruning.");
-    }
-
-    if raw_messages_pruned > 0 {
-        if dry_run {
-            println!(
-                "{}: Would also prune {} consolidated raw messages",
-                "[DRY RUN]".yellow().bold(),
-                raw_messages_pruned
-            );
-        } else {
-            println!(
-                "{}: {} consolidated raw messages pruned",
-                "Pruned".green().bold(),
-                raw_messages_pruned
-            );
-        }
     }
 
     Ok(())

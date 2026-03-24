@@ -243,7 +243,8 @@ mod dispatch_tests {
             ("memory_list", "memory.list"),
             ("memory_delete", "memory.delete"),
             ("message_ingest", "message.ingest"),
-            ("message_list", "message.list"),
+            ("message_search", "message.search"),
+            ("message_query", "message.query"),
             ("message_context", "message.context"),
             ("message_send", "message.send"),
             ("memory_consolidate", "memory.consolidate"),
@@ -450,7 +451,7 @@ mod operations_tests {
     }
 
     #[tokio::test]
-    async fn message_ingest_list() {
+    async fn message_ingest_search() {
         let (nomen, _tmp) = super::test_nomen().await.unwrap();
 
         let ingest_resp = nomen::api::dispatch(
@@ -466,21 +467,23 @@ mod operations_tests {
         )
         .await;
         assert!(ingest_resp.ok, "ingest failed: {:?}", ingest_resp.error);
-        assert!(ingest_resp.result.unwrap()["id"].as_str().is_some());
+        let result = ingest_resp.result.unwrap();
+        assert!(result["d_tag"].as_str().is_some());
+        assert!(result["stored"].as_bool().unwrap());
 
-        let list_resp = nomen::api::dispatch(
+        let search_resp = nomen::api::dispatch(
             &nomen,
             "test",
-            "message.list",
-            &json!({"source": "test-apiv2"}),
+            "message.search",
+            &json!({"query": "Hello API v2"}),
         )
         .await;
-        assert!(list_resp.ok, "message.list failed: {:?}", list_resp.error);
-        let result = list_resp.result.unwrap();
-        let messages = result["messages"].as_array().unwrap();
-        assert!(messages
+        assert!(search_resp.ok, "message.search failed: {:?}", search_resp.error);
+        let result = search_resp.result.unwrap();
+        let events = result["events"].as_array().unwrap();
+        assert!(events
             .iter()
-            .any(|m| m["content"] == "Hello from API v2 test"));
+            .any(|e| e["content"].as_str().unwrap_or("").contains("Hello from API v2 test")));
     }
 
     #[tokio::test]

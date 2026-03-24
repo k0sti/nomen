@@ -8,8 +8,9 @@ use std::sync::Arc;
 use anyhow::Result;
 use async_trait::async_trait;
 
+use nomen_core::collected::{CollectedEvent, CollectedEventFilter};
+use nomen_media::MediaRef;
 use nomen_core::groups::Group;
-use nomen_core::ingest::{MessageQuery, RawMessage};
 use nomen_core::ops::{
     ClusterParams, ConsolidateParams, EmbedReport, ListOptions, SyncReport,
 };
@@ -18,7 +19,10 @@ use nomen_core::send::{SendOptions, SendResult};
 use nomen_core::session::ResolvedSession;
 use nomen_core::signer::NomenSigner;
 use nomen_core::NewMemory;
-use nomen_db::{EntityRecord, MemoryRecord, PruneReport, RawMessageRecord, RelationshipRecord};
+use nomen_db::{
+    CollectedMessageRecord, CollectedSearchResult, EntityRecord, MemoryRecord, PruneReport,
+    RelationshipRecord,
+};
 use nomen_llm::cluster::ClusterReport;
 use nomen_llm::consolidate::{BatchExtraction, CommitResult, ConsolidationReport, PrepareResult};
 
@@ -67,16 +71,34 @@ impl NomenBackend for SessionBackend {
         self.inner.list(opts).await
     }
 
-    async fn ingest_message(&self, msg: RawMessage) -> Result<String> {
-        self.inner.ingest_message(msg).await
-    }
-
-    async fn get_messages(&self, opts: MessageQuery) -> Result<Vec<RawMessageRecord>> {
-        self.inner.get_messages(opts).await
-    }
-
     async fn send(&self, opts: SendOptions) -> Result<SendResult> {
         self.inner.send(opts).await
+    }
+
+    async fn store_collected_event(
+        &self,
+        event: CollectedEvent,
+    ) -> Result<nomen_db::collected::StoreResult> {
+        self.inner.store_collected_event(event).await
+    }
+
+    async fn query_collected_events(
+        &self,
+        filter: CollectedEventFilter,
+    ) -> Result<Vec<CollectedMessageRecord>> {
+        self.inner.query_collected_events(filter).await
+    }
+
+    async fn search_collected_events(
+        &self,
+        query: &str,
+        filter: CollectedEventFilter,
+    ) -> Result<Vec<CollectedSearchResult>> {
+        self.inner.search_collected_events(query, filter).await
+    }
+
+    async fn store_media(&self, data: &[u8], mime_type: &str) -> Result<Option<MediaRef>> {
+        self.inner.store_media(data, mime_type).await
     }
 
     fn resolve_session(

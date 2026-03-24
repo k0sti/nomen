@@ -33,13 +33,24 @@ pub async fn prepare(
         None
     };
 
-    let messages = nomen_db::get_unconsolidated_messages_filtered(
+    // Fetch unconsolidated collected messages (kind 30100)
+    let cutoff_ts = cutoff.as_deref().and_then(|c| {
+        chrono::DateTime::parse_from_rfc3339(c)
+            .ok()
+            .map(|dt| dt.timestamp())
+    });
+    let collected = nomen_db::get_unconsolidated_collected(
         db,
         config.batch_size,
-        cutoff.as_deref(),
-        config.tier.as_deref(),
+        cutoff_ts,
     )
     .await?;
+
+    // Convert to RawMessageRecord for pipeline compatibility
+    let messages: Vec<nomen_db::RawMessageRecord> = collected
+        .iter()
+        .map(|cm| cm.to_raw_message_record())
+        .collect();
 
     if messages.len() < config.min_messages {
         return Ok(PrepareResult {
@@ -307,9 +318,9 @@ pub async fn commit(
         all_msg_ids.extend(msg_ids);
     }
 
-    // Mark messages as consolidated
+    // Mark collected messages as consolidated (permanent — no pruning)
     if !all_msg_ids.is_empty() {
-        nomen_db::mark_messages_consolidated(db, &all_msg_ids)
+        nomen_db::mark_collected_consolidated(db, &all_msg_ids)
             .await
             .ok();
     }

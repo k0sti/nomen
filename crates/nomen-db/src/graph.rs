@@ -64,15 +64,21 @@ pub async fn create_references_edge(
     Ok(())
 }
 
-/// Create a "consolidated_from" edge from a consolidated memory to a raw message.
+/// Create a "consolidated_from" edge from a consolidated memory to a collected message.
 pub async fn create_consolidated_edge(
     db: &Surreal<Db>,
     memory_id: &str,
-    raw_message_id: &str,
+    message_d_tag: &str,
 ) -> Result<()> {
-    db.query("RELATE $from->consolidated_from->$to")
+    // Use d_tag-based lookup since collected_message uses SurrealDB auto-generated IDs
+    db.query(
+        "LET $msg = (SELECT id FROM collected_message WHERE d_tag = $dtag LIMIT 1); \
+         IF $msg[0] != NONE THEN \
+           (RELATE $from->consolidated_from->$msg[0].id) \
+         END"
+    )
         .bind(("from", RecordId::new("memory", memory_id)))
-        .bind(("to", RecordId::new("raw_message", raw_message_id)))
+        .bind(("dtag", message_d_tag.to_string()))
         .await?
         .check()?;
     Ok(())

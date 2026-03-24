@@ -14,7 +14,6 @@ pub mod embed;
 pub mod entities;
 pub mod fs;
 pub mod groups;
-pub mod ingest;
 pub mod kinds;
 pub mod memory;
 pub mod relay;
@@ -77,6 +76,7 @@ pub struct Nomen {
     pub(crate) groups: GroupStore,
     pub(crate) signer: Option<Arc<dyn NomenSigner>>,
     pub(crate) event_tx: Option<broadcast::Sender<nomen_wire::Event>>,
+    pub(crate) media_store: Option<Box<dyn nomen_media::MediaStore>>,
 }
 
 pub use nomen_core::NewMemory;
@@ -134,6 +134,7 @@ impl Nomen {
             groups: GroupStore::empty(),
             signer: None,
             event_tx: None,
+            media_store: None,
         }
     }
 
@@ -156,6 +157,7 @@ impl Nomen {
             groups,
             signer,
             event_tx: None,
+            media_store: None,
         })
     }
 
@@ -202,6 +204,11 @@ impl Nomen {
     /// Get a reference to the group store.
     pub fn groups(&self) -> &GroupStore {
         &self.groups
+    }
+
+    /// Set the media store (e.g., BlossomStore).
+    pub fn set_media_store(&mut self, store: Box<dyn nomen_media::MediaStore>) {
+        self.media_store = Some(store);
     }
 
     /// Set the event emitter for push notifications (used by socket server).

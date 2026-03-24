@@ -39,9 +39,18 @@ async fn dispatch_inner(
 
         // Message domain
         "message.ingest" => operations::message::ingest(nomen, default_channel, params).await,
-        "message.list" => operations::message::list(nomen, default_channel, params).await,
         "message.context" => operations::message::context(nomen, default_channel, params).await,
+        "message.search" => operations::message::search(nomen, default_channel, params).await,
         "message.send" => operations::message::send_message(nomen, default_channel, params).await,
+        "message.store" => operations::message::store(nomen, default_channel, params).await,
+        "message.query" => operations::message::query(nomen, default_channel, params).await,
+        "message.store_media" => {
+            operations::message::store_media(nomen, default_channel, params).await
+        }
+        "message.import" => operations::message::import(nomen, default_channel, params).await,
+        "message.fetch_media" => {
+            operations::message::fetch_media(nomen, default_channel, params).await
+        }
 
         // Entity domain
         "entity.list" => operations::entity::list(nomen, default_channel, params).await,
@@ -96,9 +105,14 @@ pub fn mcp_tool_to_action(tool_name: &str) -> Option<String> {
             | "memory.list"
             | "memory.delete"
             | "message.ingest"
-            | "message.list"
             | "message.context"
+            | "message.search"
             | "message.send"
+            | "message.store"
+            | "message.query"
+            | "message.store_media"
+            | "message.import"
+            | "message.fetch_media"
             | "memory.consolidate"
             | "memory.consolidate_prepare"
             | "memory.consolidate_commit"

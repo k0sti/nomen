@@ -39,13 +39,24 @@ pub async fn consolidate(
         None
     };
 
-    let messages = nomen_db::get_unconsolidated_messages_filtered(
+    // Fetch unconsolidated collected messages (kind 30100)
+    let cutoff_ts = cutoff.as_deref().and_then(|c| {
+        chrono::DateTime::parse_from_rfc3339(c)
+            .ok()
+            .map(|dt| dt.timestamp())
+    });
+    let collected = nomen_db::get_unconsolidated_collected(
         db,
         config.batch_size,
-        cutoff.as_deref(),
-        config.tier.as_deref(),
+        cutoff_ts,
     )
     .await?;
+
+    // Convert to RawMessageRecord for pipeline compatibility
+    let messages: Vec<RawMessageRecord> = collected
+        .iter()
+        .map(|cm| cm.to_raw_message_record())
+        .collect();
 
     if messages.len() < config.min_messages {
         info!(
@@ -514,9 +525,9 @@ pub async fn consolidate(
         return Ok(report);
     }
 
-    // Mark all processed messages as consolidated
+    // Mark collected messages as consolidated (permanent — no pruning)
     if !all_consumed_msg_ids.is_empty() {
-        nomen_db::mark_messages_consolidated(db, &all_consumed_msg_ids).await?;
+        nomen_db::mark_collected_consolidated(db, &all_consumed_msg_ids).await?;
     }
 
     // Publish NIP-09 deletion events for consumed ephemerals
@@ -679,7 +690,7 @@ pub async fn check_consolidation_due(
     db: &Surreal<Db>,
     config: &nomen_core::config::MemoryConsolidationConfig,
 ) -> Result<ConsolidationStatus> {
-    let pending = nomen_db::count_unconsolidated_messages(db).await?;
+    let pending = nomen_db::count_unconsolidated_collected(db).await?;
     let last_run = nomen_db::get_meta(db, META_KEY_LAST_CONSOLIDATION).await?;
 
     // Check if count threshold exceeded

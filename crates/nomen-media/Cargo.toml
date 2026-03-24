@@ -1,0 +1,17 @@
+[package]
+name = "nomen-media"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+anyhow = "1.0"
+async-trait = "0.1"
+dirs = "5"
+hex = "0.4"
+serde = { version = "1.0", features = ["derive"] }
+sha2 = "0.10"
+tracing = "0.1"
+
+[dev-dependencies]
+tempfile = "3"
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }

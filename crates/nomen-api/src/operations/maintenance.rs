@@ -201,7 +201,6 @@ pub async fn prune(
 
     Ok(json!({
         "memories_pruned": report.memories_pruned,
-        "raw_messages_pruned": report.raw_messages_pruned,
         "dry_run": report.dry_run,
     }))
 }

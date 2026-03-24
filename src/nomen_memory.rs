@@ -234,7 +234,7 @@ impl Nomen {
         db::list_memories(&self.db, tier, limit).await
     }
 
-    /// Count memories: returns (total, named, pending_raw_messages).
+    /// Count memories: returns (total, named, pending_messages).
     pub async fn count_memories(&self) -> Result<(usize, usize, usize)> {
         db::count_memories_by_type(&self.db).await
     }
@@ -271,11 +271,14 @@ impl Nomen {
         Ok(ListReport { memories, stats })
     }
 
-    /// Delete ephemeral (raw) messages older than a duration string (e.g. "7d", "24h").
-    pub async fn delete_ephemeral(&self, older_than: &str) -> Result<usize> {
+    /// Delete consolidated messages older than a duration string (e.g. "7d", "24h").
+    ///
+    /// Only deletes messages that have already been consolidated.
+    /// Unconsolidated messages are preserved regardless of age.
+    pub async fn delete_old_messages(&self, older_than: &str) -> Result<usize> {
         let secs = crate::consolidate::parse_duration_str(older_than)?;
         let cutoff = chrono::Utc::now() - chrono::Duration::seconds(secs);
-        let cutoff_str = cutoff.to_rfc3339();
-        db::delete_ephemeral_before(&self.db, &cutoff_str).await
+        let cutoff_ts = cutoff.timestamp();
+        db::delete_collected_before(&self.db, cutoff_ts).await
     }
 }

@@ -107,7 +107,7 @@ async fn main() -> Result<()> {
                 } else {
                     None
                 };
-                cli::message::cmd_delete_ephemeral(&backend, nomen.as_ref(), older_than.as_deref()).await?;
+                cli::message::cmd_delete_old_messages(&backend, nomen.as_ref(), older_than.as_deref()).await?;
             } else {
                 let nomen = if matches!(backend, Backend::Direct) {
                     Some(build_nomen_with_relay(&config, &resolved).await?)
@@ -253,6 +253,17 @@ async fn main() -> Result<()> {
                 None
             };
             cli::admin::cmd_prune(&backend, nomen.as_ref(), days, dry_run).await?;
+        }
+        Command::Migrate { action } => {
+            let nomen = build_nomen_with_relay(&config, &resolved).await?;
+            match action {
+                cli::MigrateAction::Status => {
+                    cli::migrate::cmd_migrate_status(&nomen).await?;
+                }
+                cli::MigrateAction::Run { dry_run } => {
+                    cli::migrate::cmd_migrate_run(&nomen, dry_run).await?;
+                }
+            }
         }
         Command::Send {
             content,

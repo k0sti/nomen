@@ -9,8 +9,9 @@ use surrealdb::engine::local::Db;
 use surrealdb::Surreal;
 use tracing::{debug, info};
 
+use nomen_core::collected::CollectedEvent;
 use nomen_core::groups::GroupStore;
-use nomen_core::ingest::RawMessage;
+use nomen_core::kinds::COLLECTED_MESSAGE_KIND;
 use nomen_core::send::*;
 
 use crate::RelayManager;
@@ -34,37 +35,44 @@ pub async fn send_message(
         SendTarget::Public => send_public(relay, &opts.content).await?,
     };
 
-    // Store locally as raw_message
-    let (tier, scope) = match &opts.target {
+    // Store locally as kind 30100 collected event
+    let now = chrono::Utc::now().timestamp();
+    let sender_hex = relay.public_key().to_hex();
+    let d_tag = format!("nomen:{}", result.event_id);
+
+    let (chat_tag, platform_hint) = match &opts.target {
         SendTarget::Npub(npub) => {
             let pk = PublicKey::from_bech32(npub)
                 .map(|pk| pk.to_hex())
                 .unwrap_or_else(|_| npub.clone());
-            ("personal".to_string(), pk)
+            (Some(vec!["chat".to_string(), pk]), "nostr-dm")
         }
-        SendTarget::Group(group_id) => ("group".to_string(), group_id.clone()),
-        SendTarget::Public => ("public".to_string(), String::new()),
+        SendTarget::Group(group_id) => {
+            (Some(vec!["chat".to_string(), group_id.clone()]), "nostr-group")
+        }
+        SendTarget::Public => (None, "nostr"),
     };
 
-    let metadata = serde_json::json!({
-        "tier": tier,
-        "scope": scope,
-        "channel": channel,
-        "event_id": result.event_id,
-        "direction": "outbound",
-    });
+    let mut tags = vec![
+        vec!["d".to_string(), d_tag.clone()],
+        vec!["proxy".to_string(), d_tag.clone(), platform_hint.to_string()],
+        vec!["sender".to_string(), sender_hex],
+    ];
+    if let Some(chat) = chat_tag {
+        tags.push(chat);
+    }
 
-    let msg = RawMessage {
-        source: "nomen".to_string(),
-        source_id: Some(result.event_id.clone()),
-        sender: relay.public_key().to_hex(),
-        channel: Some(channel.to_string()),
+    let event = CollectedEvent {
+        kind: COLLECTED_MESSAGE_KIND,
+        created_at: now,
+        pubkey: relay.public_key().to_hex(),
+        tags,
         content: opts.content,
-        metadata: Some(metadata.to_string()),
-        created_at: None,
+        id: None,
+        sig: None,
     };
 
-    let _ = nomen_db::store_raw_message(db, &msg).await;
+    let _ = nomen_db::store_collected_event(db, &event).await;
 
     info!(
         event_id = %result.event_id,

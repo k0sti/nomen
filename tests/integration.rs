@@ -55,26 +55,37 @@ async fn test_ingest_and_consolidate() -> Result<()> {
     let (db, _tmp) = init_test_db().await?;
     let embedder = nomen::embed::NoopEmbedder;
 
-    // Ingest several messages
+    // Ingest messages as kind 30100 collected events
     for i in 0..5 {
-        let msg = nomen::ingest::RawMessage {
-            source: "test".to_string(),
-            source_id: Some(format!("msg-{i}")),
-            sender: "alice".to_string(),
-            channel: Some("general".to_string()),
+        let now = chrono::Utc::now().timestamp() + i;
+        let event = nomen_core::collected::CollectedEvent {
+            kind: nomen_core::kinds::COLLECTED_MESSAGE_KIND,
+            created_at: now,
+            pubkey: String::new(),
+            tags: vec![
+                vec!["d".to_string(), format!("test:msg-{i}")],
+                vec!["proxy".to_string(), format!("test:msg-{i}"), "test".to_string()],
+                vec!["sender".to_string(), "alice".to_string()],
+                vec!["chat".to_string(), "general".to_string()],
+            ],
             content: format!("Test message number {i} about Rust programming"),
-            metadata: None,
-            created_at: None,
+            id: None,
+            sig: None,
         };
-        nomen::ingest::ingest_message(&db, &msg).await?;
+        nomen::db::store_collected_event(&db, &event).await?;
     }
 
     // Verify messages were stored
-    let query = nomen::ingest::MessageQuery {
-        source: Some("test".to_string()),
-        ..Default::default()
+    let filter = nomen_core::collected::CollectedEventFilter {
+        platform: Some(vec!["test".to_string()]),
+        chat_id: None,
+        sender_id: None,
+        thread_id: None,
+        since: None,
+        until: None,
+        limit: None,
     };
-    let messages = nomen::ingest::get_messages(&db, &query).await?;
+    let messages = nomen::db::query_collected_events(&db, &filter).await?;
     assert_eq!(messages.len(), 5, "Should have 5 messages");
 
     // Run consolidation
@@ -92,13 +103,8 @@ async fn test_ingest_and_consolidate() -> Result<()> {
     );
 
     // Verify messages are marked consolidated
-    let query_consolidated = nomen::ingest::MessageQuery {
-        source: Some("test".to_string()),
-        consolidated_only: true,
-        ..Default::default()
-    };
-    let consolidated = nomen::ingest::get_messages(&db, &query_consolidated).await?;
-    assert_eq!(consolidated.len(), 5, "All messages should be consolidated");
+    let unconsolidated = nomen::db::get_unconsolidated_collected(&db, 100, None).await?;
+    assert_eq!(unconsolidated.len(), 0, "All messages should be consolidated");
 
     Ok(())
 }
@@ -188,33 +194,45 @@ async fn test_groups() -> Result<()> {
 }
 
 #[tokio::test]
-async fn test_prune() -> Result<()> {
+async fn test_collected_message_lifecycle() -> Result<()> {
     let (db, _tmp) = init_test_db().await?;
 
-    // Ingest messages with old timestamps
-    let old_date = "2025-01-01T00:00:00+00:00";
+    // Store collected events with old timestamps
+    let old_ts = chrono::DateTime::parse_from_rfc3339("2025-01-01T00:00:00+00:00")
+        .unwrap()
+        .timestamp();
     for i in 0..3 {
-        let msg = nomen::ingest::RawMessage {
-            source: "test".to_string(),
-            source_id: Some(format!("old-{i}")),
-            sender: "bob".to_string(),
-            channel: Some("general".to_string()),
+        let event = nomen_core::collected::CollectedEvent {
+            kind: nomen_core::kinds::COLLECTED_MESSAGE_KIND,
+            created_at: old_ts + i,
+            pubkey: String::new(),
+            tags: vec![
+                vec!["d".to_string(), format!("test:old-{i}")],
+                vec!["proxy".to_string(), format!("test:old-{i}"), "test".to_string()],
+                vec!["sender".to_string(), "bob".to_string()],
+                vec!["chat".to_string(), "general".to_string()],
+            ],
             content: format!("Old message {i}"),
-            metadata: None,
-            created_at: Some(old_date.to_string()),
+            id: None,
+            sig: None,
         };
-        nomen::ingest::ingest_message(&db, &msg).await?;
+        nomen::db::store_collected_event(&db, &event).await?;
     }
 
-    // Mark them consolidated
-    let query = nomen::ingest::MessageQuery::default();
-    let msgs = nomen::ingest::get_messages(&db, &query).await?;
-    let ids: Vec<String> = msgs.iter().map(|m| m.id.clone()).collect();
-    nomen::db::mark_messages_consolidated(&db, &ids).await?;
+    // Verify they're unconsolidated
+    let unconsolidated = nomen::db::get_unconsolidated_collected(&db, 100, None).await?;
+    assert_eq!(unconsolidated.len(), 3);
 
-    // Prune messages older than 2025-06-01
-    let pruned = nomen::db::prune_old_messages(&db, "2025-06-01T00:00:00+00:00").await?;
-    assert_eq!(pruned, 3, "Should prune all 3 old consolidated messages");
+    // Mark them consolidated
+    let d_tags: Vec<String> = unconsolidated.iter().map(|m| m.d_tag.clone()).collect();
+    nomen::db::mark_collected_consolidated(&db, &d_tags).await?;
+
+    // Verify they're now consolidated (messages stay, flag changes)
+    let unconsolidated = nomen::db::get_unconsolidated_collected(&db, 100, None).await?;
+    assert_eq!(unconsolidated.len(), 0, "All should be consolidated");
+
+    let total = nomen::db::count_collected_events(&db, None).await?;
+    assert_eq!(total, 3, "Messages are permanent — not deleted");
 
     Ok(())
 }

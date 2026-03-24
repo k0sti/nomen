@@ -47,6 +47,54 @@ impl Nomen {
             }
         }
 
+        // Sync collected messages (kind 30100)
+        match relay.fetch_collected_messages(&pubkeys).await {
+            Ok(collected_events) => {
+                for event in collected_events.into_iter() {
+                    let d_tag_val = memory::get_tag_value(&event.tags, "d")
+                        .unwrap_or_default();
+                    if d_tag_val.is_empty() {
+                        continue;
+                    }
+
+                    let tags: Vec<Vec<String>> = event
+                        .tags
+                        .iter()
+                        .map(|tag| {
+                            tag.as_slice().iter().map(|s| s.to_string()).collect()
+                        })
+                        .collect();
+
+                    let collected = nomen_core::collected::CollectedEvent {
+                        kind: nomen_core::kinds::COLLECTED_MESSAGE_KIND,
+                        created_at: event.created_at.as_u64() as i64,
+                        pubkey: event.pubkey.to_hex(),
+                        tags,
+                        content: event.content.to_string(),
+                        id: Some(event.id.to_hex()),
+                        sig: Some(event.sig.to_string()),
+                    };
+
+                    match nomen_db::store_collected_event(&self.db, &collected).await {
+                        Ok(result) => {
+                            if result.stored && !result.replaced {
+                                stored += 1;
+                            } else {
+                                skipped += 1;
+                            }
+                        }
+                        Err(e) => {
+                            tracing::warn!("Failed to store collected event {d_tag_val}: {e}");
+                            errors += 1;
+                        }
+                    }
+                }
+            }
+            Err(e) => {
+                tracing::warn!("Failed to fetch collected messages from relay: {e}");
+            }
+        }
+
         self.emit_event("sync.complete", serde_json::json!({
             "stored": stored,
             "skipped": skipped,

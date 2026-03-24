@@ -6,6 +6,7 @@ pub mod group;
 pub mod helpers;
 pub mod memory;
 pub mod message;
+pub mod migrate;
 pub mod server;
 pub mod sync;
 
@@ -214,6 +215,11 @@ pub enum Command {
         #[arg(long)]
         channel: Option<String>,
     },
+    /// Run database migrations
+    Migrate {
+        #[command(subcommand)]
+        action: MigrateAction,
+    },
     /// Interactive first-time setup wizard
     Init {
         /// Overwrite existing config without prompting
@@ -344,5 +350,17 @@ pub enum GroupAction {
         id: String,
         /// Member npub to remove
         npub: String,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum MigrateAction {
+    /// Show pending migrations and current DB state
+    Status,
+    /// Run all pending migrations
+    Run {
+        /// Preview what would be migrated without making changes
+        #[arg(long)]
+        dry_run: bool,
     },
 }

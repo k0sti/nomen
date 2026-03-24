@@ -55,9 +55,9 @@
     try {
       pruneResult = await $api.prune(pruneDays, pruneDryRun);
       if (pruneDryRun) {
-        showInfo(`Dry run: would prune ${pruneResult.memories_pruned} memories, ${pruneResult.raw_messages_pruned} raw messages`);
+        showInfo(`Dry run: would prune ${pruneResult.memories_pruned} memories`);
       } else {
-        showInfo(`Pruned ${pruneResult.memories_pruned} memories, ${pruneResult.raw_messages_pruned} raw messages`);
+        showInfo(`Pruned ${pruneResult.memories_pruned} memories`);
         await loadStats();
       }
     } catch (err: any) {
@@ -227,7 +227,7 @@
 
     {#if pruneResult}
       <div class="text-sm text-gray-400 mb-2">
-        {pruneResult.dry_run ? 'Would prune' : 'Pruned'}: {pruneResult.memories_pruned} memories, {pruneResult.raw_messages_pruned} raw messages
+        {pruneResult.dry_run ? 'Would prune' : 'Pruned'}: {pruneResult.memories_pruned} memories
       </div>
       {#if pruneResult.pruned.length > 0}
         <div class="max-h-48 overflow-y-auto border border-gray-700 rounded-lg">

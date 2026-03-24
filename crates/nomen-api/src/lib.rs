@@ -19,8 +19,9 @@ use std::sync::Arc;
 use anyhow::Result;
 use async_trait::async_trait;
 
+use nomen_core::collected::{CollectedEvent, CollectedEventFilter};
+use nomen_media::MediaRef;
 use nomen_core::groups::Group;
-use nomen_core::ingest::{MessageQuery, RawMessage};
 use nomen_core::ops::{
     ClusterParams, ConsolidateParams, EmbedReport, ListOptions, ListStats, SyncReport,
 };
@@ -29,8 +30,11 @@ use nomen_core::send::{SendOptions, SendResult};
 use nomen_core::session::ResolvedSession;
 use nomen_core::signer::NomenSigner;
 use nomen_core::NewMemory;
-use nomen_db::{EntityRecord, MemoryRecord, PruneReport, RawMessageRecord, RelationshipRecord};
-use nomen_llm::cluster::{ClusterReport};
+use nomen_db::{
+    CollectedMessageRecord, CollectedSearchResult, EntityRecord, MemoryRecord, PruneReport,
+    RelationshipRecord,
+};
+use nomen_llm::cluster::ClusterReport;
 use nomen_llm::consolidate::{
     BatchExtraction, CommitResult, ConsolidationReport, PrepareResult,
 };
@@ -64,14 +68,33 @@ pub trait NomenBackend: Send + Sync {
 
     // -- Messages --
 
-    /// Ingest a raw message; returns its id.
-    async fn ingest_message(&self, msg: RawMessage) -> Result<String>;
-
-    /// Query raw messages.
-    async fn get_messages(&self, opts: MessageQuery) -> Result<Vec<RawMessageRecord>>;
-
     /// Send a message via relay.
     async fn send(&self, opts: SendOptions) -> Result<SendResult>;
+
+    /// Store a kind 30100 collected event.
+    async fn store_collected_event(
+        &self,
+        event: CollectedEvent,
+    ) -> Result<nomen_db::collected::StoreResult>;
+
+    /// Query collected events with tag-based filtering.
+    async fn query_collected_events(
+        &self,
+        filter: CollectedEventFilter,
+    ) -> Result<Vec<CollectedMessageRecord>>;
+
+    /// BM25 fulltext search over collected messages.
+    async fn search_collected_events(
+        &self,
+        query: &str,
+        filter: CollectedEventFilter,
+    ) -> Result<Vec<CollectedSearchResult>>;
+
+    // -- Media --
+
+    /// Upload media to the configured media store.
+    /// Returns None if no media store is configured.
+    async fn store_media(&self, data: &[u8], mime_type: &str) -> Result<Option<MediaRef>>;
 
     // -- Session --
 
