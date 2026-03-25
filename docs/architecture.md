@@ -212,7 +212,7 @@ All sent messages are stored locally as `raw_message` with `source="nomen"`.
 Nomen now uses a simplified model:
 
 - **scope** = durable Nostr-native boundary used by memories and access control
-- **channel** = concrete message container where raw events were observed
+- **conversation container** = canonical `platform/community/chat/thread` hierarchy for normalized messages (legacy: `channel`)
 
 This replaces the earlier idea of making `session_id` the main integration handle.
 
@@ -269,7 +269,7 @@ All external operations are defined in the **canonical API layer** (`src/api/dis
 | Maintenance | `memory.consolidate`, `memory.cluster`, `memory.sync`, `memory.embed`, `memory.prune` |
 | Group | `group.list`, `group.members`, `group.create`, `group.add_member`, `group.remove_member` |
 
-All operations use canonical fields: `visibility`, `scope`, `channel`, `topic`.
+All operations use canonical fields: `visibility`, `scope`, `topic`, and for messages: `platform`, optional `community`, `chat`, optional `thread`.
 
 Responses use structured envelopes: `{ "ok": true, "result": { ... } }` or `{ "ok": false, "error": { "code": "...", "message": "..." } }`.
 

@@ -76,14 +76,18 @@ pub async fn prepare(
 
         let derived_tier = derive_tier_from_messages(group_msgs);
         let most_restrictive = if group_msgs.iter().any(|m| {
+            let container = super::grouping::primary_container_id(m);
             m.source == "dm"
                 || m.source == "telegram_dm"
-                || (m.source == "nostr" && (m.channel.is_empty() || m.channel == "dm"))
+                || (m.source == "nostr" && (container.is_empty() || container == "dm"))
         }) {
             "personal"
         } else if group_msgs
             .iter()
-            .any(|m| !m.channel.is_empty() && m.channel != "dm" && m.channel != "general")
+            .any(|m| {
+                let container = super::grouping::primary_container_id(m);
+                !container.is_empty() && container != "dm" && container != "general"
+            })
         {
             "group"
         } else {

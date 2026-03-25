@@ -6,7 +6,9 @@ use nomen_db::RawMessageRecord;
 
 use super::types::{GroupKey, TIME_WINDOW_SECS};
 
-fn primary_container_id(msg: &RawMessageRecord) -> String {
+/// Derive the primary conversation container identity from a message record,
+/// preferring canonical `chat_id/thread_id` over legacy `channel`.
+pub(crate) fn primary_container_id(msg: &RawMessageRecord) -> String {
     if !msg.thread_id.is_empty() {
         let chat = if msg.chat_id.is_empty() { &msg.channel } else { &msg.chat_id };
         if chat.is_empty() {
@@ -93,17 +95,17 @@ pub(crate) fn sanitize_topic_component(s: &str) -> String {
 pub(crate) fn derive_tier_from_messages(messages: &[RawMessageRecord]) -> String {
     // Check sources — if any message is from a DM-like source, treat as personal
     let has_dm = messages.iter().any(|m| {
-        // nostr DMs have source "nostr" and either empty channel or "dm" channel
-        (m.source == "nostr" && (m.channel.is_empty() || m.channel == "dm"))
+        let container = primary_container_id(m);
+        (m.source == "nostr" && (container.is_empty() || container == "dm"))
             || m.source == "telegram_dm"
             || m.source == "dm"
     });
 
     let has_group = messages.iter().any(|m| {
-        // Group messages have a non-empty channel that isn't "dm" or "general"
-        !m.channel.is_empty()
-            && m.channel != "dm"
-            && m.channel != "general"
+        let container = primary_container_id(m);
+        !container.is_empty()
+            && container != "dm"
+            && container != "general"
             && (m.source == "nostr" || m.source == "telegram" || m.source.starts_with("group"))
     });
 
@@ -173,15 +175,15 @@ fn extract_topic_suffix(sender: &str) -> Option<String> {
 /// This is used to partition messages so that different scopes are never
 /// consolidated together (cross-group guard, TODO #7).
 pub(crate) fn resolve_message_scope(msg: &RawMessageRecord) -> String {
+    let container = primary_container_id(msg);
     let is_dm = msg.source == "dm"
         || msg.source == "telegram_dm"
-        || (msg.source == "nostr" && (msg.channel.is_empty() || msg.channel == "dm"));
+        || (msg.source == "nostr" && (container.is_empty() || container == "dm"));
 
     if is_dm {
         return "personal".to_string();
     }
 
-    let container = primary_container_id(msg);
     let is_group = !container.is_empty()
         && container != "dm"
         && container != "general"

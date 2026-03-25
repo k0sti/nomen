@@ -36,7 +36,7 @@ The d-tag encodes three dimensions separated by colons:
 | **scope** | Nostr-native boundary — whose memory this is or where it belongs | group id, pubkey hash, circle hash, or empty |
 | **topic** | Subject identifier — what this memory is about | `api-patterns`, `ssh-config` |
 
-**Terminology:** `scope` is the durable Nostr-native boundary used by memories. Provider-specific transport/container details (Telegram topic IDs, Discord thread IDs, etc.) do **not** belong in `scope`; they belong in `channel` metadata attached to raw messages and provenance records.
+**Terminology:** `scope` is the durable Nostr-native boundary used by memories. Provider-specific transport/container details (Telegram topic IDs, Discord thread IDs, etc.) do **not** belong in `scope`; they belong in conversation-container metadata (canonical: `platform/community/chat/thread`) attached to collected messages and provenance records.
 
 ### Visibility Values
 
@@ -350,24 +350,23 @@ For verified owner-agent relationship, both must exist:
 
 Scope is the durable boundary for visibility, access control, and memory ownership.
 
-### Channel
+### Conversation Container (formerly "Channel")
 
-`channel` identifies the concrete conversation container where raw messages were observed. It is provider-specific and may refer to Nostr or bridged transports.
+Normalized collected messages use the canonical messaging hierarchy:
 
-Examples:
+**platform → community → chat → thread → message**
 
-- `nostr-group:wss://zooid.atlantislabs.space:techteam`
-- `nostr-dm:<peer-pubkey-hex>`
-- `telegram:-1003821690204:694`
-- `discord:<guild_id>:<channel_id>:<thread_id>`
+For details, see `collected-messages.md`.
+
+The legacy term `channel` referred to provider-specific container identity for raw messages. In canonical normalized data, prefer structured fields: `platform`, optional `community`, `chat`, optional `thread`.
 
 ### Rule
 
 - **Memories attach to scope.**
-- **Messages attach to channel and resolve to a scope.**
+- **Messages attach to their conversation container (platform/community/chat/thread) and resolve to a scope.**
 - Non-Nostr provider identifiers MUST NOT be embedded into the memory scope or d-tag.
 
-This keeps the durable memory model transport-neutral while still allowing multi-channel ingestion and provenance.
+This keeps the durable memory model transport-neutral while still allowing multi-container ingestion and provenance.
 
 ## 9. Relay Subscription Filters
 
