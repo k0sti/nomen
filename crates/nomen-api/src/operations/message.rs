@@ -38,6 +38,24 @@ pub async fn ingest(
         .get("channel")
         .and_then(|v| v.as_str())
         .map(String::from);
+    let platform = params
+        .get("platform")
+        .and_then(|v| v.as_str())
+        .map(String::from)
+        .or_else(|| Some(source.clone()));
+    let community_id = params
+        .get("community_id")
+        .and_then(|v| v.as_str())
+        .map(String::from);
+    let chat_id = params
+        .get("chat_id")
+        .and_then(|v| v.as_str())
+        .map(String::from)
+        .or_else(|| channel.clone());
+    let thread_id = params
+        .get("thread_id")
+        .and_then(|v| v.as_str())
+        .map(String::from);
     let source_id = params
         .get("source_id")
         .and_then(|v| v.as_str())
@@ -45,18 +63,28 @@ pub async fn ingest(
 
     let now = chrono::Utc::now().timestamp();
     let d_tag = if let Some(ref sid) = source_id {
-        format!("{source}:{sid}")
+        if let Some(ref chat) = chat_id {
+            format!("{}:{chat}:{sid}", platform.clone().unwrap_or_else(|| source.clone()))
+        } else {
+            format!("{source}:{sid}")
+        }
     } else {
         format!("{source}:{now}:{sender}")
     };
 
     let mut tags = vec![
         vec!["d".to_string(), d_tag.clone()],
-        vec!["proxy".to_string(), d_tag.clone(), source.clone()],
+        vec!["proxy".to_string(), d_tag.clone(), platform.clone().unwrap_or_else(|| source.clone())],
         vec!["sender".to_string(), sender.clone()],
     ];
-    if let Some(ref ch) = channel {
-        tags.push(vec!["chat".to_string(), ch.clone()]);
+    if let Some(ref community) = community_id {
+        tags.push(vec!["community".to_string(), community.clone()]);
+    }
+    if let Some(ref chat) = chat_id {
+        tags.push(vec!["chat".to_string(), chat.clone()]);
+    }
+    if let Some(ref thread) = thread_id {
+        tags.push(vec!["thread".to_string(), thread.clone()]);
     }
 
     let event = CollectedEvent {
@@ -79,6 +107,10 @@ pub async fn ingest(
         "stored": result.stored,
         "replaced": result.replaced,
         "source": source,
+        "platform": platform,
+        "community_id": community_id,
+        "chat_id": chat_id,
+        "thread_id": thread_id,
         "channel": channel,
     }))
 }

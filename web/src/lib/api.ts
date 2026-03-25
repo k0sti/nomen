@@ -60,6 +60,7 @@ export interface ConsolidateReport {
   messages_processed: number;
   memories_created: number;
   channels: string[];
+  containers?: string[];
 }
 
 export interface SearchOpts {

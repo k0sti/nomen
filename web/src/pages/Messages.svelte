@@ -83,7 +83,8 @@
     isSearchMode = true;
     expandedId = null;
     try {
-      // Use message.list with sender/channel filters; full-text search not yet in backend,
+      // Use message list/context compatibility filters; full-text search is still
+      // approximated client-side here for the web UI.
       // so we filter client-side for now
       const result = await $api.listMessages({
         source: sourceFilter || undefined,
@@ -247,7 +248,7 @@
     />
     <input
       type="text"
-      placeholder="Channel..."
+      placeholder="Chat / thread..."
       bind:value={channelFilter}
       onchange={applyFilters}
       class="px-3 py-2 min-h-11 w-40 bg-gray-900 border border-gray-700 rounded-lg text-sm text-gray-200 placeholder-gray-500 focus:border-accent-500 focus:outline-none"
