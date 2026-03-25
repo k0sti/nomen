@@ -73,6 +73,24 @@ nomen init
 nomen doctor
 ```
 
+## Claude via ACPX
+
+When driving Claude through the pinned OpenClaw ACPX install, do **not** assume `acpx claude exec` supports `--cwd`.
+
+Use:
+
+```bash
+cd /path/to/repo && /home/k0/work/openclaw/extensions/acpx/node_modules/.bin/acpx claude exec -f /tmp/task.txt
+```
+
+Not:
+
+```bash
+/home/k0/work/openclaw/extensions/acpx/node_modules/.bin/acpx claude exec --cwd /path/to/repo -f /tmp/task.txt
+```
+
+If the ACP runtime wrapper fails with generic `acpx` errors, retry with the direct pinned binary above.
+
 ## Config
 
 Config file: `~/.config/nomen/config.toml`

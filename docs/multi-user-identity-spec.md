@@ -225,7 +225,7 @@ Each session holds its own `Arc<dyn NomenSigner>`. Multiple sessions may share t
 
 **Memories** are tied to `event.pubkey` — shared across all sessions for the same identity. This is by design: an agent connecting from two channels should see the same knowledge.
 
-**Raw messages** are tied to their originating channel via the `channel` metadata field (e.g. `telegram:-1003821690204:694`). Multiple sessions with the same pubkey produce raw messages tagged to different channels, which consolidate into shared memories.
+**Raw messages / collected messages** are tied to their originating conversation container. In older/raw-message terminology this was the `channel` metadata field; in the normalized collected-message model it is represented as `platform` + optional `community` + `chat` + optional `thread` (for example Telegram topic messages still use the parent `chat_id` plus a separate `thread_id`). Multiple sessions with the same pubkey can produce messages in different chats/threads, which still consolidate into shared memories.
 
 ---
 
@@ -268,4 +268,4 @@ With per-session identity, access control becomes straightforward:
 1. **Session lifetime** — sessions are tied to the connection. Disconnect = session ends. No persistent server-side session state beyond the connection.
 2. **Trait sync→async** — `encrypt`/`decrypt` on `NomenSigner` will be made `async` for consistency with `sign_event` and to support NIP-46 cleanly. All callers already operate in async contexts.
 3. **Key rotation** — future feature, out of scope for this spec.
-4. **Multi-device** — multiple sessions with the same pubkey is supported and expected. Memories are shared (same `event.pubkey`), raw messages are separated by channel metadata.
+4. **Multi-device** — multiple sessions with the same pubkey is supported and expected. Memories are shared (same `event.pubkey`), while raw/collected messages remain separated by their messaging container metadata (`chat`, optional `thread`, etc.; legacy docs may call this `channel`).

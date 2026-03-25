@@ -16,9 +16,31 @@ The canonical operation model is transport-independent. HTTP, MCP, ContextVM, an
 | ------------ | ------ | ------------------------------------------------------------------------------------ |
 | `visibility` | enum   | `public \| group \| circle \| personal \| internal`                                  |
 | `scope`      | string | Stable durable boundary (group id, pubkey hex, circle hash, or empty for public)     |
-| `channel`    | string | Concrete provider/container identity for raw messages (e.g. `telegram:-100382:9225`) |
+| `channel`    | string | Legacy raw-message/container identity                                                |
 | `topic`      | string | Durable semantic memory identity (e.g. `project/nomen/api-v2`)                       |
 | `metadata`   | object | Optional host/container extras                                                       |
+
+### Normalized messaging hierarchy
+
+Canonical normalized messaging data now uses:
+
+**platform → community → chat → thread → message**
+
+Use structured fields/tags for collected messages:
+
+- `platform`
+- `community_id` / `community_type` (optional)
+- `chat_id` / `chat_type`
+- `thread_id` / `thread_type` (optional)
+- `message_id`
+
+For collected-message identity (`d` tag), use the smallest stable provider-native coordinate set sufficient for uniqueness, with default form:
+
+```text
+<platform>:<chat_id>:<message_id>
+```
+
+`channel` remains a legacy/raw-message transport term and should not be treated as the canonical normalized hierarchy model.
 
 ### Compatibility fields (deprecated, fallback only)
 

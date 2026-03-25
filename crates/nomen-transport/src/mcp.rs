@@ -201,7 +201,11 @@ fn v2_tools_list() -> Value {
                         "content": { "type": "string", "description": "Message content" },
                         "source": { "type": "string", "description": "Source system" },
                         "sender": { "type": "string", "description": "Sender identifier" },
-                        "channel": { "type": "string", "description": "Channel/room identity" },
+                        "channel": { "type": "string", "description": "Legacy raw-message chat/container identity" },
+                        "platform": { "type": "string", "description": "Normalized platform namespace" },
+                        "community_id": { "type": "string", "description": "Optional normalized community/container above chat" },
+                        "chat_id": { "type": "string", "description": "Normalized chat identifier" },
+                        "thread_id": { "type": "string", "description": "Optional normalized thread/topic identifier" },
                         "source_id": { "type": "string", "description": "Source-specific message ID" },
                         "metadata": { "type": "object", "description": "Arbitrary metadata" }
                     },
@@ -210,12 +214,15 @@ fn v2_tools_list() -> Value {
             },
             {
                 "name": "message_list",
-                "description": "Query raw messages with filters",
+                "description": "Query messages with normalized hierarchy filters",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
-                        "source": { "type": "string", "description": "Filter by source" },
-                        "channel": { "type": "string", "description": "Filter by channel" },
+                        "source": { "type": "string", "description": "Legacy source/platform filter" },
+                        "channel": { "type": "string", "description": "Legacy raw-message chat/container filter" },
+                        "#community": { "type": "array", "items": { "type": "string" }, "description": "Filter by normalized community_id" },
+                        "#chat": { "type": "array", "items": { "type": "string" }, "description": "Filter by normalized chat_id" },
+                        "#thread": { "type": "array", "items": { "type": "string" }, "description": "Filter by normalized thread_id" },
                         "sender": { "type": "string", "description": "Filter by sender" },
                         "since": { "type": "string", "description": "RFC3339 timestamp" },
                         "limit": { "type": "integer", "description": "Max results (default 50)" }

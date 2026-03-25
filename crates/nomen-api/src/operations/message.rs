@@ -91,6 +91,7 @@ pub async fn query(
 ) -> Result<Value, ApiError> {
     let filter = CollectedEventFilter {
         platform: extract_string_array(params, "#proxy"),
+        community_id: extract_string_array(params, "#community"),
         chat_id: extract_string_array(params, "#chat"),
         sender_id: extract_string_array(params, "#sender"),
         thread_id: extract_string_array(params, "#thread"),
@@ -136,6 +137,7 @@ pub async fn context(
 
     let filter = CollectedEventFilter {
         platform: extract_string_array(params, "#proxy"),
+        community_id: extract_string_array(params, "#community"),
         chat_id: extract_string_array(params, "#chat"),
         sender_id: extract_string_array(params, "#sender"),
         thread_id: extract_string_array(params, "#thread"),
@@ -154,11 +156,13 @@ pub async fn context(
         .map(|r| {
             json!({
                 "sender": r.sender_id,
+                "platform": r.platform,
+                "community": r.community_id,
                 "chat": r.chat_id,
                 "thread": r.thread_id,
+                "message_id": r.message_id,
                 "content": r.content,
                 "created_at": r.created_at,
-                "platform": r.platform,
             })
         })
         .collect();
@@ -186,6 +190,7 @@ pub async fn search(
 
     let filter = CollectedEventFilter {
         platform: extract_string_array(params, "#proxy"),
+        community_id: extract_string_array(params, "#community"),
         chat_id: extract_string_array(params, "#chat"),
         sender_id: extract_string_array(params, "#sender"),
         thread_id: extract_string_array(params, "#thread"),

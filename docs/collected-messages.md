@@ -2,6 +2,26 @@
 
 Nomen stores messages from any platform as Nostr events (kind 30100). Producers convert platform messages to this format and call `message.store`. Nomen indexes tags and serves queries. Messages are not individually embedded — they are consolidated into memories (same as existing consolidation pipeline), and those memories get embedded.
 
+## Canonical Messaging Hierarchy
+
+Normalized messaging data in Nomen uses this hierarchy:
+
+**platform → community → chat → thread → message**
+
+Definitions:
+
+- **platform** — external messaging ecosystem or protocol family (`telegram`, `discord`, `slack`, `signal`, `whatsapp`, `matrix`, `nostr`)
+- **community** — optional layer above chats when the platform has one (Discord guild/server, Slack workspace, Matrix space, WhatsApp community)
+- **chat** — primary access/visibility boundary for conversation
+- **thread** — optional sub-conversation inside a chat
+- **message** — atomic stored item
+
+Canonical identity shape:
+
+`platform + community? + chat + thread? + message`
+
+Important: this hierarchy is for **normalized message data**. It is separate from Nomen's memory model (`visibility`, `scope`, semantic memory `topic`).
+
 ## Event Schema
 
 ### Kind 30100 — Collected Message
@@ -62,16 +82,61 @@ One per chat. Content is JSON (structured metadata, not human text).
 | `d` | `["d", "<platform>:<chat_id>:<message_id>"]` | Unique replaceable identifier | NIP-33 |
 | `proxy` | `["proxy", "<platform>:<chat_id>:<message_id>", "<platform>"]` | Marks event as bridged from external protocol | NIP-48 |
 
-`d` tag format: `{platform}:{chat_id}:{message_id}`. This is the primary key.
+`d` is the primary key for a collected message.
+
+### d-tag formation rule
+
+Use the **smallest stable provider-native coordinate set sufficient to uniquely identify the logical message within its platform namespace**.
+
+Default form:
+
+```text
+<platform>:<chat_id>:<message_id>
+```
+
+Examples:
+
+```text
+telegram:-1003821690204:13943
+discord:channel456:msg999
+slack:C456:1712345680.002
+```
+
+Important rules:
+
+- Do **not** encode optional hierarchy layers positionally into `d` unless they are required for uniqueness.
+- `community` and `thread` normally live in their own tags/fields, not inside `d`.
+- For Telegram forum topics, if `message_id` is unique per chat, the correct `d` remains:
+
+```text
+telegram:<chat_id>:<message_id>
+```
+
+not:
+
+```text
+telegram:<chat_id>:<thread_id>:<message_id>
+```
+
+Only include `thread_id` in `d` for a platform if the provider's message identity is thread-local rather than chat-local.
+
+This keeps `d` short, stable, and unambiguous while preserving the full hierarchy in structured tags.
 
 `proxy` tag signals the event originated outside Nostr. Platform values: `telegram`, `discord`, `signal`, `whatsapp`, `slack`, `irc`, `matrix`, `email`, `nostr`.
 
-### Chat & Thread
+### Community, Chat & Thread
 
 | Tag | Format | Purpose |
 |---|---|---|
-| `chat` | `["chat", "<chat_id>", "<chat_name>", "<chat_type>"]` | Conversation. `chat_type`: `direct`, `group` |
-| `thread` | `["thread", "<thread_id>", "<thread_name>"]` | Forum topic or thread. Omitted for non-threaded |
+| `community` | `["community", "<community_id>", "<community_name>", "<community_type>"]` | Optional layer above chat (guild, workspace, space, community) |
+| `chat` | `["chat", "<chat_id>", "<chat_name>", "<chat_type>"]` | Primary conversation boundary. `chat_type`: `direct`, `group`, `channel` |
+| `thread` | `["thread", "<thread_id>", "<thread_name>"]` | Forum topic or thread inside a chat. Omitted for non-threaded |
+
+Notes:
+
+- `community` is optional and omitted on platforms without that layer.
+- `thread` is organizational subdivision inside a `chat`, not an independent access boundary.
+- Provider-native type labels may also be stored separately if needed (for example `guild`, `forum_topic`, `supergroup`).
 
 ### Sender
 

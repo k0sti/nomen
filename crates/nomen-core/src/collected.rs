@@ -41,6 +41,9 @@ pub struct CollectedEventFilter {
     /// Filter by platform (from `proxy` tag protocol field).
     #[serde(rename = "#proxy", default, skip_serializing_if = "Option::is_none")]
     pub platform: Option<Vec<String>>,
+    /// Filter by community_id (from `community` tag value[0]).
+    #[serde(rename = "#community", default, skip_serializing_if = "Option::is_none")]
+    pub community_id: Option<Vec<String>>,
     /// Filter by chat_id (from `chat` tag value[0]).
     #[serde(rename = "#chat", default, skip_serializing_if = "Option::is_none")]
     pub chat_id: Option<Vec<String>>,
@@ -96,6 +99,21 @@ impl CollectedEvent {
         self.tag_value("proxy", 1)
     }
 
+    /// Get the community_id from the `community` tag (value[0]).
+    pub fn community_id(&self) -> Option<&str> {
+        self.tag_value("community", 0)
+    }
+
+    /// Get the community name from the `community` tag (value[1]).
+    pub fn community_name(&self) -> Option<&str> {
+        self.tag_value("community", 1)
+    }
+
+    /// Get the community type from the `community` tag (value[2]).
+    pub fn community_type(&self) -> Option<&str> {
+        self.tag_value("community", 2)
+    }
+
     /// Get the chat_id from the `chat` tag (value[0]).
     pub fn chat_id(&self) -> Option<&str> {
         self.tag_value("chat", 0)
@@ -129,6 +147,16 @@ impl CollectedEvent {
     /// Get the thread name from the `thread` tag (value[1]).
     pub fn thread_name(&self) -> Option<&str> {
         self.tag_value("thread", 1)
+    }
+
+    /// Get the thread type from the `thread` tag (value[2]).
+    pub fn thread_type(&self) -> Option<&str> {
+        self.tag_value("thread", 2)
+    }
+
+    /// Get the provider-native message_id, derived from the final segment of the d-tag.
+    pub fn message_id(&self) -> Option<&str> {
+        self.d_tag()?.rsplit(':').next()
     }
 
     /// Get the message text content.
@@ -209,9 +237,10 @@ mod tests {
             "tags": [
                 ["d", "telegram:-1003821690204:13943"],
                 ["proxy", "telegram:-1003821690204:13943", "telegram"],
+                ["community", "acme", "Acme", "workspace"],
                 ["chat", "-1003821690204", "TechTeam", "group"],
                 ["sender", "60996061", "kosti", "koshdot"],
-                ["thread", "13939", "Message Bridge"],
+                ["thread", "13939", "Message Bridge", "topic"],
                 ["e", "event123", "", "reply"],
                 ["reply", "telegram:-1003821690204:13939"],
                 ["imeta", "url https://blossom.example/a1b2c3.jpg", "m image/jpeg", "x a1b2c3d4"]
@@ -235,6 +264,9 @@ mod tests {
         let event = CollectedEvent::from_json(&sample_event()).unwrap();
         assert_eq!(event.d_tag(), Some("telegram:-1003821690204:13943"));
         assert_eq!(event.platform(), Some("telegram"));
+        assert_eq!(event.community_id(), Some("acme"));
+        assert_eq!(event.community_name(), Some("Acme"));
+        assert_eq!(event.community_type(), Some("workspace"));
         assert_eq!(event.chat_id(), Some("-1003821690204"));
         assert_eq!(event.chat_name(), Some("TechTeam"));
         assert_eq!(event.chat_type(), Some("group"));
@@ -242,6 +274,8 @@ mod tests {
         assert_eq!(event.sender_name(), Some("kosti"));
         assert_eq!(event.thread_id(), Some("13939"));
         assert_eq!(event.thread_name(), Some("Message Bridge"));
+        assert_eq!(event.thread_type(), Some("topic"));
+        assert_eq!(event.message_id(), Some("13943"));
         assert_eq!(event.text(), "Explain 30100/30101 kinds");
         assert_eq!(
             event.reply_to(),

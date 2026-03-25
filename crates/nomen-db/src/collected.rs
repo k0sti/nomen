@@ -24,6 +24,10 @@ pub struct CollectedMessageRecord {
     #[serde(default, deserialize_with = "deserialize_option_string")]
     pub platform: Option<String>,
     #[serde(default, deserialize_with = "deserialize_option_string")]
+    pub community_id: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_option_string")]
+    pub community_type: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_option_string")]
     pub chat_id: Option<String>,
     #[serde(default, deserialize_with = "deserialize_option_string")]
     pub sender_id: Option<String>,
@@ -33,6 +37,10 @@ pub struct CollectedMessageRecord {
     pub chat_type: Option<String>,
     #[serde(default, deserialize_with = "deserialize_option_string")]
     pub chat_name: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_option_string")]
+    pub thread_type: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_option_string")]
+    pub message_id: Option<String>,
     #[serde(default)]
     pub consolidated: bool,
 }
@@ -80,11 +88,15 @@ pub async fn store_collected_event(
         created_at: i64,
         content: String,
         platform: Option<String>,
+        community_id: Option<String>,
+        community_type: Option<String>,
         chat_id: Option<String>,
         sender_id: Option<String>,
         thread_id: Option<String>,
         chat_type: Option<String>,
         chat_name: Option<String>,
+        thread_type: Option<String>,
+        message_id: Option<String>,
         consolidated: bool,
     }
 
@@ -96,11 +108,15 @@ pub async fn store_collected_event(
         created_at: event.created_at,
         content: event.content.clone(),
         platform: event.platform().map(String::from),
+        community_id: event.community_id().map(String::from),
+        community_type: event.community_type().map(String::from),
         chat_id: event.chat_id().map(String::from),
         sender_id: event.sender_id().map(String::from),
         thread_id: event.thread_id().map(String::from),
         chat_type: event.chat_type().map(String::from),
         chat_name: event.chat_name().map(String::from),
+        thread_type: event.thread_type().map(String::from),
+        message_id: event.message_id().map(String::from),
         consolidated: false,
     };
 
@@ -109,8 +125,9 @@ pub async fn store_collected_event(
         db.query(
             "UPDATE collected_message SET \
              event_json = $ej, kind = $k, pubkey = $pk, created_at = $ca, \
-             content = $ct, platform = $pl, chat_id = $ci, sender_id = $si, \
-             thread_id = $ti, chat_type = $ctp, chat_name = $cn \
+             content = $ct, platform = $pl, community_id = $coi, community_type = $cot, \
+             chat_id = $ci, sender_id = $si, thread_id = $ti, chat_type = $ctp, \
+             chat_name = $cn, thread_type = $tt, message_id = $mid \
              WHERE d_tag = $dtag",
         )
         .bind(("ej", record.event_json))
@@ -119,11 +136,15 @@ pub async fn store_collected_event(
         .bind(("ca", record.created_at))
         .bind(("ct", record.content))
         .bind(("pl", record.platform))
+        .bind(("coi", record.community_id))
+        .bind(("cot", record.community_type))
         .bind(("ci", record.chat_id))
         .bind(("si", record.sender_id))
         .bind(("ti", record.thread_id))
         .bind(("ctp", record.chat_type))
         .bind(("cn", record.chat_name))
+        .bind(("tt", record.thread_type))
+        .bind(("mid", record.message_id))
         .bind(("dtag", d_tag.clone()))
         .await?
         .check()?;
@@ -155,6 +176,13 @@ pub async fn query_collected_events(
             conditions.push("platform = $platform".to_string());
         } else if !platforms.is_empty() {
             conditions.push("platform IN $platforms".to_string());
+        }
+    }
+    if let Some(ref communities) = filter.community_id {
+        if communities.len() == 1 {
+            conditions.push("community_id = $community_id".to_string());
+        } else if !communities.is_empty() {
+            conditions.push("community_id IN $community_ids".to_string());
         }
     }
     if let Some(ref chats) = filter.chat_id {
@@ -194,8 +222,8 @@ pub async fn query_collected_events(
     let limit = filter.limit.unwrap_or(100);
     let sql = format!(
         "SELECT event_json, d_tag, kind, pubkey, created_at, content, \
-         platform, chat_id, sender_id, thread_id, chat_type, chat_name, \
-         consolidated \
+         platform, community_id, community_type, chat_id, sender_id, thread_id, \
+         chat_type, chat_name, thread_type, message_id, consolidated \
          FROM collected_message {where_clause} \
          ORDER BY created_at ASC LIMIT {limit}"
     );
@@ -207,6 +235,13 @@ pub async fn query_collected_events(
             q = q.bind(("platform", platforms[0].clone()));
         } else if !platforms.is_empty() {
             q = q.bind(("platforms", platforms.clone()));
+        }
+    }
+    if let Some(ref communities) = filter.community_id {
+        if communities.len() == 1 {
+            q = q.bind(("community_id", communities[0].clone()));
+        } else if !communities.is_empty() {
+            q = q.bind(("community_ids", communities.clone()));
         }
     }
     if let Some(ref chats) = filter.chat_id {
@@ -249,8 +284,8 @@ pub async fn get_collected_event(
     let result: Option<CollectedMessageRecord> = db
         .query(
             "SELECT event_json, d_tag, kind, pubkey, created_at, content, \
-             platform, chat_id, sender_id, thread_id, chat_type, chat_name, \
-             consolidated \
+             platform, community_id, community_type, chat_id, sender_id, thread_id, \
+             chat_type, chat_name, thread_type, message_id, consolidated \
              FROM collected_message WHERE d_tag = $dtag LIMIT 1",
         )
         .bind(("dtag", d_tag.to_string()))
@@ -296,8 +331,8 @@ pub async fn get_unconsolidated_collected(
     let where_clause = conditions.join(" AND ");
     let sql = format!(
         "SELECT event_json, d_tag, kind, pubkey, created_at, content, \
-         platform, chat_id, sender_id, thread_id, chat_type, chat_name, \
-         consolidated \
+         platform, community_id, community_type, chat_id, sender_id, thread_id, \
+         chat_type, chat_name, thread_type, message_id, consolidated \
          FROM collected_message WHERE {where_clause} \
          ORDER BY created_at ASC LIMIT {limit}"
     );
@@ -338,6 +373,8 @@ pub struct CollectedSearchResult {
     #[serde(default, deserialize_with = "deserialize_option_string")]
     pub platform: Option<String>,
     #[serde(default, deserialize_with = "deserialize_option_string")]
+    pub community_id: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_option_string")]
     pub chat_id: Option<String>,
     #[serde(default, deserialize_with = "deserialize_option_string")]
     pub sender_id: Option<String>,
@@ -365,6 +402,13 @@ pub async fn search_collected_events(
             conditions.push("platform = $platform".to_string());
         } else if !platforms.is_empty() {
             conditions.push("platform IN $platforms".to_string());
+        }
+    }
+    if let Some(ref communities) = filter.community_id {
+        if communities.len() == 1 {
+            conditions.push("community_id = $community_id".to_string());
+        } else if !communities.is_empty() {
+            conditions.push("community_id IN $community_ids".to_string());
         }
     }
     if let Some(ref chats) = filter.chat_id {
@@ -400,7 +444,7 @@ pub async fn search_collected_events(
 
     let sql = format!(
         "SELECT event_json, d_tag, kind, pubkey, created_at, content, \
-         platform, chat_id, sender_id, thread_id, \
+         platform, community_id, chat_id, sender_id, thread_id, \
          search::score(0) AS score \
          FROM collected_message {where_clause} \
          ORDER BY score DESC LIMIT {limit}"
@@ -413,6 +457,13 @@ pub async fn search_collected_events(
             q = q.bind(("platform", platforms[0].clone()));
         } else if !platforms.is_empty() {
             q = q.bind(("platforms", platforms.clone()));
+        }
+    }
+    if let Some(ref communities) = filter.community_id {
+        if communities.len() == 1 {
+            q = q.bind(("community_id", communities[0].clone()));
+        } else if !communities.is_empty() {
+            q = q.bind(("community_ids", communities.clone()));
         }
     }
     if let Some(ref chats) = filter.chat_id {

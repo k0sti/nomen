@@ -230,22 +230,28 @@ Scope is defined the same way everywhere memory uses it:
 
 ### Channel
 
-Channel is provider-specific transport/container identity. Examples:
+`channel` is a legacy/raw-message term for provider-specific container identity.
 
-- `nostr-group:wss://zooid.atlantislabs.space:techteam`
-- `nostr-dm:<peer-pubkey-hex>`
-- `telegram:-1003821690204:694`
-- `discord:<guild_id>:<channel_id>:<thread_id>`
+For normalized collected-message data, the canonical hierarchy is:
+
+**platform → community → chat → thread → message**
+
+Examples:
+
+- Telegram group chat: `platform=telegram`, `chat_id=-1003821690204`
+- Telegram forum topic: same `chat_id`, plus `thread_id=<topic_id>`
+- Discord threaded message: `platform=discord`, `community_id=<guild_id>`, `chat_id=<channel_id>`, `thread_id=<thread_id>`
 
 ### Rule
 
 - durable memories attach to **scope**
-- raw messages attach to **channel** and resolve to a scope
-- channel metadata may vary across providers; scope semantics remain stable
+- normalized messages attach to **platform/community/chat/thread/message**
+- legacy raw-message `channel` metadata may still exist for compatibility and ingestion flows
+- provider/container details must not be embedded into durable memory d-tags
 
 ### Integration
 
-Host integrations should provide or resolve a `scope` for memory operations. They may also pass a `channel` when ingesting or querying raw message history, but channel/provider details should not be embedded into durable memory d-tags.
+Host integrations should provide or resolve a `scope` for memory operations. For messaging data, prefer structured fields/tags (`platform`, optional `community`, `chat`, optional `thread`) over overloading `channel` as a universal canonical term.
 
 ## Interfaces
 
