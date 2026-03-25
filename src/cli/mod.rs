@@ -125,7 +125,7 @@ pub enum Command {
         /// Sender identifier
         #[arg(long, default_value = "local")]
         sender: String,
-        /// Channel/room name
+        /// Legacy chat/container identifier for raw-message ingest
         #[arg(long)]
         channel: Option<String>,
     },
@@ -134,7 +134,7 @@ pub enum Command {
         /// Filter by source
         #[arg(long)]
         source: Option<String>,
-        /// Filter by channel
+        /// Filter by chat/container identifier (legacy `channel` flag name)
         #[arg(long)]
         channel: Option<String>,
         /// Filter by sender

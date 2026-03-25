@@ -437,7 +437,7 @@ Ingest a raw message for later consolidation.
 | `content` | string | ✅ | — | Message content |
 | `source` | string | — | `"unknown"` | Source system |
 | `sender` | string | — | `"unknown"` | Sender identifier |
-| `channel` | string | — | — | Channel/room identity |
+| `channel` | string | — | — | Legacy raw-message/container identity |
 | `source_id` | string | — | — | Source-specific message ID |
 | `metadata` | object | — | — | Arbitrary metadata |
 
@@ -457,6 +457,8 @@ Ingest a raw message for later consolidation.
 
 Query raw messages with filters.
 
+Note: this section still describes a legacy/raw-message compatibility surface. Canonical normalized collected-message queries should use structured hierarchy fields/tags (`platform`, optional `community`, `chat`, optional `thread`).
+
 **Request:**
 
 ```json
@@ -475,7 +477,7 @@ Query raw messages with filters.
 | Param | Type | Required | Default | Description |
 |-------|------|----------|---------|-------------|
 | `source` | string | — | — | Filter by source |
-| `channel` | string | — | — | Filter by channel |
+| `channel` | string | — | — | Legacy raw-message/container filter |
 | `sender` | string | — | — | Filter by sender |
 | `since` | string | — | — | RFC3339 timestamp |
 | `limit` | integer | — | 50 | Max results |
@@ -533,6 +535,8 @@ Get messages surrounding a specific message (context window).
 
 Trigger consolidation pipeline: group → extract → merge/dedup → store.
 
+Note: `channel` below is legacy naming from the raw-message compatibility layer. Canonical normalized grouping should be understood in terms of conversation-container hierarchy (`platform/community/chat/thread`).
+
 **Request:**
 
 ```json
@@ -552,7 +556,7 @@ Trigger consolidation pipeline: group → extract → merge/dedup → store.
 
 | Param | Type | Required | Default | Description |
 |-------|------|----------|---------|-------------|
-| `channel` | string | — | — | Filter by channel |
+| `channel` | string | — | — | Legacy raw-message/container filter |
 | `since` | string | — | — | Only messages since (RFC3339) |
 | `min_messages` | integer | — | 3 | Minimum messages to trigger |
 | `batch_size` | integer | — | 50 | Max messages per run |

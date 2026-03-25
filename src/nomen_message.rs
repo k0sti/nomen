@@ -80,7 +80,7 @@ impl Nomen {
         }
     }
 
-    /// Resolve a session ID to tier/scope/channel using the loaded groups.
+    /// Resolve a session ID to tier/scope/delivery-channel using the loaded groups.
     pub fn resolve_session(
         &self,
         session_id: &str,

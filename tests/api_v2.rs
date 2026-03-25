@@ -470,6 +470,9 @@ mod operations_tests {
         let result = ingest_resp.result.unwrap();
         assert!(result["d_tag"].as_str().is_some());
         assert!(result["stored"].as_bool().unwrap());
+        // `channel` is accepted here as a legacy raw-message/container field;
+        // canonical normalized hierarchy work flows through structured
+        // collected-message tags/fields instead.
 
         let search_resp = nomen::api::dispatch(
             &nomen,

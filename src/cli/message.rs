@@ -9,6 +9,11 @@ use nomen::Nomen;
 
 use super::helpers::{cli_dispatch, Backend};
 
+/// Ingest a message via the current raw-message compatibility path.
+///
+/// The `channel` parameter is legacy naming for the primary chat/container
+/// identifier. Canonical normalized messaging uses structured
+/// `platform/community/chat/thread` metadata.
 pub async fn cmd_ingest(
     backend: &Backend,
     nomen: Option<&Nomen>,
@@ -49,9 +54,9 @@ pub async fn cmd_messages(
     context_count: usize,
 ) -> Result<()> {
     let result = if let Some(_around_id) = around {
-        // Context query requires #chat filter
+        // Context query requires the primary chat/container identity.
         if channel.is_none() {
-            bail!("--around requires --channel to be set");
+            bail!("--around requires --channel to be set (legacy flag for chat/container identity)");
         }
         let params = json!({
             "#chat": [channel.unwrap()],

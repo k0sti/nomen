@@ -217,6 +217,11 @@ impl nomen_core::access::AccessCheckable for MemoryRecord {
 }
 
 /// A raw message as stored in SurrealDB (with DB-assigned id and consolidated flag).
+/// Legacy raw-message compatibility record.
+///
+/// Canonical normalized messaging data now lives in collected-message records
+/// using `platform/community/chat/thread/message`. This struct remains only as a
+/// compatibility bridge for older consolidation and migration paths.
 #[derive(Debug, Clone, Serialize, Deserialize, SurrealValue)]
 pub struct RawMessageRecord {
     #[serde(default, deserialize_with = "deserialize_thing_as_string")]
@@ -231,6 +236,8 @@ pub struct RawMessageRecord {
     #[serde(default)]
     #[surreal(default)]
     pub sender: String,
+    /// Legacy raw-message container field. In canonical normalized messaging,
+    /// prefer structured `platform/community/chat/thread` fields.
     #[serde(default)]
     #[surreal(default)]
     pub channel: String,
@@ -249,6 +256,10 @@ pub struct RawMessageRecord {
 }
 
 /// SurrealDB session record.
+///
+/// `channel` here means delivery/transport channel for session routing (for
+/// example `nostr` or `telegram`), not the canonical normalized conversation
+/// container hierarchy used by collected messages.
 #[derive(Debug, Clone, Serialize, Deserialize, SurrealValue)]
 pub struct SessionRecord {
     #[serde(default, deserialize_with = "deserialize_thing_as_string")]

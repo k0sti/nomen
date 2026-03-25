@@ -98,7 +98,7 @@ pub trait NomenBackend: Send + Sync {
 
     // -- Session --
 
-    /// Resolve a session ID to tier/scope/channel.
+    /// Resolve a session ID to tier/scope/delivery-channel.
     fn resolve_session(
         &self,
         session_id: &str,
