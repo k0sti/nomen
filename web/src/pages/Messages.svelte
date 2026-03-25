@@ -97,7 +97,11 @@
       const filtered = result.messages.filter(
         m => m.content.toLowerCase().includes(lower) ||
              m.sender.toLowerCase().includes(lower) ||
-             m.channel.toLowerCase().includes(lower)
+             (m.channel || '').toLowerCase().includes(lower) ||
+             (m.chat || '').toLowerCase().includes(lower) ||
+             (m.thread || '').toLowerCase().includes(lower) ||
+             (m.community || '').toLowerCase().includes(lower) ||
+             (m.platform || '').toLowerCase().includes(lower)
       );
       messages = filtered;
       msgCount = filtered.length;

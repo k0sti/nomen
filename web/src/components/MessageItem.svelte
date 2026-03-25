@@ -31,6 +31,12 @@
       ? message.content.slice(0, 120) + '...'
       : message.content
   );
+
+  const containerLabel = $derived.by(() => {
+    if (message.thread) return `${message.chat || message.channel || 'chat'} / ${message.thread}`;
+    if (message.chat) return message.chat;
+    return message.channel;
+  });
 </script>
 
 {#if compact}
@@ -54,8 +60,11 @@
     <div class="min-w-0 flex-1">
       <div class="flex items-center gap-2 text-xs flex-wrap">
         <span class="font-medium text-gray-300">{message.sender}</span>
-        {#if message.channel}
-          <span class="text-gray-600">#{message.channel}</span>
+        {#if containerLabel}
+          <span class="text-gray-600">#{containerLabel}</span>
+        {/if}
+        {#if message.platform}
+          <span class="px-1.5 py-0.5 rounded bg-gray-800 text-gray-500 text-[10px]">{message.platform}</span>
         {/if}
         {#if message.source}
           <span class="px-1.5 py-0.5 rounded bg-gray-800 text-gray-500 text-[10px]">{message.source}</span>

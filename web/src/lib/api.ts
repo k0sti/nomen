@@ -28,7 +28,13 @@ export interface Message {
   id: string;
   source: string;
   sender: string;
+  // Legacy raw-message field; prefer normalized hierarchy fields when present.
   channel: string;
+  platform?: string;
+  community?: string;
+  chat?: string;
+  thread?: string;
+  message_id?: string;
   content: string;
   metadata: string;
   consolidated: boolean;

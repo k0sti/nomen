@@ -96,11 +96,10 @@ LIMIT $batch_size
 
 ### Stage 2: Grouping
 
-Messages are grouped by **scope/channel identity + time window** before LLM processing:
+Messages are grouped by **scope + conversation-container identity + time window** before LLM processing:
 
 - **Scope:** Nostr-native durable boundary used for resulting memory visibility
-- **Channel:** concrete conversation container the messages came from
-- **Sub-channel:** forum topic or thread ID extracted from sender metadata (e.g. `topic:9225`)
+- **Conversation container:** canonical normalized message hierarchy (`platform → community? → chat → thread?`)
 - **Time window:** 4-hour blocks (configurable via `TIME_WINDOW_SECS`)
 - Groups smaller than `min_messages` are skipped (will be picked up in a later run when more messages accumulate)
 
@@ -112,7 +111,7 @@ Messages in #techteam/topic:8485     → Group D (8 messages)
 Messages in #techteam/topic:8399     → Group E (3 messages)
 ```
 
-**Forum topic partitioning:** Platforms like Telegram forums have multiple topics within a single chat. All topics share the same `channel` but the sender field encodes the topic (e.g. `telegram:group:-1003821690204:topic:9225`). The grouping logic extracts the topic suffix and appends it to the identity key, ensuring each forum topic is consolidated independently. This prevents unrelated conversations from being merged into the same memory batch.
+**Forum/thread partitioning:** Platforms like Telegram forums have multiple topics within a single chat. Canonically, these should partition on structured `thread_id` metadata within the normalized message hierarchy. Some legacy raw-message compatibility paths still recover topic identity from sender strings; those should be removed as the canonical collected-message path takes over fully.
 
 ### Stage 3: Extraction (LLM)
 
@@ -174,7 +173,7 @@ Each extracted memory becomes a kind 31234 replaceable event:
 - Group messages → `group` (scoped to that group)
 - Public/CLI → `public`
 
-Provider-specific channel/container identifiers remain provenance metadata; they do not become part of the durable memory d-tag.
+Provider-specific chat/thread/container identifiers remain provenance metadata; they do not become part of the durable memory d-tag.
 
 **Deduplication:** Before creating a new memory, check if a memory with the same topic d-tag already exists. If it does:
 1. Merge the new information into the existing memory

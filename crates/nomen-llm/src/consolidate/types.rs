@@ -54,6 +54,8 @@ pub struct ConsolidationReport {
     pub memories_updated: usize,
     pub events_deleted: usize,
     pub events_published: usize,
+    /// Legacy reporting field name. Values currently represent the primary
+    /// conversation container used during grouping (typically chat identity).
     pub channels: Vec<String>,
     pub groups: Vec<GroupSummary>,
     pub dry_run: bool,
@@ -70,7 +72,9 @@ pub struct GroupSummary {
 /// A group key for time-window grouping.
 #[derive(Debug, Clone, Hash, Eq, PartialEq)]
 pub(crate) struct GroupKey {
-    /// sender (for private) or channel (for group/general)
+    /// Sender identity for private batches, or primary conversation container
+    /// identity for group/public batches. In the current compatibility layer
+    /// this is still derived from legacy raw-message `channel` data.
     pub identity: String,
     /// Time window index (created_at / TIME_WINDOW_SECS)
     pub window: i64,

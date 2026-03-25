@@ -8,10 +8,10 @@ use super::types::{GroupKey, TIME_WINDOW_SECS};
 
 /// Derive a semantic topic name from a batch of messages.
 ///
-/// Uses the sender/channel info to produce topics like:
-/// - `user/<sender>/<channel>` for private messages
-/// - `group/<channel>/conversation` for group messages
-/// - `conversation/<channel>` as fallback
+/// Uses sender plus the current primary conversation-container identity to
+/// produce topics. Today this still flows through legacy raw-message `channel`
+/// compatibility data; longer-term it should derive from canonical
+/// `platform/community/chat/thread` fields.
 pub fn derive_topic_from_messages(messages: &[RawMessageRecord]) -> String {
     let mut senders: Vec<&str> = messages.iter().map(|m| m.sender.as_str()).collect();
     senders.sort();
@@ -69,9 +69,12 @@ pub(crate) fn sanitize_topic_component(s: &str) -> String {
 
 /// Derive the memory tier from a group of source messages.
 ///
-/// - DM messages (source "nostr" with sender npub, no group channel) -> "personal"
-/// - Group messages (channel matches a group pattern) -> "group"
-/// - Public/CLI/other -> "public"
+/// - DM-like messages -> `personal`
+/// - Group/container messages -> `group`
+/// - Public/CLI/other -> `public`
+///
+/// Note: the current implementation still infers this from legacy raw-message
+/// `channel` compatibility fields in some paths.
 pub(crate) fn derive_tier_from_messages(messages: &[RawMessageRecord]) -> String {
     // Check sources — if any message is from a DM-like source, treat as personal
     let has_dm = messages.iter().any(|m| {
@@ -128,8 +131,9 @@ pub(crate) fn enforce_tier_guard(derived_tier: &str, source_tier: &str) -> Strin
 
 /// Extract a forum topic suffix from a sender string.
 ///
-/// Telegram forum senders look like `telegram:group:-1003821690204:topic:9225`.
-/// This returns `Some("topic:9225")` for such senders, `None` otherwise.
+/// This is a legacy compatibility path for raw-message ingestion. Canonical
+/// collected-message flows should use structured `thread_id` metadata instead
+/// of parsing topic identity out of sender strings.
 fn extract_topic_suffix(sender: &str) -> Option<String> {
     // Match ":topic:<id>" anywhere in the sender string
     if let Some(idx) = sender.find(":topic:") {

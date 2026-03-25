@@ -18,7 +18,7 @@ use super::types::{
 pub(crate) const META_KEY_LAST_CONSOLIDATION: &str = "last_consolidation_run";
 
 /// Run the consolidation pipeline.
-/// 2. Group by sender/channel + 4-hour time windows
+/// 2. Group by sender/conversation-container identity + 4-hour time windows
 /// 3. Send each group to LLM provider for summarization
 /// 4. Store consolidated memories with provenance tags
 /// 5. Mark raw messages as consolidated
@@ -72,9 +72,11 @@ pub async fn consolidate(
 
     debug!(count = messages.len(), "Processing unconsolidated messages");
 
-    // Group messages by sender/channel + time window + scope
+    // Group messages by sender/container identity + time window + scope.
     // Scope partitioning ensures messages from different groups/tiers
     // are never consolidated together (cross-group guard).
+    // Current compatibility layer still derives container identity from
+    // legacy raw-message `channel` fields.
     let grouped = group_messages(messages.clone());
     debug!(
         groups = grouped.len(),
