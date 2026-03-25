@@ -35,6 +35,7 @@ pub async fn consolidate(
         "messages_processed": report.messages_processed,
         "memories_created": report.memories_created,
         "events_published": report.events_published,
+        "containers": report.channels,
         "channels": report.channels,
     }))
 }

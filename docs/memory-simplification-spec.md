@@ -1,5 +1,7 @@
 # Memory Simplification Spec
 
+> Status: historical/superseded design note. Keep only as background reference until any still-relevant decisions are merged into canonical docs.
+
 **Date:** 2026-03-22
 **Status:** Implementing
 

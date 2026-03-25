@@ -242,13 +242,24 @@ pub async fn consolidate(
                 }
 
                 if is_dedup_merge {
-                    // Track channel for reporting
-                    let channel = group_msgs
+                    // Track primary conversation container for reporting.
+                    let container = group_msgs
                         .first()
-                        .map(|m| m.channel.as_str())
-                        .unwrap_or("general");
-                    if !channel.is_empty() && !report.channels.contains(&channel.to_string()) {
-                        report.channels.push(channel.to_string());
+                        .map(|m| {
+                            if !m.thread_id.is_empty() {
+                                let chat = if m.chat_id.is_empty() { &m.channel } else { &m.chat_id };
+                                if chat.is_empty() { m.thread_id.clone() } else { format!("{chat}/{}", m.thread_id) }
+                            } else if !m.chat_id.is_empty() {
+                                m.chat_id.clone()
+                            } else if !m.channel.is_empty() {
+                                m.channel.clone()
+                            } else {
+                                "general".to_string()
+                            }
+                        })
+                        .unwrap_or_else(|| "general".to_string());
+                    if !container.is_empty() && !report.channels.contains(&container) {
+                        report.channels.push(container);
                     }
                     continue;
                 }

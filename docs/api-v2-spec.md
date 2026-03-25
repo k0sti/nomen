@@ -1,5 +1,7 @@
 # Nomen API v2 Specification
 
+> Status: partially legacy. This doc still describes compatibility surfaces that are being converged toward the canonical normalized collected-message model documented in `collected-messages.md` and summarized in `README.md`.
+
 **Status:** Draft  
 **Date:** 2026-03-12  
 **Project:** [[Nomen]]

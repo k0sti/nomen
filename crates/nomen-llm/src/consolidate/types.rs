@@ -55,7 +55,8 @@ pub struct ConsolidationReport {
     pub events_deleted: usize,
     pub events_published: usize,
     /// Legacy reporting field name. Values currently represent the primary
-    /// conversation container used during grouping (typically chat identity).
+    /// conversation container used during grouping (typically chat or
+    /// chat/thread identity).
     pub channels: Vec<String>,
     pub groups: Vec<GroupSummary>,
     pub dry_run: bool,
