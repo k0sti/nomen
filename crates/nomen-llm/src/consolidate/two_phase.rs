@@ -101,20 +101,26 @@ pub async fn prepare(
 
         let batch_messages: Vec<BatchMessage> = group_msgs
             .iter()
-            .map(|m| BatchMessage {
-                id: m.id.clone(),
-                sender: m.sender.clone(),
-                content: m.content.clone(),
-                channel: if !m.thread_id.is_empty() {
+            .map(|m| {
+                let container = if !m.thread_id.is_empty() {
                     let chat = if m.chat_id.is_empty() { &m.channel } else { &m.chat_id };
                     if chat.is_empty() { m.thread_id.clone() } else { format!("{chat}/{}", m.thread_id) }
                 } else if !m.chat_id.is_empty() {
                     m.chat_id.clone()
                 } else {
                     m.channel.clone()
-                },
-                source: m.source.clone(),
-                created_at: m.created_at.clone(),
+                };
+                BatchMessage {
+                    id: m.id.clone(),
+                    sender: m.sender.clone(),
+                    content: m.content.clone(),
+                    channel: container.clone(),
+                    container,
+                    chat: if m.chat_id.is_empty() { m.channel.clone() } else { m.chat_id.clone() },
+                    thread: m.thread_id.clone(),
+                    source: m.source.clone(),
+                    created_at: m.created_at.clone(),
+                }
             })
             .collect();
 

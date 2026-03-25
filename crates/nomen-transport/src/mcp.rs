@@ -279,11 +279,14 @@ fn v2_tools_list() -> Value {
             },
             {
                 "name": "memory_consolidate",
-                "description": "Trigger consolidation of raw messages into memories",
+                "description": "Trigger consolidation of messages into memories",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
-                        "channel": { "type": "string", "description": "Filter by channel" },
+                        "channel": { "type": "string", "description": "Legacy raw-message/container filter (planned compatibility surface)" },
+                        "#community": { "type": "array", "items": { "type": "string" }, "description": "Planned normalized community_id filter" },
+                        "#chat": { "type": "array", "items": { "type": "string" }, "description": "Planned normalized chat_id filter" },
+                        "#thread": { "type": "array", "items": { "type": "string" }, "description": "Planned normalized thread_id filter" },
                         "since": { "type": "string", "description": "Only messages since (RFC3339)" },
                         "min_messages": { "type": "integer", "description": "Minimum messages to trigger (default 3)" },
                         "batch_size": { "type": "integer", "description": "Max messages per run (default 50)" },

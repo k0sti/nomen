@@ -106,7 +106,12 @@ pub struct BatchMessage {
     pub id: String,
     pub sender: String,
     pub content: String,
+    /// Legacy compatibility field. Prefer `chat`/`thread` and `container`.
     pub channel: String,
+    /// Primary conversation identity used for grouping/reporting.
+    pub container: String,
+    pub chat: String,
+    pub thread: String,
     pub source: String,
     pub created_at: String,
 }
