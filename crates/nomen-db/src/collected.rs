@@ -528,6 +528,11 @@ impl CollectedMessageRecord {
             source_id: self.d_tag.clone(),
             sender: self.sender_id.clone().unwrap_or_default(),
             channel: self.chat_id.clone().unwrap_or_default(),
+            platform: self.platform.clone().unwrap_or_default(),
+            community_id: self.community_id.clone().unwrap_or_default(),
+            chat_id: self.chat_id.clone().unwrap_or_default(),
+            thread_id: self.thread_id.clone().unwrap_or_default(),
+            message_id: self.message_id.clone().unwrap_or_default(),
             content: self.content.clone(),
             metadata: String::new(),
             created_at: created_at_rfc3339,
@@ -626,18 +631,18 @@ pub async fn migrate_raw_to_collected(db: &Surreal<Db>) -> Result<usize> {
             pubkey: String::new(),
             created_at,
             content: msg.content.clone(),
-            platform: Some(msg.source.clone()),
-            chat_id: if msg.channel.is_empty() {
-                None
+            platform: Some(if msg.platform.is_empty() { msg.source.clone() } else { msg.platform.clone() }),
+            chat_id: if msg.chat_id.is_empty() {
+                if msg.channel.is_empty() { None } else { Some(msg.channel.clone()) }
             } else {
-                Some(msg.channel.clone())
+                Some(msg.chat_id.clone())
             },
             sender_id: if msg.sender.is_empty() {
                 None
             } else {
                 Some(msg.sender.clone())
             },
-            thread_id: None,
+            thread_id: if msg.thread_id.is_empty() { None } else { Some(msg.thread_id.clone()) },
             chat_type: None,
             chat_name: None,
             consolidated: msg.consolidated,

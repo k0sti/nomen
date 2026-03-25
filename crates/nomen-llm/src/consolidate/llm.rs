@@ -141,14 +141,19 @@ impl LlmProvider for OpenAiLlmProvider {
 
         let mut transcript = String::new();
         for msg in messages {
-            let channel = if msg.channel.is_empty() {
-                "general"
+            let container = if !msg.thread_id.is_empty() {
+                let chat = if msg.chat_id.is_empty() { &msg.channel } else { &msg.chat_id };
+                if chat.is_empty() { msg.thread_id.clone() } else { format!("{chat}/{}", msg.thread_id) }
+            } else if !msg.chat_id.is_empty() {
+                msg.chat_id.clone()
+            } else if !msg.channel.is_empty() {
+                msg.channel.clone()
             } else {
-                &msg.channel
+                "general".to_string()
             };
             transcript.push_str(&format!(
                 "[{}] #{} {}: {}\n",
-                msg.created_at, channel, msg.sender, msg.content
+                msg.created_at, container, msg.sender, msg.content
             ));
         }
 
@@ -225,14 +230,19 @@ The topic should remain the same as the existing memory's topic.";
         // Build message transcript
         let mut transcript = String::new();
         for msg in messages {
-            let channel = if msg.channel.is_empty() {
-                "general"
+            let container = if !msg.thread_id.is_empty() {
+                let chat = if msg.chat_id.is_empty() { &msg.channel } else { &msg.chat_id };
+                if chat.is_empty() { msg.thread_id.clone() } else { format!("{chat}/{}", msg.thread_id) }
+            } else if !msg.chat_id.is_empty() {
+                msg.chat_id.clone()
+            } else if !msg.channel.is_empty() {
+                msg.channel.clone()
             } else {
-                &msg.channel
+                "general".to_string()
             };
             transcript.push_str(&format!(
                 "[{}] #{} {}: {}\n",
-                msg.created_at, channel, msg.sender, msg.content
+                msg.created_at, container, msg.sender, msg.content
             ));
         }
 

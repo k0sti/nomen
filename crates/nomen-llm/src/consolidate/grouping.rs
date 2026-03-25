@@ -6,6 +6,21 @@ use nomen_db::RawMessageRecord;
 
 use super::types::{GroupKey, TIME_WINDOW_SECS};
 
+fn primary_container_id(msg: &RawMessageRecord) -> String {
+    if !msg.thread_id.is_empty() {
+        let chat = if msg.chat_id.is_empty() { &msg.channel } else { &msg.chat_id };
+        if chat.is_empty() {
+            msg.thread_id.clone()
+        } else {
+            format!("{chat}/{}", msg.thread_id)
+        }
+    } else if !msg.chat_id.is_empty() {
+        msg.chat_id.clone()
+    } else {
+        msg.channel.clone()
+    }
+}
+
 /// Derive a semantic topic name from a batch of messages.
 ///
 /// Uses sender plus the current primary conversation-container identity to
@@ -19,10 +34,10 @@ pub fn derive_topic_from_messages(messages: &[RawMessageRecord]) -> String {
 
     let channel = messages
         .first()
-        .map(|m| m.channel.as_str())
-        .unwrap_or("general");
+        .map(primary_container_id)
+        .unwrap_or_else(|| "general".to_string());
     let channel = if channel.is_empty() {
-        "general"
+        "general".to_string()
     } else {
         channel
     };
@@ -33,7 +48,7 @@ pub fn derive_topic_from_messages(messages: &[RawMessageRecord]) -> String {
         let sender_clean = sanitize_topic_component(sender);
         format!("user/{sender_clean}/conversation")
     } else {
-        let channel_clean = sanitize_topic_component(channel);
+        let channel_clean = sanitize_topic_component(&channel);
         format!("group/{channel_clean}/conversation")
     }
 }
@@ -166,13 +181,14 @@ pub(crate) fn resolve_message_scope(msg: &RawMessageRecord) -> String {
         return "personal".to_string();
     }
 
-    let is_group = !msg.channel.is_empty()
-        && msg.channel != "dm"
-        && msg.channel != "general"
+    let container = primary_container_id(msg);
+    let is_group = !container.is_empty()
+        && container != "dm"
+        && container != "general"
         && (msg.source == "nostr" || msg.source == "telegram" || msg.source.starts_with("group"));
 
     if is_group {
-        return format!("group:{}", msg.channel);
+        return format!("group:{container}");
     }
 
     "public".to_string()
@@ -199,10 +215,13 @@ pub(crate) fn group_messages(
         // For forum-style chats (Telegram topics), extract the topic suffix
         // from the sender field and append it to the channel identity so each
         // topic is consolidated independently.
-        let identity = if msg.channel.is_empty() || msg.channel == "general" {
+        let container = primary_container_id(&msg);
+        let identity = if container.is_empty() || container == "general" {
             msg.sender.clone()
+        } else if !msg.thread_id.is_empty() {
+            container
         } else {
-            let mut id = msg.channel.clone();
+            let mut id = container;
             if let Some(topic_suffix) = extract_topic_suffix(&msg.sender) {
                 id.push_str(&format!("/{topic_suffix}"));
             }

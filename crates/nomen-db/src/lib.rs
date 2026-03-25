@@ -241,6 +241,26 @@ pub struct RawMessageRecord {
     #[serde(default)]
     #[surreal(default)]
     pub channel: String,
+    /// Canonical normalized platform namespace, when available.
+    #[serde(default)]
+    #[surreal(default)]
+    pub platform: String,
+    /// Optional canonical community identifier, when available.
+    #[serde(default)]
+    #[surreal(default)]
+    pub community_id: String,
+    /// Canonical primary chat identifier, when available.
+    #[serde(default)]
+    #[surreal(default)]
+    pub chat_id: String,
+    /// Optional canonical thread/topic identifier, when available.
+    #[serde(default)]
+    #[surreal(default)]
+    pub thread_id: String,
+    /// Canonical provider-native message identifier, when available.
+    #[serde(default)]
+    #[surreal(default)]
+    pub message_id: String,
     #[serde(default)]
     #[surreal(default)]
     pub content: String,
