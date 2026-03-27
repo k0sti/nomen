@@ -527,6 +527,10 @@ const memoryNomenPlugin = {
       async (event: any, ctx: any) => {
         if (!event?.content) return;
 
+        api.logger.info(
+          `memory-nomen: message_received hook channel=${ctx?.channelId ?? "-"} conversation=${ctx?.conversationId ?? "-"} thread=${String(event?.metadata?.threadId ?? "-")} messageId=${String(event?.metadata?.messageId ?? "-")}`,
+        );
+
         const container = resolveContainer({
           channelId: ctx?.channelId,
           conversationId: ctx?.conversationId,
@@ -574,6 +578,10 @@ const memoryNomenPlugin = {
       "message_sent",
       async (event: any, ctx: any) => {
         if (!event?.content || !event.success) return;
+
+        api.logger.info(
+          `memory-nomen: message_sent hook channel=${ctx?.channelId ?? "-"} conversation=${ctx?.conversationId ?? "-"} thread=${String(event?.metadata?.threadId ?? "-")} messageId=${String(event?.metadata?.messageId ?? "-")}`,
+        );
 
         const container = resolveContainer({
           channelId: ctx?.channelId,

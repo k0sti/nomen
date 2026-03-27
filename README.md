@@ -16,58 +16,59 @@ Nomen gives AI agents persistent, searchable, shareable memory using [Nostr](htt
 |------|-------|-----------|----------|
 | **Public** | All agents on relay | None | General knowledge, facts |
 | **Group** | NIP-29 group members | Relay-gated | Team decisions, project context |
-| **Circle** | Ad-hoc participant set | NIP-44 | Shared project notes |
-| **Personal** | Agent + user | NIP-44 (user-scoped) | User preferences, history |
-| **Internal** | Agent only | NIP-44 (self-encrypt) | Reasoning, self-reflection |
+| **Circle** | Ad-hoc participant set | Shared symmetric key | Shared project notes |
+| **Personal** | Agent + specific user | NIP-44 self-encrypt | User preferences, history |
+| **Private** | Agent only | NIP-44 self-encrypt | Reasoning, self-reflection |
 
 ### Hybrid Search + Knowledge Graph
 
 - **Semantic + full-text** — HNSW vector similarity + BM25, weighted and composable
-- **Graph-aware retrieval** — Traverses entity connections, contradictions, and provenance chains from search hits (`--graph`, configurable `--hops`)
-- **Entity extraction** — Heuristic + LLM-powered via `EntityExtractor` trait with typed relationships (`works_on`, `collaborates_with`, `contradicts`)
-- **Cluster fusion** — Groups related memories by namespace and synthesizes coherent summaries via LLM
+- **Graph-aware retrieval** — Traverses entity connections, contradictions, and provenance chains (`--graph`, configurable `--hops`)
+- **Entity extraction** — Heuristic + LLM-powered with typed relationships
+- **Cluster fusion** — Groups related memories by namespace and synthesizes summaries
 - **Confidence decay** — Unaccessed memories lose ranking weight over time
-- **Importance scoring** — LLM assigns 1-10 importance at creation
 
 ### Sleep-Inspired Consolidation
 
-Raw messages flow in from conversations. Consolidation extracts signal from noise:
+Collected messages flow in from conversations. Consolidation extracts signal from noise:
 
 ```
-Raw Messages → grouping → LLM extraction → merge/dedup → Named Memories
+Collected Messages → grouping → LLM extraction → merge/dedup → Named Memories
 ```
 
-- Tier derived from source (DM → personal, group chat → group, self-reflection → internal)
-- Checks existing memories by topic + embedding similarity (>0.92), merges instead of duplicating
-- LLM flags contradictions, creates `contradicts` graph edges
-- Automatic entity extraction and linking during consolidation
+- Visibility derived from source (DM → personal, group chat → group)
+- Checks existing memories by topic + embedding similarity, merges instead of duplicating
+- LLM flags contradictions, creates graph edges
+- Automatic entity extraction during consolidation
 
-### Three Integration Paths
+### Four Integration Paths
 
 | Path | Transport | Best For |
 |------|-----------|----------|
-| **MCP Server** | stdio / HTTP | Agent frameworks with MCP support |
-| **Context-VM** | Nostr (kind 25910, NIP-59 gift wrap) | Nostr-native agents, paid memory services |
-| **Library** | Direct Rust API | Custom agents, tight integration |
+| **MCP Server** | stdio | Agent frameworks with MCP support |
+| **HTTP** | REST | Remote agents, web UI |
+| **ContextVM** | Nostr (NIP-44/59) | Nostr-native agents, decentralized access |
+| **Socket** | TCP/Unix | Local shared access, push events |
+
+All transports route through the same canonical dispatch layer.
 
 ### Nostr Event Model
 
-Memories are **kind 31234** addressable replaceable events. D-tag encodes visibility, scope, and topic:
+Memories are **kind 31234** addressable replaceable events. D-tag encodes namespace and topic:
 
 ```
-{visibility}:{scope}:{topic}
+{tier}/{scope?}/{topic}
 ```
 
 ```json
 {
   "kind": 31234,
-  "content": "{\"summary\":\"Use anyhow for app errors\",\"detail\":\"Prefer anyhow::Result…\"}",
+  "content": "Use anyhow for application errors. Prefer anyhow::Result for ergonomic error propagation.",
   "tags": [
-    ["d", "public::rust-error-handling"],
+    ["d", "public/rust-error-handling"],
     ["visibility", "public"],
     ["scope", ""],
     ["model", "anthropic/claude-opus-4-6"],
-    ["confidence", "0.92"],
     ["version", "1"],
     ["t", "rust"],
     ["t", "error-handling"]
@@ -75,24 +76,22 @@ Memories are **kind 31234** addressable replaceable events. D-tag encodes visibi
 }
 ```
 
-**Indexed `visibility` and `scope` tags** enable relay-side filtering without prefix matching:
+Content is plain text/markdown. D-tag examples:
 
-```json
-{"kinds": [31234], "#visibility": ["group"], "#scope": ["techteam"]}
+```
+public/rust-error-handling
+private/agent-reasoning
+personal/d29fe7c1.../ssh-config
+group/techteam/deployment-process
+circle/a3f8b2c1e9d04712/shared-notes
 ```
 
-D-tag examples:
-- `public::rust-error-handling`
-- `group:techteam:deployment-process`
-- `circle:a3f8b2c1:shared-notes`
-- `personal:d29fe7c1…:ssh-config`
-- `internal:d29fe7c1…:agent-reasoning`
+Collected messages from any platform are stored as **kind 30100** events using the canonical hierarchy: `platform → community? → chat → thread? → message`.
 
 ### Web Dashboard
 
 - Memory browser with search
-- Consolidation status + "Run Now"
-- Pruning controls with dry-run preview
+- Consolidation status + trigger
 - Entity and graph explorer
 - Config viewer + reload
 
@@ -113,36 +112,32 @@ No external database — SurrealDB runs embedded.
 nomen init
 
 # Store a memory
-nomen store "rust/error-handling" \
-  --summary "Use anyhow for app errors" \
-  --detail "Prefer anyhow::Result for ergonomic error propagation." \
-  --tier public --confidence 0.92
+nomen store "rust/error-handling" --content "Use anyhow for app errors" --tier public
 
 # Search (hybrid vector + BM25)
 nomen search "error handling"
-nomen search "error handling" --graph         # + graph traversal
 nomen search "error handling" --graph --hops 2
 
 # Ingest + consolidate
-nomen ingest "k0 mentioned switching to Tailscale" --source telegram --sender k0
+nomen ingest "k0 mentioned switching to Tailscale" --source telegram --sender k0 --chat "-1001234"
 nomen consolidate
 
 # Entity extraction and cluster fusion
 nomen entities --relations
 nomen cluster --dry-run
 
-# Start MCP server
-nomen serve --stdio
-nomen serve --http 127.0.0.1:3000
-
-# Context-VM (Nostr-native)
-nomen serve --stdio --context-vm --allowed-npubs <hex-pubkey>
+# Start servers
+nomen serve --stdio                          # MCP
+nomen serve --http 127.0.0.1:3000            # HTTP + web UI
+nomen serve --context-vm                     # Nostr-native
+nomen serve --socket /tmp/nomen.sock         # Local socket
+nomen serve --http :3000 --context-vm        # Combined
 ```
 
 ## Architecture
 
 ```
-              Nostr Relay (kind 31234)
+              Nostr Relay (kind 31234 — source of truth)
                       │
                  sync (NIP-42/44)
                       │
@@ -150,29 +145,18 @@ nomen serve --stdio --context-vm --allowed-npubs <hex-pubkey>
                   │ Nomen │
                   └───┬───┘
                       │
-                  SurrealDB (embedded)
+                  SurrealDB (embedded cache)
                 ┌─────┼─────┐
                 │     │     │
               docs  vectors  graph
               BM25  HNSW    edges
                 │     │     │
         ┌───────┴─────┴─────┴───────┐
-        │       │       │           │
-       CLI   Library  MCP Server  Context-VM
+        │       │       │     │     │
+       CLI   Library   MCP  HTTP  ContextVM  Socket
 ```
 
 Nostr relay is the source of truth. SurrealDB is a local index. If local state is lost, `nomen sync` recovers everything.
-
-## Graph Edges
-
-| Edge | Meaning |
-|------|---------|
-| `mentions` | memory → entity |
-| `references` | memory → memory (with relation field) |
-| `contradicts` | via `references` with `relation: "contradicts"` |
-| `consolidated_from` | named memory → raw messages |
-| `related_to` | entity → entity (typed: `works_on`, `collaborates_with`, etc.) |
-| `summarizes` | cluster summary → source memories |
 
 ## CLI Reference
 
@@ -181,100 +165,69 @@ Nostr relay is the source of truth. SurrealDB is a local index. If local state i
 | `nomen init` | Interactive setup wizard |
 | `nomen doctor` | Validate config and connectivity |
 | `nomen store <topic>` | Store a memory |
-| `nomen search <query> [--graph] [--hops N] [--aggregate]` | Hybrid search with optional graph expansion |
-| `nomen list [--named\|--ephemeral\|--stats]` | List memories |
+| `nomen search <query> [--graph] [--hops N]` | Hybrid search |
+| `nomen list [--named\|--stats]` | List memories |
 | `nomen delete <topic>` | Delete a memory (NIP-09 + local) |
 | `nomen sync` | Sync relay → local DB |
-| `nomen ingest <content>` | Ingest raw message |
+| `nomen ingest <content>` | Ingest collected message |
+| `nomen messages [--platform] [--chat] [--thread]` | Query messages |
 | `nomen consolidate [--dry-run]` | LLM consolidation pipeline |
 | `nomen entities [--kind] [--relations]` | Entity explorer |
-| `nomen cluster [--dry-run] [--prefix]` | Cluster fusion |
-| `nomen prune [--days N] [--dry-run]` | Prune old memories |
+| `nomen cluster [--dry-run]` | Cluster fusion |
+| `nomen prune [--days N] [--dry-run]` | Prune old data |
 | `nomen group create\|list\|members` | Manage groups |
 | `nomen send <content> --to <recipient>` | Send via Nostr |
-| `nomen serve [--stdio\|--http ADDR]` | Start server |
+| `nomen serve [--stdio\|--http\|--socket\|--context-vm]` | Start server |
 | `nomen embed [--limit N]` | Generate missing embeddings |
-| `nomen config` | Show config status |
+| `nomen fs init\|pull\|push\|start` | Filesystem sync |
 
 ## Configuration
-
-Every resource-intensive feature can be independently toggled:
 
 ```toml
 relay = "wss://your-relay.example.com"
 nsec = "nsec1..."
 
 [embedding]
-provider = "openai"                # or "none" to disable
+provider = "openai"
 model = "text-embedding-3-small"
 api_key_env = "OPENAI_API_KEY"
 
 [memory.consolidation]
-enabled = true                     # toggle consolidation
+enabled = true
 provider = "openrouter"
 model = "anthropic/claude-sonnet-4-6"
 api_key_env = "OPENROUTER_API_KEY"
 
 [entities]
-provider = "openrouter"            # "none" → heuristic fallback
+provider = "openrouter"
 model = "anthropic/claude-sonnet-4-6"
-api_key_env = "OPENROUTER_API_KEY"
 
 [memory.cluster]
-enabled = true                     # toggle cluster fusion
+enabled = true
 min_members = 3
-namespace_depth = 2
 
 [server]
-enabled = true
 listen = "127.0.0.1:3000"
 
 [contextvm]
-enabled = false                    # toggle Context-VM
+enabled = false
 ```
 
-## Project Structure
+## Specs
 
-```
-src/
-├── main.rs         CLI (clap)
-├── lib.rs          Public API
-├── config.rs       Config loading
-├── db.rs           SurrealDB schema, queries, graph edges
-├── memory.rs       Memory types, d-tag parsing (v0.1/v0.2)
-├── search.rs       Hybrid search + graph expansion + aggregation
-├── entities.rs     Entity extraction (heuristic + LLM + composite)
-├── cluster.rs      Cluster fusion pipeline
-├── consolidate.rs  Consolidation (LLM extraction, merge, dedup)
-├── embed.rs        Embedding providers
-├── relay.rs        Nostr relay sync (NIP-42, NIP-44)
-├── access.rs       Tier enforcement
-├── groups.rs       Group hierarchy + scope resolution
-├── ingest.rs       Raw message ingestion
-├── mcp.rs          MCP server (JSON-RPC stdio/HTTP)
-├── cvm.rs          Context-VM (kind 25910, NIP-59)
-├── tools.rs        Shared tool dispatch (MCP + CVM)
-├── http.rs         HTTP API + dashboard
-├── send.rs         Nostr messaging
-├── migrate.rs      Import from other formats
-└── display.rs      Terminal formatting
+See [docs/](docs/README.md) for full specifications:
 
-web/                Svelte web dashboard
-docs/               Specifications
-```
+- **[spec/overview](docs/spec/overview.md)** — system purpose, data flow, storage
+- **[spec/data-model](docs/spec/data-model.md)** — memory events, collected messages, tags
+- **[spec/api](docs/spec/api.md)** — canonical API reference
+- **[spec/consolidation](docs/spec/consolidation.md)** — pipeline spec
+- **[spec/identity](docs/spec/identity.md)** — multi-user, access control, encryption
+- **[spec/transport](docs/spec/transport.md)** — MCP, HTTP, ContextVM, socket
+- **[spec/security](docs/spec/security.md)** — auth, encryption, key management
 
 ## Origin
 
 **Nomen** = **No**str **Mem**ory **N**etwork.
-
-Extracted from [Snowclaw](https://github.com/k0sti/snowclaw) as a standalone memory layer for any Nostr-aware agent.
-
-## Specs
-
-- [Nostr Memory Spec](docs/nostr-memory-spec.md) — event format, visibility tiers, relay queries
-- [Consolidation Spec](docs/consolidation-spec.md) — pipeline, merge logic, tier derivation
-- [Architecture](docs/architecture.md) — system design, data flow
-- [Graph & Consolidation Roadmap](docs/graph-and-consolidation-roadmap.md) — feature implementation details
 
 ## License
 
