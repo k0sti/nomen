@@ -32,19 +32,17 @@ Canonical dispatch layer
 
 ## What Gets Published to Relay
 
-Nostr events are the source of truth for all persistent data. SurrealDB is a local cache/index.
+Nostr events are the source of truth for all persistent data. SurrealDB is a local cache/index. Visibility/scope is passed explicitly on each operation — there is no session concept.
 
 | Data | Kind | Relay | Description |
 |---|---|---|---|
-| Named memories | 31234 | ✅ | Addressable/replaceable. D-tag keyed. Core knowledge store. |
 | Collected messages | 30100 | ✅ | Parameterized replaceable. Bridged from any platform. Input to consolidation. |
-| Entities | TBD | 🔜 planned | Extracted entities (person, project, concept) with typed relationships. Currently local-only; needs a relay-publishable event kind. |
-
-Note: Sessions were removed from the codebase. Nomen does not have a session concept — visibility/scope is passed explicitly on each operation.
+| Named memories | 31234 | ✅ | Addressable/replaceable. D-tag keyed. Core knowledge store. Output of consolidation. |
+| Entities | TBD | 🔜 planned | Extracted entities (person, project, concept) with typed relationships. Currently local-only. |
 
 ### Already implemented
-- **Memories (31234)** — full bidirectional sync: publish on write, fetch on sync.
 - **Collected messages (30100)** — produced by message collectors (e.g. Nocelium), stored and indexed by Nomen. Upsert by d-tag.
+- **Memories (31234)** — full bidirectional sync: publish on write, fetch on sync.
 
 ### Planned
 - **Entities** — currently extracted during consolidation and stored only in local DB. Should be published as relay events so they survive DB loss and can be shared across instances. Event kind and tag schema TBD.
@@ -73,10 +71,9 @@ Single embedded SurrealDB database (`~/.nomen/db/`, SurrealKV engine).
 
 | Table | Purpose |
 |---|---|
-| `memory` | Named memories with content, tier, scope, topic, embedding |
-| `collected_message` | Ingested messages (kind 30100 events) before/after consolidation |
-| `entity` | Extracted entities (person, project, concept) |
-
+| `collected_message` | Ingested messages (kind 30100 events) — input to consolidation |
+| `memory` | Named memories with content, tier, scope, topic, embedding — output of consolidation |
+| `entity` | Extracted entities (person, project, concept) with typed relationships |
 | `nomen_group` | Group definitions and membership |
 
 ### Indexes

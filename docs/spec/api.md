@@ -36,71 +36,6 @@ All operations route through a single canonical dispatch layer (`api::dispatch()
 
 ---
 
-## Memory Operations
-
-### `memory.search`
-
-Hybrid semantic + full-text search with optional graph expansion.
-
-| Param | Type | Required | Default | Description |
-|---|---|---|---|---|
-| `query` | string | ✅ | — | Search query |
-| `visibility` | string | — | — | Filter by tier |
-| `scope` | string | — | — | Filter by scope |
-| `limit` | integer | — | 10 | Max results |
-| `retrieval.vector_weight` | float | — | 0.7 | Vector similarity weight |
-| `retrieval.text_weight` | float | — | 0.3 | BM25 weight |
-| `retrieval.aggregate` | boolean | — | false | Merge similar results |
-| `retrieval.graph_expand` | boolean | — | false | Traverse graph edges |
-| `retrieval.max_hops` | integer | — | 1 | Max graph hops |
-
-### `memory.put`
-
-Create or replace a named memory. Publishes to relay and stores locally.
-
-| Param | Type | Required | Default | Description |
-|---|---|---|---|---|
-| `topic` | string | ✅ | — | Topic path |
-| `content` | string | ✅ | — | Full memory text (plain text/markdown) |
-| `visibility` | string | — | `public` | Tier |
-| `scope` | string | — | `""` | Scope |
-| `importance` | integer | — | — | 1–10 scale |
-| `pinned` | boolean | — | false | Pin memory |
-
-### `memory.get`
-
-Retrieve a single memory by topic or d_tag.
-
-| Param | Type | Required | Default | Description |
-|---|---|---|---|---|
-| `topic` | string | one of | — | Topic to retrieve |
-| `d_tag` | string | one of | — | Direct d_tag lookup |
-| `visibility` | string | — | — | For topic → d_tag resolution |
-| `scope` | string | — | — | For topic → d_tag resolution |
-
-### `memory.list`
-
-List memories with optional filters.
-
-| Param | Type | Required | Default | Description |
-|---|---|---|---|---|
-| `visibility` | string | — | — | Filter by tier |
-| `scope` | string | — | — | Filter by scope |
-| `limit` | integer | — | 100 | Max results |
-| `stats` | boolean | — | false | Include statistics |
-
-### `memory.delete`
-
-Delete by topic, d_tag, or event ID. Publishes NIP-09 deletion to relay.
-
-| Param | Type | Required | Default | Description |
-|---|---|---|---|---|
-| `topic` | string | one of | — | Topic |
-| `d_tag` | string | one of | — | D-tag |
-| `id` | string | one of | — | Event ID |
-
----
-
 ## Message Operations
 
 ### `message.store`
@@ -181,6 +116,71 @@ Send a message to a recipient via Nostr or other channels.
 | `to` | string | ✅ | — | `npub1...`, `group:<id>`, or `public` |
 | `content` | string | ✅ | — | Message content |
 | `channel` | string | — | `nostr` | Delivery channel |
+
+---
+
+## Memory Operations
+
+### `memory.search`
+
+Hybrid semantic + full-text search with optional graph expansion.
+
+| Param | Type | Required | Default | Description |
+|---|---|---|---|---|
+| `query` | string | ✅ | — | Search query |
+| `visibility` | string | — | — | Filter by tier |
+| `scope` | string | — | — | Filter by scope |
+| `limit` | integer | — | 10 | Max results |
+| `retrieval.vector_weight` | float | — | 0.7 | Vector similarity weight |
+| `retrieval.text_weight` | float | — | 0.3 | BM25 weight |
+| `retrieval.aggregate` | boolean | — | false | Merge similar results |
+| `retrieval.graph_expand` | boolean | — | false | Traverse graph edges |
+| `retrieval.max_hops` | integer | — | 1 | Max graph hops |
+
+### `memory.put`
+
+Create or replace a named memory. Publishes to relay and stores locally.
+
+| Param | Type | Required | Default | Description |
+|---|---|---|---|---|
+| `topic` | string | ✅ | — | Topic path |
+| `content` | string | ✅ | — | Full memory text (plain text/markdown) |
+| `visibility` | string | — | `public` | Tier |
+| `scope` | string | — | `""` | Scope |
+| `importance` | integer | — | — | 1–10 scale |
+| `pinned` | boolean | — | false | Pin memory |
+
+### `memory.get`
+
+Retrieve a single memory by topic or d_tag.
+
+| Param | Type | Required | Default | Description |
+|---|---|---|---|---|
+| `topic` | string | one of | — | Topic to retrieve |
+| `d_tag` | string | one of | — | Direct d_tag lookup |
+| `visibility` | string | — | — | For topic → d_tag resolution |
+| `scope` | string | — | — | For topic → d_tag resolution |
+
+### `memory.list`
+
+List memories with optional filters.
+
+| Param | Type | Required | Default | Description |
+|---|---|---|---|---|
+| `visibility` | string | — | — | Filter by tier |
+| `scope` | string | — | — | Filter by scope |
+| `limit` | integer | — | 100 | Max results |
+| `stats` | boolean | — | false | Include statistics |
+
+### `memory.delete`
+
+Delete by topic, d_tag, or event ID. Publishes NIP-09 deletion to relay.
+
+| Param | Type | Required | Default | Description |
+|---|---|---|---|---|
+| `topic` | string | one of | — | Topic |
+| `d_tag` | string | one of | — | D-tag |
+| `id` | string | one of | — | Event ID |
 
 ---
 

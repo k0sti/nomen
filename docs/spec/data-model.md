@@ -1,88 +1,5 @@
 # Data Model
 
-## Memory Events — Kind 31234
-
-Memories are addressable/replaceable Nostr events. The `d` tag is the primary key; publishing a new event with the same `d` tag replaces the previous version.
-
-### D-Tag Format (v0.3)
-
-```
-{namespace}/{topic}
-```
-
-Where namespace is `{tier}` (for `public`, `private`) or `{tier}/{scope}` (for `personal`, `group`, `circle`).
-
-### Tiers
-
-| Tier | Scope | Encryption | Description |
-|---|---|---|---|
-| `public` | — | None | Readable by anyone |
-| `private` | — | NIP-44 self-encrypt | Agent-only knowledge |
-| `personal` | `{hex-pubkey}` | NIP-44 self-encrypt | Between agent and a specific user |
-| `group` | `{group-id}` | None (relay-enforced) | NIP-29 group members |
-| `circle` | `{circle-hash}` | Shared symmetric key | Ad-hoc participant set |
-
-### D-Tag Examples
-
-```
-public/rust-error-handling
-private/agent-reasoning
-personal/d29fe7c1.../ssh-config
-group/techteam/deployment-process
-circle/a3f8b2c1e9d04712/shared-notes
-```
-
-### Event Structure
-
-```json
-{
-  "kind": 31234,
-  "pubkey": "<agent-pubkey-hex>",
-  "created_at": 1742742000,
-  "content": "Full content as plain text/markdown...",
-  "tags": [
-    ["d", "public/rust-error-handling"],
-    ["visibility", "public"],
-    ["scope", ""],
-    ["model", "anthropic/claude-opus-4-6"],
-    ["confidence", "0.92"],
-    ["version", "1"],
-    ["t", "rust"],
-    ["t", "error-handling"]
-  ]
-}
-```
-
-Content is **plain text or markdown**, not JSON. First line can serve as display title.
-
-### Memory Tags
-
-| Tag | Required | Description |
-|---|---|---|
-| `d` | Yes | `{namespace}/{topic}` — replaceable key |
-| `visibility` | Yes | Tier: `public`, `group`, `circle`, `personal`, `private` |
-| `scope` | Yes | Group id, circle hash, hex pubkey, or empty |
-| `model` | Yes | Model that generated this memory |
-| `confidence` | No | Float 0.0–1.0 |
-| `version` | No | Monotonically increasing per d-tag |
-| `supersedes` | No | D-tag of previous version |
-| `pinned` | No | `"true"` if pinned |
-| `importance` | No | 1–10 scale |
-| `t` | No | Freeform topic tags (repeatable) |
-| `h` | No | NIP-29 group id (for `group` tier) |
-| `p` | No | Participant pubkeys (for `circle` tier) |
-
-### Scope and Visibility Rules
-
-- `public` → empty scope, no encryption
-- `private` → no scope needed; `event.pubkey` is the owner
-- `personal` → scope is the **counterparty** pubkey, not the owner
-- `group` → scope is the group identifier
-- `circle` → scope is deterministic hash of sorted participant pubkeys (first 16 hex chars of SHA-256)
-
-Legacy `internal` is normalized to `private`. Legacy `private` with pubkey scope is normalized to `personal`.
-
----
 
 ## Collected Messages — Kind 30100
 
@@ -187,6 +104,92 @@ Compound indexes: `(platform, chat_id)`, `(chat_id, thread_id)`.
 
 ---
 
+
+## Memory Events — Kind 31234
+
+Memories are addressable/replaceable Nostr events. The `d` tag is the primary key; publishing a new event with the same `d` tag replaces the previous version.
+
+### D-Tag Format (v0.3)
+
+```
+{namespace}/{topic}
+```
+
+Where namespace is `{tier}` (for `public`, `private`) or `{tier}/{scope}` (for `personal`, `group`, `circle`).
+
+### Tiers
+
+| Tier | Scope | Encryption | Description |
+|---|---|---|---|
+| `public` | — | None | Readable by anyone |
+| `private` | — | NIP-44 self-encrypt | Agent-only knowledge |
+| `personal` | `{hex-pubkey}` | NIP-44 self-encrypt | Between agent and a specific user |
+| `group` | `{group-id}` | None (relay-enforced) | NIP-29 group members |
+| `circle` | `{circle-hash}` | Shared symmetric key | Ad-hoc participant set |
+
+### D-Tag Examples
+
+```
+public/rust-error-handling
+private/agent-reasoning
+personal/d29fe7c1.../ssh-config
+group/techteam/deployment-process
+circle/a3f8b2c1e9d04712/shared-notes
+```
+
+### Event Structure
+
+```json
+{
+  "kind": 31234,
+  "pubkey": "<agent-pubkey-hex>",
+  "created_at": 1742742000,
+  "content": "Full content as plain text/markdown...",
+  "tags": [
+    ["d", "public/rust-error-handling"],
+    ["visibility", "public"],
+    ["scope", ""],
+    ["model", "anthropic/claude-opus-4-6"],
+    ["confidence", "0.92"],
+    ["version", "1"],
+    ["t", "rust"],
+    ["t", "error-handling"]
+  ]
+}
+```
+
+Content is **plain text or markdown**, not JSON. First line can serve as display title.
+
+### Memory Tags
+
+| Tag | Required | Description |
+|---|---|---|
+| `d` | Yes | `{namespace}/{topic}` — replaceable key |
+| `visibility` | Yes | Tier: `public`, `group`, `circle`, `personal`, `private` |
+| `scope` | Yes | Group id, circle hash, hex pubkey, or empty |
+| `model` | Yes | Model that generated this memory |
+| `confidence` | No | Float 0.0–1.0 |
+| `version` | No | Monotonically increasing per d-tag |
+| `supersedes` | No | D-tag of previous version |
+| `pinned` | No | `"true"` if pinned |
+| `importance` | No | 1–10 scale |
+| `t` | No | Freeform topic tags (repeatable) |
+| `h` | No | NIP-29 group id (for `group` tier) |
+| `p` | No | Participant pubkeys (for `circle` tier) |
+
+### Scope and Visibility Rules
+
+- `public` → empty scope, no encryption
+- `private` → no scope needed; `event.pubkey` is the owner
+- `personal` → scope is the **counterparty** pubkey, not the owner
+- `group` → scope is the group identifier
+- `circle` → scope is deterministic hash of sorted participant pubkeys (first 16 hex chars of SHA-256)
+
+Legacy `internal` is normalized to `private`. Legacy `private` with pubkey scope is normalized to `personal`.
+
+---
+
+
 ## Entities
 
 Entities are named things extracted from messages during consolidation: people, projects, concepts, tools. They have typed relationships to each other and to memories.
@@ -213,6 +216,7 @@ Entities should be published as Nostr events so they survive DB loss and can be 
 This is not yet implemented. Entities currently exist only in local DB and are re-extracted on each consolidation run if the DB is rebuilt.
 
 ---
+
 
 ## Agent Identity Events
 
@@ -241,6 +245,7 @@ Owner declares which agent pubkeys they control. Bidirectional verification: age
 Behavioral learnings. Append-only log, not replaceable.
 
 ---
+
 
 ## NIP Alignment
 
