@@ -156,7 +156,7 @@ nomen serve --http :3000 --context-vm        # Combined
        CLI   Library   MCP  HTTP  ContextVM  Socket
 ```
 
-Nostr relay is the source of truth. SurrealDB is a local index. If local state is lost, `nomen sync` recovers everything.
+Nostr relay is the source of truth for all persistent data. SurrealDB is a local cache/index. If local state is lost, `nomen sync` recovers everything.
 
 ## CLI Reference
 

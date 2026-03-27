@@ -4,9 +4,9 @@ Nomen is a Rust CLI and library for **Nostr-native agent memory**. It stores mem
 
 ## Core Ideas
 
-1. **Nostr relay is source of truth.** Memories are kind 31234 replaceable events. Local DB is a cache. If local state is lost, everything recovers from the relay.
+1. **Nostr relay is source of truth.** All persistent data lives as Nostr events. Local DB is a cache/index. If local state is lost, everything recovers from the relay.
 
-2. **Messages in, memories out.** Raw conversation messages (from any platform) are ingested as kind 30100 collected events, stored locally, then consolidated by an LLM into named memories. The analogy is sleep: replay raw experience, extract durable knowledge.
+2. **Messages in, memories out.** Conversation messages (from any platform) are collected as kind 30100 events, then consolidated by an LLM into kind 31234 named memories. The analogy is sleep: replay raw experience, extract durable knowledge.
 
 3. **Five-tier visibility.** Memories have visibility levels (`public`, `group`, `circle`, `personal`, `private`) that control access and encryption. Scope identifies the boundary (group id, pubkey, circle hash).
 
@@ -32,14 +32,24 @@ Canonical dispatch layer
 
 ## What Gets Published to Relay
 
-| Data | Local DB | Nostr Relay |
-|---|---|---|
-| Named memories | ✅ | ✅ kind 31234 |
-| Collected messages | ✅ | ❌ local only |
-| Entities | ✅ | ❌ local only |
-| Sessions | ✅ | ❌ local only |
+Nostr events are the source of truth for all persistent data. SurrealDB is a local cache/index.
 
-Only distilled knowledge (named memories) is durable and synced across relays. Collected messages are high-volume conversation input, consumed by consolidation.
+| Data | Kind | Relay | Description |
+|---|---|---|---|
+| Named memories | 31234 | ✅ | Addressable/replaceable. D-tag keyed. Core knowledge store. |
+| Collected messages | 30100 | ✅ | Parameterized replaceable. Bridged from any platform. Input to consolidation. |
+| Entities | TBD | 🔜 planned | Extracted entities (person, project, concept) with typed relationships. Currently local-only; needs a relay-publishable event kind. |
+| Sessions | — | ❌ ephemeral | Connection-scoped runtime state. Not persisted beyond the connection lifetime. No relay representation needed. |
+
+### Already implemented
+- **Memories (31234)** — full bidirectional sync: publish on write, fetch on sync.
+- **Collected messages (30100)** — produced by message collectors (e.g. Nocelium), stored and indexed by Nomen. Upsert by d-tag.
+
+### Planned
+- **Entities** — currently extracted during consolidation and stored only in local DB. Should be published as relay events so they survive DB loss and can be shared across instances. Event kind and tag schema TBD.
+
+### Not published
+- **Sessions** — ephemeral runtime state (active connections, identity bindings). These are connection-scoped and do not need relay persistence.
 
 ## Crate Structure
 

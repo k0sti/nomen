@@ -187,6 +187,41 @@ Compound indexes: `(platform, chat_id)`, `(chat_id, thread_id)`.
 
 ---
 
+## Entities
+
+Entities are named things extracted from messages during consolidation: people, projects, concepts, tools. They have typed relationships to each other and to memories.
+
+### Current State (Local Only)
+
+Entities are stored in the local `entity` SurrealDB table with graph edges:
+
+- `mentions` — memory → entity
+- `related_to` — entity → entity (typed: `works_on`, `collaborates_with`, `manages`, `contradicts`, `depends_on`, `member_of`)
+
+Extraction is done by a `CompositeExtractor` (heuristic + optional LLM).
+
+### Planned: Relay-Published Entities
+
+Entities should be published as Nostr events so they survive DB loss and can be shared across instances. Design considerations:
+
+- **Kind:** TBD (custom addressable/replaceable, similar to 31234)
+- **D-tag:** entity type + normalized name (e.g. `person/kosti`, `project/nomen`)
+- **Content:** entity description / notes
+- **Tags:** `["kind", "person"]`, `["related", "<other-entity-d-tag>", "<relation-type>"]`
+- **Relationships** could be encoded as tags on the entity event itself, or as separate edge events
+
+This is not yet implemented. Entities currently exist only in local DB and are re-extracted on each consolidation run if the DB is rebuilt.
+
+---
+
+## Sessions
+
+Sessions are **ephemeral runtime state** — they track active connections and per-session identity bindings. They are connection-scoped and do not need relay persistence.
+
+Stored in the local `session` SurrealDB table. Cleaned up on disconnect.
+
+---
+
 ## Agent Identity Events
 
 ### Kind 0 — Profile Metadata
