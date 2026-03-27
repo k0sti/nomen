@@ -45,8 +45,7 @@ async fn setup_server() -> (
         max_frame_size: 16 * 1024 * 1024,
     };
 
-    let server =
-        nomen::socket::SocketServer::new(Arc::new(nomen), &config, "test".to_string(), None);
+    let server = nomen::socket::SocketServer::new(Arc::new(nomen), &config, None);
 
     (server, sock_path, db_tmp, sock_tmp)
 }

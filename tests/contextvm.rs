@@ -25,7 +25,7 @@ async fn init_test_db() -> Result<(Surreal<Db>, tempfile::TempDir)> {
 async fn test_handler() -> Result<(CvmHandler, tempfile::TempDir)> {
     let (db, tmp) = init_test_db().await?;
     let nomen = nomen::Nomen::from_db(db);
-    let handler = CvmHandler::new(Box::new(nomen), vec![], 30, "nostr".to_string());
+    let handler = CvmHandler::new(Box::new(nomen), vec![], 30);
     Ok((handler, tmp))
 }
 
@@ -200,7 +200,7 @@ mod policy_tests {
     async fn acl_empty_allowlist_allows_all() {
         let (db, _tmp) = init_test_db().await.unwrap();
         let nomen = nomen::Nomen::from_db(db);
-        let handler = CvmHandler::new(Box::new(nomen), vec![], 30, "nostr".to_string());
+        let handler = CvmHandler::new(Box::new(nomen), vec![], 30);
 
         assert!(handler.check_acl("any_pubkey_hex"));
         assert!(handler.check_acl("another_pubkey"));
@@ -210,12 +210,7 @@ mod policy_tests {
     async fn acl_allowlist_rejects_unauthorized() {
         let (db, _tmp) = init_test_db().await.unwrap();
         let nomen = nomen::Nomen::from_db(db);
-        let handler = CvmHandler::new(
-            Box::new(nomen),
-            vec!["allowed_pubkey_1".to_string()],
-            30,
-            "nostr".to_string(),
-        );
+        let handler = CvmHandler::new(Box::new(nomen), vec!["allowed_pubkey_1".to_string()], 30);
 
         assert!(handler.check_acl("allowed_pubkey_1"));
         assert!(!handler.check_acl("unauthorized_pubkey"));
@@ -225,7 +220,7 @@ mod policy_tests {
     async fn rate_limiter_allows_within_limit() {
         let (db, _tmp) = init_test_db().await.unwrap();
         let nomen = nomen::Nomen::from_db(db);
-        let handler = CvmHandler::new(Box::new(nomen), vec![], 5, "nostr".to_string());
+        let handler = CvmHandler::new(Box::new(nomen), vec![], 5);
 
         // 5 requests should succeed
         for _ in 0..5 {
@@ -239,7 +234,7 @@ mod policy_tests {
     async fn rate_limiter_separate_per_client() {
         let (db, _tmp) = init_test_db().await.unwrap();
         let nomen = nomen::Nomen::from_db(db);
-        let handler = CvmHandler::new(Box::new(nomen), vec![], 2, "nostr".to_string());
+        let handler = CvmHandler::new(Box::new(nomen), vec![], 2);
 
         assert!(handler.check_rate_limit("client_a"));
         assert!(handler.check_rate_limit("client_a"));

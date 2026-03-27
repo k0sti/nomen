@@ -142,7 +142,7 @@ async fn store_test_memory(nomen: &nomen::Nomen, topic: &str, summary: &str) -> 
 
 /// Direct `api::dispatch()`.
 async fn dispatch_direct(nomen: &dyn nomen_api::NomenBackend, f: &Fixture) -> Value {
-    let resp = nomen::api::dispatch(nomen, "test", f.action, &f.params).await;
+    let resp = nomen::api::dispatch(nomen, f.action, &f.params).await;
     serde_json::to_value(&resp).unwrap()
 }
 
@@ -245,18 +245,17 @@ async fn dispatch_socket(client: &nomen_wire::NomenClient, f: &Fixture) -> Value
 // ── Transport factory helpers ────────────────────────────────────────
 
 fn make_handler(nomen: nomen::Nomen) -> CvmHandler {
-    CvmHandler::new(Box::new(nomen), vec![], 100, "test".to_string())
+    CvmHandler::new(Box::new(nomen), vec![], 100)
 }
 
 fn make_mcp_server(nomen: nomen::Nomen) -> McpServer {
     let nomen_arc: std::sync::Arc<dyn nomen_api::NomenBackend> = std::sync::Arc::new(nomen);
-    McpServer::new(nomen_arc, "test".to_string())
+    McpServer::new(nomen_arc)
 }
 
 fn build_test_router(nomen: nomen::Nomen) -> axum::Router {
     let state = nomen::http::AppState {
         nomen: std::sync::Arc::new(nomen) as std::sync::Arc<dyn nomen_api::NomenBackend>,
-        default_channel: "test".to_string(),
         config: std::sync::Arc::new(tokio::sync::RwLock::new(nomen::config::Config::default())),
     };
     nomen::http::build_router(state, None, None)
@@ -284,7 +283,6 @@ async fn setup_socket_server(
     let server = std::sync::Arc::new(SocketServer::new(
         std::sync::Arc::new(nomen) as std::sync::Arc<dyn nomen_api::NomenBackend>,
         &config,
-        "test".to_string(),
         None,
     ));
 

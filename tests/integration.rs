@@ -83,6 +83,7 @@ async fn test_ingest_and_consolidate() -> Result<()> {
     // Verify messages were stored
     let filter = nomen_core::collected::CollectedEventFilter {
         platform: Some(vec!["test".to_string()]),
+        community_id: None,
         chat_id: None,
         sender_id: None,
         thread_id: None,

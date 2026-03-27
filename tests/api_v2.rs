@@ -137,7 +137,7 @@ mod types_tests {
     async fn resolve_visibility_scope_canonical() {
         let (nomen, _tmp) = super::test_nomen().await.unwrap();
         let params = json!({"visibility": "public"});
-        let (vis, scope) = resolve_visibility_scope(&params, &nomen, "default").unwrap();
+        let (vis, scope) = resolve_visibility_scope(&params).unwrap();
         assert_eq!(vis, Some(Visibility::Public));
         assert!(scope.is_none());
     }
@@ -146,7 +146,7 @@ mod types_tests {
     async fn resolve_visibility_scope_group_requires_scope() {
         let (nomen, _tmp) = super::test_nomen().await.unwrap();
         let params = json!({"visibility": "group"});
-        let result = resolve_visibility_scope(&params, &nomen, "default");
+        let result = resolve_visibility_scope(&params);
         assert!(result.is_err());
     }
 
@@ -154,7 +154,7 @@ mod types_tests {
     async fn resolve_visibility_scope_group_with_scope() {
         let (nomen, _tmp) = super::test_nomen().await.unwrap();
         let params = json!({"visibility": "group", "scope": "engineering"});
-        let (vis, scope) = resolve_visibility_scope(&params, &nomen, "default").unwrap();
+        let (vis, scope) = resolve_visibility_scope(&params).unwrap();
         assert_eq!(vis, Some(Visibility::Group));
         assert_eq!(scope, Some("engineering".to_string()));
     }
@@ -163,7 +163,7 @@ mod types_tests {
     async fn resolve_visibility_scope_legacy_tier() {
         let (nomen, _tmp) = super::test_nomen().await.unwrap();
         let params = json!({"tier": "group:engineering"});
-        let (vis, scope) = resolve_visibility_scope(&params, &nomen, "default").unwrap();
+        let (vis, scope) = resolve_visibility_scope(&params).unwrap();
         assert_eq!(vis, Some(Visibility::Group));
         assert_eq!(scope, Some("engineering".to_string()));
     }
@@ -172,7 +172,7 @@ mod types_tests {
     async fn resolve_visibility_scope_none() {
         let (nomen, _tmp) = super::test_nomen().await.unwrap();
         let params = json!({});
-        let (vis, scope) = resolve_visibility_scope(&params, &nomen, "default").unwrap();
+        let (vis, scope) = resolve_visibility_scope(&params).unwrap();
         assert!(vis.is_none());
         assert!(scope.is_none());
     }
@@ -281,13 +281,7 @@ mod dispatch_tests {
     #[tokio::test]
     async fn dispatch_unknown_action_returns_error() {
         let (nomen, _tmp) = super::test_nomen().await.unwrap();
-        let resp = nomen::api::dispatch(
-            &nomen,
-            "default",
-            "nonexistent.action",
-            &serde_json::json!({}),
-        )
-        .await;
+        let resp = nomen::api::dispatch(&nomen, "nonexistent.action", &serde_json::json!({})).await;
         assert!(!resp.ok);
         let err = resp.error.unwrap();
         assert_eq!(err.code, "unknown_action");
@@ -308,7 +302,6 @@ mod operations_tests {
         // Put
         let put_resp = nomen::api::dispatch(
             &nomen,
-            "test",
             "memory.put",
             &json!({"topic": "apiv2-test/roundtrip", "content": "Test roundtrip memory"}),
         )
@@ -321,7 +314,6 @@ mod operations_tests {
         // Get by topic
         let get_resp = nomen::api::dispatch(
             &nomen,
-            "test",
             "memory.get",
             &json!({"topic": "apiv2-test/roundtrip"}),
         )
@@ -334,7 +326,6 @@ mod operations_tests {
         // Cleanup
         nomen::api::dispatch(
             &nomen,
-            "test",
             "memory.delete",
             &json!({"topic": "apiv2-test/roundtrip"}),
         )
@@ -346,14 +337,12 @@ mod operations_tests {
         let (nomen, _tmp) = super::test_nomen().await.unwrap();
 
         nomen::api::dispatch(
-            &nomen, "test",
-            "memory.put",
+            &nomen, "memory.put",
             &json!({"topic": "apiv2-test/search-target", "content": "Unique xylophone melody searching"}),
         ).await;
 
         let search_resp = nomen::api::dispatch(
             &nomen,
-            "test",
             "memory.search",
             &json!({"query": "xylophone melody"}),
         )
@@ -369,7 +358,6 @@ mod operations_tests {
         // Cleanup
         nomen::api::dispatch(
             &nomen,
-            "test",
             "memory.delete",
             &json!({"topic": "apiv2-test/search-target"}),
         )
@@ -382,13 +370,12 @@ mod operations_tests {
 
         nomen::api::dispatch(
             &nomen,
-            "test",
             "memory.put",
             &json!({"topic": "apiv2-test/list-item", "content": "A listable memory"}),
         )
         .await;
 
-        let list_resp = nomen::api::dispatch(&nomen, "test", "memory.list", &json!({})).await;
+        let list_resp = nomen::api::dispatch(&nomen, "memory.list", &json!({})).await;
         assert!(list_resp.ok, "list failed: {:?}", list_resp.error);
         let result = list_resp.result.unwrap();
         let memories = result["memories"].as_array().unwrap();
@@ -399,7 +386,6 @@ mod operations_tests {
         // Cleanup
         nomen::api::dispatch(
             &nomen,
-            "test",
             "memory.delete",
             &json!({"topic": "apiv2-test/list-item"}),
         )
@@ -412,7 +398,6 @@ mod operations_tests {
 
         nomen::api::dispatch(
             &nomen,
-            "test",
             "memory.put",
             &json!({"topic": "apiv2-test/delete-me", "content": "Will be deleted"}),
         )
@@ -421,7 +406,6 @@ mod operations_tests {
         // Verify it exists
         let get_resp = nomen::api::dispatch(
             &nomen,
-            "test",
             "memory.get",
             &json!({"topic": "apiv2-test/delete-me"}),
         )
@@ -432,7 +416,6 @@ mod operations_tests {
         // Delete
         let del_resp = nomen::api::dispatch(
             &nomen,
-            "test",
             "memory.delete",
             &json!({"topic": "apiv2-test/delete-me"}),
         )
@@ -443,7 +426,6 @@ mod operations_tests {
         // Verify gone
         let get_resp2 = nomen::api::dispatch(
             &nomen,
-            "test",
             "memory.get",
             &json!({"topic": "apiv2-test/delete-me"}),
         )
@@ -458,7 +440,6 @@ mod operations_tests {
 
         let ingest_resp = nomen::api::dispatch(
             &nomen,
-            "test",
             "message.ingest",
             &json!({
                 "content": "Hello from API v2 test",
@@ -476,13 +457,8 @@ mod operations_tests {
         // canonical normalized hierarchy work flows through structured
         // collected-message tags/fields instead.
 
-        let search_resp = nomen::api::dispatch(
-            &nomen,
-            "test",
-            "message.search",
-            &json!({"query": "Hello API v2"}),
-        )
-        .await;
+        let search_resp =
+            nomen::api::dispatch(&nomen, "message.search", &json!({"query": "Hello API v2"})).await;
         assert!(
             search_resp.ok,
             "message.search failed: {:?}",
@@ -504,7 +480,6 @@ mod operations_tests {
         // Create
         let create_resp = nomen::api::dispatch(
             &nomen,
-            "test",
             "group.create",
             &json!({"id": group_id, "name": "Test Group", "members": ["npub1test"]}),
         )
@@ -516,7 +491,7 @@ mod operations_tests {
         );
 
         // List
-        let list_resp = nomen::api::dispatch(&nomen, "test", "group.list", &json!({})).await;
+        let list_resp = nomen::api::dispatch(&nomen, "group.list", &json!({})).await;
         assert!(list_resp.ok);
         let groups = list_resp.result.unwrap()["groups"]
             .as_array()
@@ -526,7 +501,7 @@ mod operations_tests {
 
         // Members
         let members_resp =
-            nomen::api::dispatch(&nomen, "test", "group.members", &json!({"id": group_id})).await;
+            nomen::api::dispatch(&nomen, "group.members", &json!({"id": group_id})).await;
         assert!(members_resp.ok);
         let members = members_resp.result.unwrap();
         assert_eq!(members["count"], 1);
@@ -534,7 +509,6 @@ mod operations_tests {
         // Add member
         let add_resp = nomen::api::dispatch(
             &nomen,
-            "test",
             "group.add_member",
             &json!({"id": group_id, "npub": "npub1new"}),
         )
@@ -543,13 +517,12 @@ mod operations_tests {
 
         // Verify added
         let members_resp2 =
-            nomen::api::dispatch(&nomen, "test", "group.members", &json!({"id": group_id})).await;
+            nomen::api::dispatch(&nomen, "group.members", &json!({"id": group_id})).await;
         assert_eq!(members_resp2.result.unwrap()["count"], 2);
 
         // Remove member
         let remove_resp = nomen::api::dispatch(
             &nomen,
-            "test",
             "group.remove_member",
             &json!({"id": group_id, "npub": "npub1new"}),
         )
@@ -562,7 +535,7 @@ mod operations_tests {
 
         // Verify removed
         let members_resp3 =
-            nomen::api::dispatch(&nomen, "test", "group.members", &json!({"id": group_id})).await;
+            nomen::api::dispatch(&nomen, "group.members", &json!({"id": group_id})).await;
         assert_eq!(members_resp3.result.unwrap()["count"], 1);
     }
 
@@ -570,7 +543,7 @@ mod operations_tests {
     async fn entity_list_empty() {
         let (nomen, _tmp) = super::test_nomen().await.unwrap();
 
-        let resp = nomen::api::dispatch(&nomen, "test", "entity.list", &json!({})).await;
+        let resp = nomen::api::dispatch(&nomen, "entity.list", &json!({})).await;
         assert!(resp.ok, "entity.list failed: {:?}", resp.error);
         let result = resp.result.unwrap();
         assert_eq!(result["count"], 0);
@@ -581,7 +554,7 @@ mod operations_tests {
     async fn unknown_action_error_response() {
         let (nomen, _tmp) = super::test_nomen().await.unwrap();
 
-        let resp = nomen::api::dispatch(&nomen, "test", "bogus.action", &json!({})).await;
+        let resp = nomen::api::dispatch(&nomen, "bogus.action", &json!({})).await;
         assert!(!resp.ok);
         let err = resp.error.unwrap();
         assert_eq!(err.code, "unknown_action");
@@ -594,7 +567,6 @@ mod operations_tests {
 
         let resp = nomen::api::dispatch(
             &nomen,
-            "test",
             "memory.put",
             &json!({"summary": "no topic provided"}),
         )
@@ -607,7 +579,7 @@ mod operations_tests {
     async fn memory_search_without_query_returns_invalid_params() {
         let (nomen, _tmp) = super::test_nomen().await.unwrap();
 
-        let resp = nomen::api::dispatch(&nomen, "test", "memory.search", &json!({})).await;
+        let resp = nomen::api::dispatch(&nomen, "memory.search", &json!({})).await;
         assert!(!resp.ok);
         assert_eq!(resp.error.unwrap().code, "invalid_params");
     }
