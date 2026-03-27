@@ -206,7 +206,7 @@ pub enum Command {
         #[arg(long, default_value = "2")]
         namespace_depth: usize,
     },
-    /// Prune unused/low-confidence memories and old collected messages
+    /// Prune unused memories and old collected messages
     Prune {
         /// Delete items older than N days
         #[arg(long, default_value = "90")]

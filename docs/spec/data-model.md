@@ -150,7 +150,6 @@ circle/a3f8b2c1e9d04712/shared-notes
     ["visibility", "public"],
     ["scope", ""],
     ["model", "anthropic/claude-opus-4-6"],
-    ["confidence", "0.92"],
     ["version", "1"],
     ["t", "rust"],
     ["t", "error-handling"]
@@ -168,7 +167,7 @@ Content is **plain text or markdown**, not JSON. First line can serve as display
 | `visibility` | Yes | Tier: `public`, `group`, `circle`, `personal`, `private` |
 | `scope` | Yes | Group id, circle hash, hex pubkey, or empty |
 | `model` | Yes | Model that generated this memory |
-| `confidence` | No | Float 0.0–1.0 |
+
 | `version` | No | Monotonically increasing per d-tag |
 | `supersedes` | No | D-tag of previous version |
 | `pinned` | No | `"true"` if pinned |

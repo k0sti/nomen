@@ -10,18 +10,18 @@ use nomen_core::search::*;
 
 use crate::search::HybridSearchRow;
 
-/// Minimum decay factor — memories never lose more than 80% of their confidence.
+/// Minimum decay factor — memories never lose more than 80% relevance from age.
 const MIN_DECAY: f64 = 0.2;
 /// Maximum age in days for full decay (365 days).
 const MAX_AGE_DAYS: f64 = 365.0;
 
-/// Calculate confidence decay factor based on days since last access.
+/// Calculate recency factor based on days since last access.
 ///
-/// `effective_confidence = confidence × decay_factor`
-/// `decay_factor = 1.0 - (days_since_access / max_age) × (1.0 - min_decay)`
+
+/// `recency = 1.0 - (days_since_access / max_age) × (1.0 - min_decay)`
 ///
 /// Clamped to [MIN_DECAY, 1.0].
-fn confidence_decay_factor(last_accessed: Option<&str>, created_at: &str) -> f64 {
+fn recency_factor(last_accessed: Option<&str>, created_at: &str) -> f64 {
     let reference_time = last_accessed.unwrap_or(created_at);
     let days_since = chrono::DateTime::parse_from_rfc3339(reference_time)
         .map(|dt| {
@@ -67,7 +67,6 @@ pub async fn search(
         &query_embedding,
         opts.tier.as_deref(),
         opts.allowed_scopes.as_deref(),
-        opts.min_confidence,
         opts.vector_weight,
         opts.text_weight,
         opts.limit,
@@ -85,7 +84,7 @@ pub async fn search(
             let text_score = r.text_score.unwrap_or(0.0);
 
             // Compute recency factor (1.0 for now, decays to 0.0 over MAX_AGE_DAYS)
-            let recency = confidence_decay_factor(Some(&r.created_at), &r.created_at);
+            let recency = recency_factor(Some(&r.created_at), &r.created_at);
 
             // Importance normalized to 0.0–1.0 (importance 1-10 → 0.1–1.0)
             let importance_norm = r.importance.unwrap_or(5) as f64 / 10.0;
@@ -280,9 +279,6 @@ async fn text_only_search(db: &Surreal<Db>, opts: &SearchOptions) -> Result<Vec<
     if opts.allowed_scopes.is_some() {
         conditions.push("(scope = \"\" OR array::any($scopes, |$s| scope = $s OR string::starts_with(scope, string::concat($s, \".\"))))".to_string());
     }
-    if opts.min_confidence.is_some() {
-        conditions.push("(confidence IS NONE OR confidence >= $min_conf)".to_string());
-    }
     let where_clause = conditions.join(" AND ");
 
     let sql = format!(
@@ -299,9 +295,6 @@ async fn text_only_search(db: &Surreal<Db>, opts: &SearchOptions) -> Result<Vec<
     if let Some(ref scopes) = opts.allowed_scopes {
         q = q.bind(("scopes", scopes.clone()));
     }
-    if let Some(min_conf) = opts.min_confidence {
-        q = q.bind(("min_conf", min_conf));
-    }
 
     let rows: Vec<HybridSearchRow> = q.await?.check()?.take(0)?;
 
@@ -314,7 +307,7 @@ async fn text_only_search(db: &Surreal<Db>, opts: &SearchOptions) -> Result<Vec<
 
             let text_score = r.text_score.unwrap_or(0.0);
 
-            let recency = confidence_decay_factor(Some(&r.created_at), &r.created_at);
+            let recency = recency_factor(Some(&r.created_at), &r.created_at);
             let importance_norm = r.importance.unwrap_or(5) as f64 / 10.0;
 
             // Same composite as hybrid search, minus vector component:
@@ -376,7 +369,7 @@ fn cosine_similarity(a: &[f32], b: &[f32]) -> f64 {
 }
 
 /// Aggregate search results: group results with >0.85 embedding similarity
-/// and merge them into a single result with combined detail and highest confidence.
+/// and merge them into a single result with combined detail.
 fn aggregate_results(results: Vec<SearchResult>) -> Vec<SearchResult> {
     if results.len() <= 1 {
         return results;

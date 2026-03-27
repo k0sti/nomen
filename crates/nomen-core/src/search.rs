@@ -23,7 +23,6 @@ pub struct SearchOptions {
     pub limit: usize,
     pub vector_weight: f32,
     pub text_weight: f32,
-    pub min_confidence: Option<f64>,
     /// If true, group results with >0.85 embedding similarity and merge them.
     pub aggregate: bool,
     /// Enable graph expansion: traverse edges from results to surface related memories.
@@ -41,7 +40,6 @@ impl Default for SearchOptions {
             limit: 10,
             vector_weight: 0.7,
             text_weight: 0.3,
-            min_confidence: None,
             aggregate: false,
             graph_expand: false,
             max_hops: 1,

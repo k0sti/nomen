@@ -138,7 +138,7 @@ export interface SystemStats {
 export interface PruneResult {
   memories_pruned: number;
   dry_run: boolean;
-  pruned: { topic: string; confidence: number | null; age_days: number }[];
+  pruned: { topic: string; age_days: number }[];
 }
 
 export interface NomenConfig {

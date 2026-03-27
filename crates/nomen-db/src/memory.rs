@@ -32,7 +32,6 @@ fn build_record(parsed: &ParsedMemory, nostr_id: &str) -> MemoryRecord {
         tier: nomen_core::memory::base_tier(&parsed.tier).to_string(),
         scope,
         topic: parsed.topic.clone(),
-        confidence: None,
         source: parsed.source.clone(),
         model: Some(parsed.model.clone()),
         version: 1,
@@ -125,7 +124,7 @@ pub async fn list_memories(
 ) -> Result<Vec<MemoryRecord>> {
     let (sql, bind_tier);
     // Exclude embedding from SELECT to avoid SurrealDB HNSW index deserialization issues
-    let fields = "content, summary, tier, scope, topic, confidence, source, model, version, nostr_id, d_tag, created_at, updated_at, ephemeral, consolidated_from, consolidated_at, last_accessed, access_count, importance";
+    let fields = "content, summary, tier, scope, topic, source, model, version, nostr_id, d_tag, created_at, updated_at, ephemeral, consolidated_from, consolidated_at, last_accessed, access_count, importance";
     if let Some(t) = tier {
         sql = format!(
             "SELECT {fields} FROM memory WHERE tier = $tier ORDER BY created_at DESC LIMIT {limit}"
@@ -152,7 +151,7 @@ pub async fn list_memories(
 /// Get a single memory by d-tag (topic).
 pub async fn get_memory_by_dtag(db: &Surreal<Db>, d_tag: &str) -> Result<Option<MemoryRecord>> {
     let mut results: Vec<MemoryRecord> = db
-        .query("SELECT content, summary, tier, scope, topic, confidence, source, model, version, nostr_id, d_tag, created_at, updated_at, ephemeral, consolidated_from, consolidated_at, last_accessed, access_count, importance FROM memory WHERE d_tag = $d_tag LIMIT 1")
+        .query("SELECT content, summary, tier, scope, topic, source, model, version, nostr_id, d_tag, created_at, updated_at, ephemeral, consolidated_from, consolidated_at, last_accessed, access_count, importance FROM memory WHERE d_tag = $d_tag LIMIT 1")
         .bind(("d_tag", d_tag.to_string()))
         .await?
         .check()?
@@ -163,7 +162,7 @@ pub async fn get_memory_by_dtag(db: &Surreal<Db>, d_tag: &str) -> Result<Option<
 /// Get a single memory by topic field (raw topic, not d-tag).
 pub async fn get_memory_by_topic(db: &Surreal<Db>, topic: &str) -> Result<Option<MemoryRecord>> {
     let mut results: Vec<MemoryRecord> = db
-        .query("SELECT content, summary, tier, scope, topic, confidence, source, model, version, nostr_id, d_tag, created_at, updated_at, ephemeral, consolidated_from, consolidated_at, last_accessed, access_count, importance FROM memory WHERE topic = $topic LIMIT 1")
+        .query("SELECT content, summary, tier, scope, topic, source, model, version, nostr_id, d_tag, created_at, updated_at, ephemeral, consolidated_from, consolidated_at, last_accessed, access_count, importance FROM memory WHERE topic = $topic LIMIT 1")
         .bind(("topic", topic.to_string()))
         .await?
         .check()?

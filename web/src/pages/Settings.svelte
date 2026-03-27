@@ -243,7 +243,6 @@
               {#each pruneResult.pruned as item}
                 <tr class="border-t border-gray-700/50 text-gray-300">
                   <td class="px-3 py-1.5 truncate max-w-[200px]">{item.topic}</td>
-                  <td class="px-3 py-1.5 text-right">{item.confidence != null ? item.confidence.toFixed(2) : '?'}</td>
                   <td class="px-3 py-1.5 text-right">{item.age_days}</td>
                 </tr>
               {/each}

@@ -13,7 +13,6 @@ pub struct TextSearchResult {
     pub summary: Option<String>,
     pub tier: String,
     pub topic: String,
-    pub confidence: Option<f64>,
     pub created_at: String,
     #[allow(dead_code)]
     pub score: Option<f64>,
@@ -27,7 +26,6 @@ pub struct HybridSearchRow {
     pub tier: String,
     pub scope: String,
     pub topic: String,
-    pub confidence: Option<f64>,
     pub importance: Option<i32>,
     pub source: String,
     pub model: Option<String>,
@@ -120,7 +118,6 @@ pub async fn hybrid_search(
     query_embedding: &[f32],
     tier: Option<&str>,
     allowed_scopes: Option<&[String]>,
-    min_confidence: Option<f64>,
     vector_weight: f32,
     text_weight: f32,
     limit: usize,
@@ -132,9 +129,6 @@ pub async fn hybrid_search(
     }
     if allowed_scopes.is_some() {
         conditions.push("(scope = \"\" OR array::any($scopes, |$s| scope = $s OR string::starts_with(scope, string::concat($s, \".\"))))".to_string());
-    }
-    if min_confidence.is_some() {
-        conditions.push("(confidence IS NONE OR confidence >= $min_conf)".to_string());
     }
 
     let where_clause = conditions.join(" AND ");
@@ -162,9 +156,6 @@ pub async fn hybrid_search(
     }
     if let Some(scopes) = allowed_scopes {
         q = q.bind(("scopes", scopes.to_vec()));
-    }
-    if let Some(min_conf) = min_confidence {
-        q = q.bind(("min_conf", min_conf));
     }
 
     let results: Vec<HybridSearchRow> = q.await?.check()?.take(0)?;

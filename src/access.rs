@@ -17,7 +17,6 @@ mod tests {
             tier: tier.to_string(),
             scope: scope.to_string(),
             topic: "test".to_string(),
-            confidence: None,
             source: source.to_string(),
             model: None,
             version: 1,

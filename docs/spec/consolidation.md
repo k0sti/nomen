@@ -142,16 +142,17 @@ Each search hit updates `last_accessed` and `access_count` on the memory record.
 | Condition | Action |
 |---|---|
 | `access_count = 0` AND age > 90 days | Delete |
-| `confidence < 0.3` AND age > 30 days | Delete |
-| Duplicate topic, similar content | Merge into highest-confidence version |
+| Duplicate topic, similar content | Merge into newer version |
 
-### Confidence Decay
+### Recency Decay
+
+Search ranking applies a recency factor based on time since last access:
 
 ```
-effective_confidence = confidence × decay_factor(age, access_count)
+recency = 1.0 - (days_since_access / max_age) × (1.0 - min_decay)
 ```
 
-Affects retrieval ranking, not storage.
+This affects retrieval ranking only — memories are not modified or deleted based on recency.
 
 ## Cluster Fusion
 
@@ -182,7 +183,6 @@ namespace_depth = 2
 [memory.pruning]
 enabled = true
 max_age_days = 90
-min_confidence = 0.3
 ```
 
 ## Graph-Aware Retrieval

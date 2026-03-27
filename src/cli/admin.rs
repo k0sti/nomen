@@ -65,10 +65,6 @@ pub async fn cmd_prune(
             println!("\n{} memories eligible for pruning:", pruned.len());
             for mem in pruned {
                 let topic = mem["topic"].as_str().unwrap_or("");
-                let confidence = mem["confidence"]
-                    .as_f64()
-                    .map(|c| format!("{c:.2}"))
-                    .unwrap_or_else(|| "?".to_string());
                 let access_count = mem["access_count"].as_u64().unwrap_or(0);
                 let created_at = mem["created_at"].as_str().unwrap_or("");
                 let date = if created_at.len() >= 10 {
@@ -77,9 +73,8 @@ pub async fn cmd_prune(
                     created_at
                 };
                 println!(
-                    "  {} (confidence: {}, accesses: {}, created: {})",
+                    "  {} (accesses: {}, created: {})",
                     topic.bold(),
-                    confidence,
                     access_count,
                     date
                 );

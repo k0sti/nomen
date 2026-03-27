@@ -185,7 +185,6 @@ pub struct MemoryRecord {
     pub topic: String,
     /// Legacy field — kept as Option for migration reads, never written.
     #[serde(default)]
-    pub confidence: Option<f64>,
     pub source: String,
     pub model: Option<String>,
     pub version: i64,

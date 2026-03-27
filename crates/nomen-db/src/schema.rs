@@ -15,7 +15,6 @@ DEFINE FIELD IF NOT EXISTS embedding  ON memory TYPE option<array<float>>;
 DEFINE FIELD IF NOT EXISTS tier       ON memory TYPE string;
 DEFINE FIELD IF NOT EXISTS scope      ON memory TYPE string;
 DEFINE FIELD IF NOT EXISTS topic      ON memory TYPE string;
-DEFINE FIELD IF NOT EXISTS confidence ON memory TYPE option<float>;
 DEFINE FIELD IF NOT EXISTS source     ON memory TYPE string;
 DEFINE FIELD IF NOT EXISTS model      ON memory TYPE option<string>;
 DEFINE FIELD IF NOT EXISTS version    ON memory TYPE int DEFAULT 1;

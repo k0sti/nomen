@@ -32,7 +32,6 @@
     <div class="text-right shrink-0">
       <div class="text-lg font-bold {scoreColor}">{(result.score * 100).toFixed(0)}</div>
       <div class="text-xs text-gray-600">score</div>
-      <div class="text-xs text-gray-500 mt-1">{(result.confidence * 100).toFixed(0)}% conf</div>
       <div class="text-xs text-gray-600 mt-1">{formatDate(result.created_at)}</div>
     </div>
   </div>
