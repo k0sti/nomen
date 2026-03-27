@@ -26,7 +26,7 @@ ORDER BY created_at ASC
 LIMIT $batch_size
 ```
 
-Filters: `#proxy` (platform), `#community`, `#chat`, `#thread`, `since`, `older_than`.
+Filters: `#platform` (platform), `#community`, `#chat`, `#thread`, `since`, `older_than`.
 
 ### 2. Grouping
 

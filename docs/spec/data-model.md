@@ -26,6 +26,7 @@ platform → community? → chat → thread? → message
   "pubkey": "<collector_npub>",
   "tags": [
     ["d", "telegram:-1003821690204:13943"],
+    ["platform", "telegram"],
     ["proxy", "telegram:-1003821690204:13943", "telegram"],
     ["chat", "-1003821690204", "TechTeam", "group"],
     ["sender", "60996061", "kosti", "koshdot"],
@@ -55,7 +56,8 @@ Do not encode optional hierarchy layers positionally. `community` and `thread` l
 | Tag | Format | Purpose | NIP |
 |---|---|---|---|
 | `d` | `["d", "<platform>:<chat_id>:<message_id>"]` | Replaceable identifier | NIP-33 |
-| `proxy` | `["proxy", "<full_id>", "<platform>"]` | Bridged from external protocol | NIP-48 |
+| `platform` | `["platform", "<platform>"]` | Platform identifier (e.g. `telegram`, `discord`) | — |
+| `proxy` | `["proxy", "<full_id>", "<platform>"]` | NIP-48 bridged origin (optional, for relay compat) | NIP-48 |
 | `community` | `["community", "<id>", "<name>", "<type>"]` | Optional layer above chat |
 | `chat` | `["chat", "<id>", "<name>", "<type>"]` | Primary conversation boundary |
 | `thread` | `["thread", "<id>", "<name>"]` | Forum topic or thread |
@@ -86,7 +88,7 @@ One per chat. Content is JSON with structured metadata.
 
 | Tag | Indexed column | Filter |
 |---|---|---|
-| `proxy` | `platform` | `#proxy` |
+| `platform` | `platform` | `#platform` |
 | `chat` | `chat_id`, `chat_name`, `chat_type` | `#chat` |
 | `sender` | `sender_id` | `#sender` |
 | `thread` | `thread_id` | `#thread` |

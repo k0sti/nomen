@@ -56,12 +56,14 @@ pub async fn send_message(
 
     let mut tags = vec![
         vec!["d".to_string(), d_tag.clone()],
+        vec!["platform".to_string(), platform_hint.to_string()],
+        vec!["sender".to_string(), sender_hex],
+        // NIP-48 proxy tag for relay compatibility (optional)
         vec![
             "proxy".to_string(),
             d_tag.clone(),
             platform_hint.to_string(),
         ],
-        vec!["sender".to_string(), sender_hex],
     ];
     if let Some(chat) = chat_tag {
         tags.push(chat);

@@ -57,7 +57,7 @@ fn consolidate_params_from_value(params: &Value) -> Result<ConsolidateParams, Ap
         .and_then(|v| v.as_u64())
         .unwrap_or(3) as usize;
 
-    let platform = extract_string_array(params, "#proxy").or_else(|| {
+    let platform = extract_string_array(params, "#platform").or_else(|| {
         params
             .get("source")
             .and_then(|v| v.as_str())

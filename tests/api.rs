@@ -1,4 +1,4 @@
-//! Tests for the Nomen API v2 layer: types, errors, dispatch, and operations.
+//! Tests for the Nomen API layer: types, errors, dispatch, and operations.
 
 use anyhow::Result;
 use surrealdb::engine::local::{Db, SurrealKv};

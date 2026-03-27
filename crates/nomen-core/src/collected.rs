@@ -38,8 +38,8 @@ pub struct Imeta {
 /// Filter for querying collected events.
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct CollectedEventFilter {
-    /// Filter by platform (from `proxy` tag protocol field).
-    #[serde(rename = "#proxy", default, skip_serializing_if = "Option::is_none")]
+    /// Filter by platform.
+    #[serde(rename = "#platform", default, skip_serializing_if = "Option::is_none")]
     pub platform: Option<Vec<String>>,
     /// Filter by community_id (from `community` tag value[0]).
     #[serde(
@@ -98,9 +98,10 @@ impl CollectedEvent {
         self.tag_value("d", 0)
     }
 
-    /// Get the platform from the `proxy` tag protocol field (value[1]).
+    /// Get the platform. Checks the `platform` tag first, falls back to `proxy` tag protocol field.
     pub fn platform(&self) -> Option<&str> {
-        self.tag_value("proxy", 1)
+        self.tag_value("platform", 0)
+            .or_else(|| self.tag_value("proxy", 1))
     }
 
     /// Get the community_id from the `community` tag (value[0]).

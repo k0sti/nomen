@@ -75,7 +75,7 @@ pub async fn cmd_messages(
     } else {
         let mut params = json!({ "limit": limit });
         if let Some(p) = platform {
-            params["#proxy"] = json!([p]);
+            params["#platform"] = json!([p]);
         }
         if let Some(c) = chat {
             params["#chat"] = json!([c]);

@@ -67,14 +67,13 @@ pub async fn ingest(nomen: &dyn NomenBackend, params: &Value) -> Result<Value, A
         format!("{source}:{now}:{sender}")
     };
 
+    let plat = platform.clone().unwrap_or_else(|| source.clone());
     let mut tags = vec![
         vec!["d".to_string(), d_tag.clone()],
-        vec![
-            "proxy".to_string(),
-            d_tag.clone(),
-            platform.clone().unwrap_or_else(|| source.clone()),
-        ],
+        vec!["platform".to_string(), plat.clone()],
         vec!["sender".to_string(), sender.clone()],
+        // NIP-48 proxy tag for Nostr relay compatibility (optional)
+        vec!["proxy".to_string(), d_tag.clone(), plat],
     ];
     if let Some(ref community) = community_id {
         tags.push(vec!["community".to_string(), community.clone()]);
@@ -116,7 +115,7 @@ pub async fn ingest(nomen: &dyn NomenBackend, params: &Value) -> Result<Value, A
 /// Query collected events with tag-based filtering.
 pub async fn query(nomen: &dyn NomenBackend, params: &Value) -> Result<Value, ApiError> {
     let filter = CollectedEventFilter {
-        platform: extract_string_array(params, "#proxy"),
+        platform: extract_string_array(params, "#platform"),
         community_id: extract_string_array(params, "#community"),
         chat_id: extract_string_array(params, "#chat"),
         sender_id: extract_string_array(params, "#sender"),
@@ -158,7 +157,7 @@ pub async fn context(nomen: &dyn NomenBackend, params: &Value) -> Result<Value, 
     let before_ts = params.get("before").and_then(|v| v.as_i64());
 
     let filter = CollectedEventFilter {
-        platform: extract_string_array(params, "#proxy"),
+        platform: extract_string_array(params, "#platform"),
         community_id: extract_string_array(params, "#community"),
         chat_id: extract_string_array(params, "#chat"),
         sender_id: extract_string_array(params, "#sender"),
@@ -204,7 +203,7 @@ pub async fn search(nomen: &dyn NomenBackend, params: &Value) -> Result<Value, A
     }
 
     let filter = CollectedEventFilter {
-        platform: extract_string_array(params, "#proxy"),
+        platform: extract_string_array(params, "#platform"),
         community_id: extract_string_array(params, "#community"),
         chat_id: extract_string_array(params, "#chat"),
         sender_id: extract_string_array(params, "#sender"),

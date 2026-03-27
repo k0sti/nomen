@@ -217,7 +217,7 @@ fn v2_tools_list() -> Value {
                 "inputSchema": {
                     "type": "object",
                     "properties": {
-                        "#proxy": { "type": "array", "items": { "type": "string" }, "description": "Filter by normalized platform namespace" },
+                        "#platform": { "type": "array", "items": { "type": "string" }, "description": "Filter by platform (e.g. telegram, discord)" },
                         "#community": { "type": "array", "items": { "type": "string" }, "description": "Filter by normalized community_id" },
                         "#chat": { "type": "array", "items": { "type": "string" }, "description": "Filter by normalized chat_id" },
                         "#thread": { "type": "array", "items": { "type": "string" }, "description": "Filter by normalized thread_id" },
@@ -234,7 +234,7 @@ fn v2_tools_list() -> Value {
                 "inputSchema": {
                     "type": "object",
                     "properties": {
-                        "#proxy": { "type": "array", "items": { "type": "string" }, "description": "Filter by normalized platform namespace" },
+                        "#platform": { "type": "array", "items": { "type": "string" }, "description": "Filter by platform (e.g. telegram, discord)" },
                         "#community": { "type": "array", "items": { "type": "string" }, "description": "Filter by normalized community_id" },
                         "#chat": { "type": "array", "items": { "type": "string" }, "description": "Filter by normalized chat_id" },
                         "#thread": { "type": "array", "items": { "type": "string" }, "description": "Filter by normalized thread_id" },
@@ -287,7 +287,7 @@ fn v2_tools_list() -> Value {
                 "inputSchema": {
                     "type": "object",
                     "properties": {
-                        "#proxy": { "type": "array", "items": { "type": "string" }, "description": "Filter by normalized platform namespace" },
+                        "#platform": { "type": "array", "items": { "type": "string" }, "description": "Filter by platform (e.g. telegram, discord)" },
                         "#community": { "type": "array", "items": { "type": "string" }, "description": "Filter by normalized community_id" },
                         "#chat": { "type": "array", "items": { "type": "string" }, "description": "Filter by normalized chat_id" },
                         "#thread": { "type": "array", "items": { "type": "string" }, "description": "Filter by normalized thread_id" },

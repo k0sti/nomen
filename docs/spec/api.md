@@ -66,7 +66,7 @@ Query collected messages using canonical hierarchy filters.
 
 | Param | Type | Required | Default | Description |
 |---|---|---|---|---|
-| `#proxy` | array | — | — | Filter by platform |
+| `#platform` | array | — | — | Filter by platform |
 | `#community` | array | — | — | Filter by community |
 | `#chat` | array | — | — | Filter by chat |
 | `#thread` | array | — | — | Filter by thread |
@@ -92,7 +92,7 @@ Recent conversation context for a chat/thread.
 | Param | Type | Required | Default | Description |
 |---|---|---|---|---|
 | `#chat` | array | ✅ | — | Chat id |
-| `#proxy` | array | — | — | Platform |
+| `#platform` | array | — | — | Platform |
 | `#thread` | array | — | — | Thread |
 | `since` | integer | — | — | Lower bound timestamp |
 | `before` | integer | — | — | Upper bound timestamp |
@@ -204,7 +204,7 @@ Run the consolidation pipeline: group → extract → merge → store.
 
 | Param | Type | Required | Default | Description |
 |---|---|---|---|---|
-| `#proxy` | array | — | — | Filter by platform |
+| `#platform` | array | — | — | Filter by platform |
 | `#community` | array | — | — | Filter by community |
 | `#chat` | array | — | — | Filter by chat |
 | `#thread` | array | — | — | Filter by thread |
