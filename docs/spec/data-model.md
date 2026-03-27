@@ -264,12 +264,25 @@ Used between regular memories and clusters. Affect search ranking.
 | `supersedes` | memory → memory | 0.5 | Replaces older knowledge |
 | `summarizes` | cluster → memory | 0.6 | Cluster synthesis source |
 
-#### Structural Edges (DB only, not in events)
+#### Mentions (`mentions` tag)
 
-| Edge | From → To | Description |
-|---|---|---|
-| `mentions` | memory → entity | Memory references this entity |
-| `consolidated_from` | memory → collected_messages | Consolidation provenance |
+A memory lists the entities it references:
+
+```json
+["mentions", "personal/d29fe7c1.../kosti"]
+["mentions", "group/techteam/nomen"]
+```
+
+#### Consolidation Provenance (`source` tag)
+
+A memory lists the collected messages it was consolidated from (d-tags of kind 30100 events):
+
+```json
+["source", "telegram:-1003821690204:13943"]
+["source", "telegram:-1003821690204:13944"]
+```
+
+All relationships are in the event. If the DB is rebuilt from relay, the full graph is reconstructed from tags.
 
 ### Scope and Visibility Rules
 
