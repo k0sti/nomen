@@ -128,14 +128,26 @@ function resolveContainer(params: {
   const explicitThreadId = normalizeThreadId(params.threadId);
 
   if (platform === "telegram") {
-    const topicMatch = /^(.+):topic:(.+)$/.exec(conversationId);
+    const stripTelegramPrefix = (value: string): string => {
+      const trimmed = value.trim();
+      return trimmed.startsWith("telegram:") ? trimmed.slice("telegram:".length) : trimmed;
+    };
+
+    const normalizedConversationId = stripTelegramPrefix(conversationId);
+    const topicMatch = /^(.+):topic:(.+)$/.exec(normalizedConversationId);
     if (topicMatch) {
       return {
         platform,
-        chatId: topicMatch[1] ?? conversationId,
+        chatId: topicMatch[1] ?? normalizedConversationId,
         threadId: explicitThreadId ?? topicMatch[2],
       };
     }
+
+    return {
+      platform,
+      chatId: normalizedConversationId,
+      ...(explicitThreadId ? { threadId: explicitThreadId } : {}),
+    };
   }
 
   return {

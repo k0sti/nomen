@@ -1,41 +1,27 @@
-# Nomen Docs
+# Nomen Documentation
 
-Canonical repo documentation index.
+Nostr-native agent memory system.
 
-Repo docs should describe the **current implementation and canonical interfaces**. Planning notes, drafts, and task trackers belong in Obsidian/project notes, not here.
+## Specs
 
-## Core docs
+These describe the current system. Together they should be sufficient to recreate the codebase.
 
-- `architecture.md` — system architecture and boundaries
-- `api-reference.md` — user-facing API reference
-- `api-v2-spec.md` — lower-level API/domain specification (partly legacy; being converged into canonical reference docs)
-- `collected-messages.md` — canonical normalized messaging hierarchy and kind `30100` collected-message model
-- `consolidation-spec.md` — current consolidation pipeline behavior and constraints
-- `nostr-memory-spec.md` — durable memory event model
-- `multi-user-identity-spec.md` — identity/session behavior across clients and channels
+| Doc | Contents |
+|---|---|
+| [spec/overview.md](spec/overview.md) | System purpose, data flow, crate structure, storage |
+| [spec/data-model.md](spec/data-model.md) | Memory events (31234), collected messages (30100), tags, NIP alignment |
+| [spec/api.md](spec/api.md) | Canonical API reference — all operations, params, responses |
+| [spec/consolidation.md](spec/consolidation.md) | Pipeline: collection → grouping → extraction → merge → storage → cleanup |
+| [spec/identity.md](spec/identity.md) | Multi-user identity, access control, groups, encryption |
+| [spec/transport.md](spec/transport.md) | MCP, HTTP, ContextVM, socket — how they map to dispatch |
+| [spec/security.md](spec/security.md) | Auth, encryption model, key management |
 
-## Specialized docs
+## Design
 
-- `dtag-v3-spec.md` — d-tag format details for memory identifiers
-- `circle-encryption-impl.md` — circle encryption implementation notes
+Forward-looking or conceptual docs that inform direction.
 
-## Docs status notes
-
-Current canonical message hierarchy:
-
-**platform → community → chat → thread → message**
-
-Current canonical collected-message identity rule:
-
-```text
-<platform>:<chat_id>:<message_id>
-```
-
-unless a platform truly requires more coordinates for uniqueness.
-
-## Docs hygiene rules
-
-- Keep repo docs aligned with shipped behavior.
-- Move draft/planning/task content to Obsidian instead of leaving it in `docs/`.
-- If an older spec is still useful historically but not canonical, mark it clearly as legacy/superseded.
-- Avoid parallel conflicting specs.
+| Doc | Contents |
+|---|---|
+| [design/dreaming.md](design/dreaming.md) | Sleep-inspired associative memory discovery |
+| [design/circles.md](design/circles.md) | Circle encryption design |
+| [design/filesystem.md](design/filesystem.md) | Bidirectional filesystem sync |
