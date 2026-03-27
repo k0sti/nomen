@@ -53,7 +53,10 @@ impl From<&Group> for DbGroup {
 
 /// Extension trait for GroupStore DB operations.
 pub trait GroupStoreExt {
-    fn load(config_groups: &[GroupConfig], db: &Surreal<Db>) -> impl std::future::Future<Output = Result<GroupStore>> + Send;
+    fn load(
+        config_groups: &[GroupConfig],
+        db: &Surreal<Db>,
+    ) -> impl std::future::Future<Output = Result<GroupStore>> + Send;
 }
 
 impl GroupStoreExt for GroupStore {

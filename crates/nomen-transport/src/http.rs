@@ -120,23 +120,28 @@ async fn api_dispatch(
             if req.action == "identity.auth" {
                 // identity.auth validates nsec and returns pubkey — doesn't need a session
                 let resp = nomen_api::dispatch(
-                    &*state.nomen, &state.default_channel, &req.action, &req.params
-                ).await.with_request_id(request_id);
+                    &*state.nomen,
+                    &state.default_channel,
+                    &req.action,
+                    &req.params,
+                )
+                .await
+                .with_request_id(request_id);
                 return Json(serde_json::to_value(&resp).unwrap_or_default());
             }
             let resp = nomen_core::api::types::ApiResponse::error(
                 nomen_core::api::errors::ApiError::unauthorized(
-                    "Authentication required. Provide Authorization: Nostr nsec1... header"
+                    "Authentication required. Provide Authorization: Nostr nsec1... header",
                 ),
-            ).with_request_id(request_id);
+            )
+            .with_request_id(request_id);
             return Json(serde_json::to_value(&resp).unwrap_or_default());
         }
     };
 
-    let resp =
-        nomen_api::dispatch(&*backend, &state.default_channel, &req.action, &req.params)
-            .await
-            .with_request_id(request_id);
+    let resp = nomen_api::dispatch(&*backend, &state.default_channel, &req.action, &req.params)
+        .await
+        .with_request_id(request_id);
     Json(serde_json::to_value(&resp).unwrap_or_default())
 }
 
@@ -249,32 +254,15 @@ async fn api_reload_config(State(state): State<SharedState>) -> impl IntoRespons
 }
 
 async fn api_stats(State(state): State<SharedState>) -> impl IntoResponse {
-    let (total, named, pending) = state
-        .nomen
-        .count_memories()
-        .await
-        .unwrap_or((0, 0, 0));
-    let entities = state
-        .nomen
-        .entity_count(None)
-        .await
-        .unwrap_or(0);
-    let groups = state
-        .nomen
-        .group_list()
-        .await
-        .map(|g| g.len())
-        .unwrap_or(0);
+    let (total, named, pending) = state.nomen.count_memories().await.unwrap_or((0, 0, 0));
+    let entities = state.nomen.entity_count(None).await.unwrap_or(0);
+    let groups = state.nomen.group_list().await.map(|g| g.len()).unwrap_or(0);
     let last_consolidation = state
         .nomen
         .get_meta("last_consolidation_run")
         .await
         .unwrap_or(None);
-    let last_prune = state
-        .nomen
-        .get_meta("last_prune_run")
-        .await
-        .unwrap_or(None);
+    let last_prune = state.nomen.get_meta("last_prune_run").await.unwrap_or(None);
 
     let db_size_bytes = estimate_db_size();
 

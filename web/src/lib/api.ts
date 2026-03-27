@@ -28,17 +28,51 @@ export interface Message {
   id: string;
   source: string;
   sender: string;
-  // Legacy raw-message field; prefer normalized hierarchy fields when present.
+  // Legacy compatibility field; canonical UI should prefer platform/community/chat/thread.
   channel: string;
   platform?: string;
   community?: string;
   chat?: string;
   thread?: string;
   message_id?: string;
+  source_id?: string;
   content: string;
   metadata: string;
   consolidated: boolean;
   created_at: string;
+}
+
+export interface MessageListOpts {
+  platform?: string;
+  community?: string;
+  chat?: string;
+  thread?: string;
+  sender?: string;
+  since?: string;
+  limit?: number;
+  include_consolidated?: boolean;
+}
+
+export interface MessageListResult {
+  count: number;
+  messages: Message[];
+}
+
+export interface MessageContextOpts {
+  platform?: string;
+  community?: string;
+  chat: string;
+  thread?: string;
+  sender?: string;
+  before?: number;
+  since?: number;
+  limit?: number;
+}
+
+export interface MessageContextResult {
+  count: number;
+  messages: Message[];
+  target_index?: number;
 }
 
 export interface Group {
@@ -76,7 +110,10 @@ export interface EntityOpts {
 }
 
 export interface ConsolidateOpts {
-  channel?: string;
+  platform?: string;
+  community?: string;
+  chat?: string;
+  thread?: string;
   since?: string;
 }
 
@@ -166,6 +203,39 @@ export class NomenApi {
     return data.results.map(mapSearchResult);
   }
 
+
+  async listMessages(opts?: MessageListOpts): Promise<MessageListResult> {
+    const params: Record<string, unknown> = { limit: opts?.limit ?? 100 };
+    if (opts?.platform) params["#proxy"] = [opts.platform];
+    if (opts?.community) params["#community"] = [opts.community];
+    if (opts?.chat) params["#chat"] = [opts.chat];
+    if (opts?.thread) params["#thread"] = [opts.thread];
+    if (opts?.sender) params["#sender"] = [opts.sender];
+    if (opts?.since) params.since = opts.since;
+
+    const data = await this.dispatch<{ count: number; events: RawCollectedEvent[] }>('message.query', params);
+    return {
+      count: data.count,
+      messages: (data.events || []).map(mapCollectedEvent),
+    };
+  }
+
+  async getMessageContext(opts: MessageContextOpts): Promise<MessageContextResult> {
+    const params: Record<string, unknown> = { '#chat': [opts.chat], limit: opts.limit ?? 50 };
+    if (opts.platform) params['#proxy'] = [opts.platform];
+    if (opts.community) params['#community'] = [opts.community];
+    if (opts.thread) params['#thread'] = [opts.thread];
+    if (opts.sender) params['#sender'] = [opts.sender];
+    if (opts.before !== undefined) params.before = opts.before;
+    if (opts.since !== undefined) params.since = opts.since;
+
+    const data = await this.dispatch<{ count: number; messages: RawContextMessage[] }>('message.context', params);
+    return {
+      count: data.count,
+      messages: (data.messages || []).map(mapContextMessage),
+    };
+  }
+
   async getEntities(opts?: EntityOpts): Promise<Entity[]> {
     const data = await this.dispatch<{ entities: Entity[] }>('entity.list', {
       kind: opts?.kind,
@@ -175,7 +245,13 @@ export class NomenApi {
   }
 
   async consolidate(opts?: ConsolidateOpts): Promise<ConsolidateReport> {
-    return this.dispatch('memory.consolidate', { ...opts });
+    const params: Record<string, unknown> = {};
+    if (opts?.platform) params['#proxy'] = [opts.platform];
+    if (opts?.community) params['#community'] = [opts.community];
+    if (opts?.chat) params['#chat'] = [opts.chat];
+    if (opts?.thread) params['#thread'] = [opts.thread];
+    if (opts?.since) params.since = opts.since;
+    return this.dispatch('memory.consolidate', params);
   }
 
   async getGroups(): Promise<Group[]> {
@@ -225,5 +301,75 @@ function mapSearchResult(r: RawSearchResult): SearchResult {
     score: r.score,
     match_type: r.match_type,
     created_at: r.created_at || '',
+  };
+}
+
+interface RawCollectedEvent {
+  id?: string;
+  kind?: number;
+  content?: string;
+  created_at?: number;
+  tags?: Array<Array<string>>;
+}
+
+interface RawContextMessage {
+  sender?: string;
+  platform?: string;
+  community?: string;
+  chat?: string;
+  thread?: string;
+  message_id?: string;
+  content?: string;
+  created_at?: number;
+}
+
+function tagValue(tags: Array<Array<string>> | undefined, name: string, index = 1): string {
+  const tag = tags?.find((t) => t[0] === name);
+  return tag?.[index] || '';
+}
+
+function mapCollectedEvent(event: RawCollectedEvent): Message {
+  const tags = event.tags || [];
+  const platform = tagValue(tags, 'proxy', 2);
+  const chat = tagValue(tags, 'chat', 1);
+  const thread = tagValue(tags, 'thread', 1);
+  const sender = tagValue(tags, 'sender', 1);
+  const sourceId = tagValue(tags, 'd', 1);
+  return {
+    id: sourceId || event.id || '',
+    source: platform || '',
+    sender,
+    channel: thread ? `${chat || ''}/${thread}`.replace(/^\//, '') : chat,
+    platform: platform || undefined,
+    community: tagValue(tags, 'community', 1) || undefined,
+    chat: chat || undefined,
+    thread: thread || undefined,
+    message_id: tagValue(tags, 'message', 1) || undefined,
+    source_id: sourceId || undefined,
+    content: event.content || '',
+    metadata: '',
+    consolidated: false,
+    created_at: event.created_at ? new Date(event.created_at * 1000).toISOString() : '',
+  };
+}
+
+function mapContextMessage(msg: RawContextMessage): Message {
+  const chat = msg.chat || '';
+  const thread = msg.thread || '';
+  return {
+    id: msg.message_id || '',
+    source: msg.platform || '',
+    sender: msg.sender || '',
+    channel: thread ? `${chat}/${thread}` : chat,
+    platform: msg.platform || undefined,
+    community: msg.community || undefined,
+    chat: chat || undefined,
+    thread: thread || undefined,
+    message_id: msg.message_id || undefined,
+    source_id: msg.message_id || undefined,
+    content: msg.content || '',
+    metadata: '',
+    consolidated: false,
+    created_at: msg.created_at ? new Date(msg.created_at * 1000).toISOString() : '',
   };
 }

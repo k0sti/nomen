@@ -3,8 +3,8 @@
 use nostr_sdk::ToBech32;
 use serde_json::Value;
 
-use nomen_core::api::errors::ApiError;
 use crate::NomenBackend;
+use nomen_core::api::errors::ApiError;
 
 /// Handle `identity.auth`: validate an nsec and return the corresponding pubkey.
 ///

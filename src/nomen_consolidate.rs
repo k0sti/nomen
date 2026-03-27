@@ -20,6 +20,12 @@ impl Nomen {
             entity_extractor: opts
                 .entity_extractor
                 .unwrap_or_else(|| Box::new(entities::HeuristicExtractor)),
+            platform: opts.platform,
+            community_id: opts.community_id,
+            chat_id: opts.chat_id,
+            thread_id: opts.thread_id,
+            since: opts.since,
+            older_than: opts.older_than,
             author_pubkey,
             ..Default::default()
         };
@@ -31,22 +37,35 @@ impl Nomen {
         )
         .await?;
 
-        self.emit_event("consolidation.complete", serde_json::json!({
-            "memories_created": report.memories_created,
-            "messages_processed": report.messages_processed,
-        }));
+        self.emit_event(
+            "consolidation.complete",
+            serde_json::json!({
+                "memories_created": report.memories_created,
+                "messages_processed": report.messages_processed,
+            }),
+        );
 
         Ok(report)
     }
 
     /// Two-phase consolidation: prepare (stages 1-2).
-    pub async fn consolidate_prepare(&self, opts: ConsolidateOptions, ttl_minutes: u32) -> Result<crate::consolidate::PrepareResult> {
+    pub async fn consolidate_prepare(
+        &self,
+        opts: ConsolidateOptions,
+        ttl_minutes: u32,
+    ) -> Result<crate::consolidate::PrepareResult> {
         let author_pubkey = self.signer.as_ref().map(|s| s.public_key().to_hex());
         let config = ConsolidationConfig {
             batch_size: opts.batch_size,
             min_messages: opts.min_messages,
             llm_provider: Box::new(NoopLlmProvider),
             entity_extractor: Box::new(entities::HeuristicExtractor),
+            platform: opts.platform,
+            community_id: opts.community_id,
+            chat_id: opts.chat_id,
+            thread_id: opts.thread_id,
+            since: opts.since,
+            older_than: opts.older_than,
             author_pubkey,
             ..Default::default()
         };
@@ -75,11 +94,14 @@ impl Nomen {
         )
         .await?;
 
-        self.emit_event("consolidation.complete", serde_json::json!({
-            "memories_created": result.memories_created,
-            "messages_consolidated": result.messages_consolidated,
-            "session_id": result.session_id,
-        }));
+        self.emit_event(
+            "consolidation.complete",
+            serde_json::json!({
+                "memories_created": result.memories_created,
+                "messages_consolidated": result.messages_consolidated,
+                "session_id": result.session_id,
+            }),
+        );
 
         Ok(result)
     }
@@ -105,10 +127,13 @@ impl Nomen {
         )
         .await?;
 
-        self.emit_event("cluster.fused", serde_json::json!({
-            "clusters_merged": report.clusters_found,
-            "dry_run": report.dry_run,
-        }));
+        self.emit_event(
+            "cluster.fused",
+            serde_json::json!({
+                "clusters_merged": report.clusters_found,
+                "dry_run": report.dry_run,
+            }),
+        );
 
         Ok(report)
     }

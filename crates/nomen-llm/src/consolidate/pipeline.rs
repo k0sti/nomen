@@ -1,4 +1,5 @@
 use anyhow::Result;
+use nomen_db::CollectedMessageRecord;
 use nostr_sdk::prelude::*;
 use serde::Deserialize;
 use surrealdb::engine::local::Db;
@@ -7,12 +8,16 @@ use surrealdb::Surreal;
 use tracing::{debug, info, warn};
 
 use nomen_core::embed::Embedder;
-use nomen_db::RawMessageRecord;
+
 use nomen_relay::RelayManager;
 
-use super::grouping::{derive_tier_from_messages, enforce_tier_guard, group_messages};
+use super::grouping::{
+    derive_tier_from_messages, enforce_tier_guard, group_messages, primary_container_id,
+    ConsolidationMessageLike,
+};
 use super::types::{
-    ConsolidationConfig, ConsolidationReport, ConsolidationStatus, ExistingMemory, GroupSummary,
+    ConsolidationConfig, ConsolidationMessage, ConsolidationReport, ConsolidationStatus,
+    ExistingMemory, GroupSummary,
 };
 
 pub(crate) const META_KEY_LAST_CONSOLIDATION: &str = "last_consolidation_run";
@@ -49,18 +54,22 @@ pub async fn consolidate(
         db,
         config.batch_size,
         cutoff_ts,
+        Some(&nomen_core::collected::CollectedEventFilter {
+            platform: config.platform.clone(),
+            community_id: config.community_id.clone(),
+            chat_id: config.chat_id.clone(),
+            sender_id: None,
+            thread_id: config.thread_id.clone(),
+            since: config.since,
+            until: None,
+            limit: None,
+        }),
     )
     .await?;
 
-    // Convert to RawMessageRecord for pipeline compatibility
-    let messages: Vec<RawMessageRecord> = collected
-        .iter()
-        .map(|cm| cm.to_raw_message_record())
-        .collect();
-
-    if messages.len() < config.min_messages {
+    if collected.len() < config.min_messages {
         info!(
-            count = messages.len(),
+            count = collected.len(),
             min = config.min_messages,
             "Not enough unconsolidated messages to consolidate"
         );
@@ -70,21 +79,24 @@ pub async fn consolidate(
         });
     }
 
-    debug!(count = messages.len(), "Processing unconsolidated messages");
+    debug!(
+        count = collected.len(),
+        "Processing unconsolidated messages"
+    );
 
     // Group messages by sender/container identity + time window + scope.
     // Scope partitioning ensures messages from different groups/tiers
     // are never consolidated together (cross-group guard).
-    // Current compatibility layer still derives container identity from
-    // legacy raw-message `channel` fields.
-    let grouped = group_messages(messages.clone());
+    // Container identity now prefers canonical chat/thread fields, with
+    // legacy `channel` only as a fallback inside the compatibility record.
+    let grouped = group_messages(collected.clone());
     debug!(
         groups = grouped.len(),
         "Grouped messages into time windows (scope-partitioned)"
     );
 
     let mut report = ConsolidationReport {
-        messages_processed: messages.len(),
+        messages_processed: collected.len(),
         dry_run: config.dry_run,
         ..Default::default()
     };
@@ -103,25 +115,43 @@ pub async fn consolidate(
             continue;
         }
 
-        let extracted = config.llm_provider.consolidate(group_msgs).await?;
+        let llm_group_msgs: Vec<ConsolidationMessage> = group_msgs
+            .iter()
+            .map(|m| {
+                let container = primary_container_id(m);
+                ConsolidationMessage {
+                    id: m.d_tag.clone(),
+                    sender: m.sender_id.clone().unwrap_or_default(),
+                    content: m.content.clone(),
+                    source: m.platform.clone().unwrap_or_default(),
+                    community: m.community_id.clone().unwrap_or_default(),
+                    chat: m.chat_id.clone().unwrap_or_default(),
+                    thread: m.thread_id.clone().unwrap_or_default(),
+                    container,
+                    created_at: chrono::DateTime::from_timestamp(m.created_at, 0)
+                        .map(|dt| dt.to_rfc3339())
+                        .unwrap_or_default(),
+                    created_at_ts: m.created_at,
+                }
+            })
+            .collect();
+
+        let extracted = config.llm_provider.consolidate(&llm_group_msgs).await?;
 
         // Derive tier from source messages
         let derived_tier = derive_tier_from_messages(group_msgs);
         // Apply cross-group consolidation guard (scope partitioning in GroupKey + tier guard)
         let most_restrictive_source = if group_msgs.iter().any(|m| {
             let container = super::grouping::primary_container_id(m);
-            m.source == "dm"
-                || m.source == "telegram_dm"
-                || (m.source == "nostr" && (container.is_empty() || container == "dm"))
+            m.source() == "dm"
+                || m.source() == "telegram_dm"
+                || (m.source() == "nostr" && (container.is_empty() || container == "dm"))
         }) {
             "personal"
-        } else if group_msgs
-            .iter()
-            .any(|m| {
-                let container = super::grouping::primary_container_id(m);
-                !container.is_empty() && container != "dm" && container != "general"
-            })
-        {
+        } else if group_msgs.iter().any(|m| {
+            let container = super::grouping::primary_container_id(m);
+            !container.is_empty() && container != "dm" && container != "general"
+        }) {
             "group"
         } else {
             "public"
@@ -148,133 +178,111 @@ pub async fn consolidate(
             // Check if a memory with this d-tag already exists (for merge)
             let existing = get_existing_memory(db, &d_tag).await;
 
-            let (
-                final_content,
-                final_importance,
-                contradicts,
-                is_merge,
-            ) = if let Ok(Some(existing_mem)) = existing {
-                // Merge: re-prompt LLM with existing + new
-                debug!(topic = %memory.topic, "Merging into existing memory");
+            let (final_content, final_importance, contradicts, is_merge) =
+                if let Ok(Some(existing_mem)) = existing {
+                    // Merge: re-prompt LLM with existing + new
+                    debug!(topic = %memory.topic, "Merging into existing memory");
 
-                match config
-                    .llm_provider
-                    .merge(&existing_mem.content, group_msgs)
-                    .await
-                {
-                    Ok(merged) if !merged.is_empty() => {
-                        let m = &merged[0];
-                        (
-                            m.content.clone(),
-                            m.importance,
-                            m.contradicts_existing,
-                            true,
-                        )
+                    match config
+                        .llm_provider
+                        .merge(&existing_mem.content, &llm_group_msgs)
+                        .await
+                    {
+                        Ok(merged) if !merged.is_empty() => {
+                            let m = &merged[0];
+                            (
+                                m.content.clone(),
+                                m.importance,
+                                m.contradicts_existing,
+                                true,
+                            )
+                        }
+                        Ok(_) => {
+                            // Merge returned empty, use extracted as-is
+                            (memory.content.clone(), memory.importance, false, true)
+                        }
+                        Err(e) => {
+                            warn!("LLM merge failed, using extracted memory: {e}");
+                            (memory.content.clone(), memory.importance, false, true)
+                        }
                     }
-                    Ok(_) => {
-                        // Merge returned empty, use extracted as-is
-                        (
-                            memory.content.clone(),
-                            memory.importance,
-                            false,
-                            true,
-                        )
-                    }
-                    Err(e) => {
-                        warn!("LLM merge failed, using extracted memory: {e}");
-                        (
-                            memory.content.clone(),
-                            memory.importance,
-                            false,
-                            true,
-                        )
-                    }
-                }
-            } else {
-                // No existing memory — check for near-duplicates via embedding (TODO #6)
-                let mut is_dedup_merge = false;
-                if embedder.dimensions() > 0 {
-                    if let Ok(emb) = embedder.embed_one(&memory.content).await {
-                        if let Ok(similar) = find_similar_memory(db, &emb, 0.92).await {
-                            if let Some(sim_dtag) = similar {
-                                debug!(
-                                    topic = %memory.topic,
-                                    similar_dtag = %sim_dtag,
-                                    "Found near-duplicate memory, merging"
-                                );
-                                // Fetch the similar memory and merge
-                                if let Ok(Some(sim_mem)) = get_existing_memory(db, &sim_dtag).await
-                                {
-                                    match config
-                                        .llm_provider
-                                        .merge(&sim_mem.content, group_msgs)
-                                        .await
+                } else {
+                    // No existing memory — check for near-duplicates via embedding (TODO #6)
+                    let mut is_dedup_merge = false;
+                    if embedder.dimensions() > 0 {
+                        if let Ok(emb) = embedder.embed_one(&memory.content).await {
+                            if let Ok(similar) = find_similar_memory(db, &emb, 0.92).await {
+                                if let Some(sim_dtag) = similar {
+                                    debug!(
+                                        topic = %memory.topic,
+                                        similar_dtag = %sim_dtag,
+                                        "Found near-duplicate memory, merging"
+                                    );
+                                    // Fetch the similar memory and merge
+                                    if let Ok(Some(sim_mem)) =
+                                        get_existing_memory(db, &sim_dtag).await
                                     {
-                                        Ok(merged) if !merged.is_empty() => {
-                                            let m = &merged[0];
-                                            is_dedup_merge = true;
-                                            // Store using the similar memory's d_tag
-                                            let mem = nomen_core::NewMemory {
-                                                topic: sim_dtag.clone(),
-                                                content: m.content.clone(),
-                                                tier: tier.clone(),
-                                                importance: m.importance,
-                                                source: Some("consolidation".to_string()),
-                                                model: Some("nomen/consolidation".to_string()),
-                                            };
-                                            let stored_dtag =
-                                                crate::store::store_direct(db, embedder, mem)
-                                                    .await?;
-                                            // Bump version
-                                            bump_memory_version(db, &stored_dtag).await.ok();
-                                            nomen_db::set_consolidation_tags(
-                                                db,
-                                                &stored_dtag,
-                                                &group_msgs.len().to_string(),
-                                                &now_timestamp.to_string(),
-                                            )
+                                        match config
+                                            .llm_provider
+                                            .merge(&sim_mem.content, &llm_group_msgs)
                                             .await
-                                            .ok();
-                                            report.memories_updated += 1;
+                                        {
+                                            Ok(merged) if !merged.is_empty() => {
+                                                let m = &merged[0];
+                                                is_dedup_merge = true;
+                                                // Store using the similar memory's d_tag
+                                                let mem = nomen_core::NewMemory {
+                                                    topic: sim_dtag.clone(),
+                                                    content: m.content.clone(),
+                                                    tier: tier.clone(),
+                                                    importance: m.importance,
+                                                    source: Some("consolidation".to_string()),
+                                                    model: Some("nomen/consolidation".to_string()),
+                                                };
+                                                let stored_dtag =
+                                                    crate::store::store_direct(db, embedder, mem)
+                                                        .await?;
+                                                // Bump version
+                                                bump_memory_version(db, &stored_dtag).await.ok();
+                                                nomen_db::set_consolidation_tags(
+                                                    db,
+                                                    &stored_dtag,
+                                                    &group_msgs.len().to_string(),
+                                                    &now_timestamp.to_string(),
+                                                )
+                                                .await
+                                                .ok();
+                                                report.memories_updated += 1;
+                                            }
+                                            _ => {}
                                         }
-                                        _ => {}
                                     }
                                 }
                             }
                         }
                     }
-                }
 
-                if is_dedup_merge {
-                    // Track primary conversation container for reporting.
-                    let container = group_msgs
-                        .first()
-                        .map(|m| {
-                            if !m.thread_id.is_empty() {
-                                let chat = if m.chat_id.is_empty() { &m.channel } else { &m.chat_id };
-                                if chat.is_empty() { m.thread_id.clone() } else { format!("{chat}/{}", m.thread_id) }
-                            } else if !m.chat_id.is_empty() {
-                                m.chat_id.clone()
-                            } else if !m.channel.is_empty() {
-                                m.channel.clone()
-                            } else {
-                                "general".to_string()
-                            }
-                        })
-                        .unwrap_or_else(|| "general".to_string());
-                    if !container.is_empty() && !report.channels.contains(&container) {
-                        report.channels.push(container);
+                    if is_dedup_merge {
+                        // Track primary conversation container for reporting.
+                        let container = group_msgs
+                            .first()
+                            .map(|m| {
+                                let container = primary_container_id(m);
+                                if container.is_empty() {
+                                    "general".to_string()
+                                } else {
+                                    container
+                                }
+                            })
+                            .unwrap_or_else(|| "general".to_string());
+                        if !container.is_empty() && !report.channels.contains(&container) {
+                            report.channels.push(container);
+                        }
+                        continue;
                     }
-                    continue;
-                }
 
-                (
-                    memory.content.clone(),
-                    memory.importance,
-                    false,
-                    false,
-                )
-            };
+                    (memory.content.clone(), memory.importance, false, false)
+                };
 
             let content_for_entities = final_content.clone();
 
@@ -333,7 +341,7 @@ pub async fn consolidate(
             if let Ok(record_id) = get_memory_record_id(db, &d_tag).await {
                 for msg in group_msgs {
                     if let Err(e) =
-                        nomen_db::create_consolidated_edge(db, &record_id, &msg.id).await
+                        nomen_db::create_consolidated_edge(db, &record_id, &msg.d_tag).await
                     {
                         warn!("Failed to create consolidated_from edge: {e}");
                     }
@@ -348,8 +356,7 @@ pub async fn consolidate(
                         if let Ok(record_id) = get_memory_record_id(db, &d_tag).await {
                             // Store entities and create mention edges
                             for entity in &extracted_entities {
-                                match nomen_db::store_entity(db, &entity.name, &entity.kind).await
-                                {
+                                match nomen_db::store_entity(db, &entity.name, &entity.kind).await {
                                     Ok(entity_id) => {
                                         let eid = entity_id
                                             .split_once(':')
@@ -526,15 +533,11 @@ pub async fn consolidate(
             let container = group_msgs
                 .first()
                 .map(|m| {
-                    if !m.thread_id.is_empty() {
-                        let chat = if m.chat_id.is_empty() { &m.channel } else { &m.chat_id };
-                        if chat.is_empty() { m.thread_id.clone() } else { format!("{chat}/{}", m.thread_id) }
-                    } else if !m.chat_id.is_empty() {
-                        m.chat_id.clone()
-                    } else if !m.channel.is_empty() {
-                        m.channel.clone()
-                    } else {
+                    let container = primary_container_id(m);
+                    if container.is_empty() {
                         "general".to_string()
+                    } else {
+                        container
                     }
                 })
                 .unwrap_or_else(|| "general".to_string());
@@ -545,7 +548,7 @@ pub async fn consolidate(
 
         // Collect message IDs for this group
         for msg in group_msgs {
-            all_consumed_msg_ids.push(msg.id.clone());
+            all_consumed_msg_ids.push(msg.d_tag.clone());
         }
     }
 
@@ -560,7 +563,7 @@ pub async fn consolidate(
 
     // Publish NIP-09 deletion events for consumed ephemerals
     if let Some(relay) = relay {
-        let deleted = publish_deletion_events(relay, &messages).await?;
+        let deleted = publish_deletion_events(relay, &collected).await?;
         report.events_deleted = deleted;
     }
 
@@ -584,13 +587,13 @@ pub async fn consolidate(
 /// Groups deletions by batch to avoid excessively large events.
 async fn publish_deletion_events(
     relay: &RelayManager,
-    messages: &[RawMessageRecord],
+    messages: &[CollectedMessageRecord],
 ) -> Result<usize> {
-    // Collect any messages that have nostr source_ids (these are the event IDs on relay)
+    // Collect provider-native Nostr event ids from canonical collected-message records.
     let event_ids: Vec<&str> = messages
         .iter()
-        .filter(|m| !m.source_id.is_empty() && m.source == "nostr")
-        .map(|m| m.source_id.as_str())
+        .filter(|m| m.platform.as_deref() == Some("nostr"))
+        .filter_map(|m| m.message_id.as_deref())
         .collect();
 
     if event_ids.is_empty() {

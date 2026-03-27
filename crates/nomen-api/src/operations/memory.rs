@@ -2,6 +2,8 @@
 
 use serde_json::{json, Value};
 
+use crate::types::resolve_visibility_scope;
+use crate::NomenBackend;
 use nomen_core::api::errors::ApiError;
 use nomen_core::api::types::{RetrievalParams, Visibility};
 use nomen_core::memory::build_dtag;
@@ -9,8 +11,6 @@ use nomen_core::ops::ListOptions;
 use nomen_core::search::SearchOptions;
 use nomen_core::NewMemory;
 use nomen_db::MemoryRecord;
-use crate::types::resolve_visibility_scope;
-use crate::NomenBackend;
 
 pub async fn search(
     nomen: &dyn NomenBackend,
@@ -106,7 +106,11 @@ pub async fn search(
     }))
 }
 
-pub async fn put(nomen: &dyn NomenBackend, default_channel: &str, params: &Value) -> Result<Value, ApiError> {
+pub async fn put(
+    nomen: &dyn NomenBackend,
+    default_channel: &str,
+    params: &Value,
+) -> Result<Value, ApiError> {
     let topic = params
         .get("topic")
         .and_then(|v| v.as_str())
@@ -128,7 +132,10 @@ pub async fn put(nomen: &dyn NomenBackend, default_channel: &str, params: &Value
     let scope_str = scope.unwrap_or_default();
     let tier = visibility.to_tier(&scope_str);
 
-    let importance = params.get("importance").and_then(|v| v.as_i64()).map(|v| v as i32);
+    let importance = params
+        .get("importance")
+        .and_then(|v| v.as_i64())
+        .map(|v| v as i32);
 
     let mem = NewMemory {
         topic: topic.clone(),
@@ -155,7 +162,11 @@ pub async fn put(nomen: &dyn NomenBackend, default_channel: &str, params: &Value
     }))
 }
 
-pub async fn get(nomen: &dyn NomenBackend, default_channel: &str, params: &Value) -> Result<Value, ApiError> {
+pub async fn get(
+    nomen: &dyn NomenBackend,
+    default_channel: &str,
+    params: &Value,
+) -> Result<Value, ApiError> {
     let d_tag = params.get("d_tag").and_then(|v| v.as_str());
     let topic = params.get("topic").and_then(|v| v.as_str());
 
@@ -221,7 +232,11 @@ fn record_to_value(record: Option<MemoryRecord>) -> Value {
     }
 }
 
-pub async fn list(nomen: &dyn NomenBackend, default_channel: &str, params: &Value) -> Result<Value, ApiError> {
+pub async fn list(
+    nomen: &dyn NomenBackend,
+    default_channel: &str,
+    params: &Value,
+) -> Result<Value, ApiError> {
     let limit = params.get("limit").and_then(|v| v.as_u64()).unwrap_or(100) as usize;
     let include_stats = params
         .get("stats")

@@ -32,7 +32,12 @@ pub fn cmd_config(relay: &str, nsecs: &[String]) {
     println!("{}: {}", "Keys configured".bold(), nsecs.len());
 }
 
-pub async fn cmd_prune(backend: &Backend, nomen: Option<&Nomen>, days: u64, dry_run: bool) -> Result<()> {
+pub async fn cmd_prune(
+    backend: &Backend,
+    nomen: Option<&Nomen>,
+    days: u64,
+    dry_run: bool,
+) -> Result<()> {
     if dry_run {
         println!(
             "{} Pruning memories (older than {} days)...",
@@ -43,7 +48,13 @@ pub async fn cmd_prune(backend: &Backend, nomen: Option<&Nomen>, days: u64, dry_
         println!("Pruning memories (older than {} days)...", days);
     }
 
-    let result = cli_dispatch(backend, nomen, "memory.prune", &json!({"days": days, "dry_run": dry_run})).await?;
+    let result = cli_dispatch(
+        backend,
+        nomen,
+        "memory.prune",
+        &json!({"days": days, "dry_run": dry_run}),
+    )
+    .await?;
 
     let memories_pruned = result["memories_pruned"].as_u64().unwrap_or(0);
 
@@ -54,10 +65,17 @@ pub async fn cmd_prune(backend: &Backend, nomen: Option<&Nomen>, days: u64, dry_
             println!("\n{} memories eligible for pruning:", pruned.len());
             for mem in pruned {
                 let topic = mem["topic"].as_str().unwrap_or("");
-                let confidence = mem["confidence"].as_f64().map(|c| format!("{c:.2}")).unwrap_or_else(|| "?".to_string());
+                let confidence = mem["confidence"]
+                    .as_f64()
+                    .map(|c| format!("{c:.2}"))
+                    .unwrap_or_else(|| "?".to_string());
                 let access_count = mem["access_count"].as_u64().unwrap_or(0);
                 let created_at = mem["created_at"].as_str().unwrap_or("");
-                let date = if created_at.len() >= 10 { &created_at[..10] } else { created_at };
+                let date = if created_at.len() >= 10 {
+                    &created_at[..10]
+                } else {
+                    created_at
+                };
                 println!(
                     "  {} (confidence: {}, accesses: {}, created: {})",
                     topic.bold(),
@@ -126,9 +144,7 @@ pub async fn cmd_init(force: bool, non_interactive: bool) -> Result<()> {
     // 2. Identity
     println!("\n  {}", "2. Identity".bold());
     println!("     Nomen needs its own Nostr keypair to sign and encrypt memories.");
-    let nomen_nsec: String = Password::new()
-        .with_prompt("     Nomen nsec")
-        .interact()?;
+    let nomen_nsec: String = Password::new().with_prompt("     Nomen nsec").interact()?;
     let nomen_keys = Keys::parse(&nomen_nsec).context("Invalid nsec")?;
     let nomen_npub = nomen_keys.public_key().to_bech32()?;
     println!("     {} {}", "✓".green(), nomen_npub);
@@ -255,8 +271,16 @@ pub async fn cmd_init(force: bool, non_interactive: bool) -> Result<()> {
             provider: emb_provider,
             model: emb_model,
             api_key_env: emb_api_key_env,
-            api_key: if emb_api_key.is_empty() { None } else { Some(emb_api_key) },
-            base_url: if emb_base_url.is_empty() { None } else { Some(emb_base_url) },
+            api_key: if emb_api_key.is_empty() {
+                None
+            } else {
+                Some(emb_api_key)
+            },
+            base_url: if emb_base_url.is_empty() {
+                None
+            } else {
+                Some(emb_base_url)
+            },
             dimensions: emb_dimensions,
             batch_size: 100,
         }),
@@ -318,7 +342,8 @@ async fn cmd_init_non_interactive() -> Result<()> {
     let npub = keys.public_key().to_bech32()?;
     println!("  Nomen identity: {npub}");
 
-    let relay = std::env::var("NOMEN_RELAY").unwrap_or_else(|_| "wss://nomen.atlantislabs.space".to_string());
+    let relay = std::env::var("NOMEN_RELAY")
+        .unwrap_or_else(|_| "wss://nomen.atlantislabs.space".to_string());
 
     let config = Config {
         relay: Some(relay.clone()),

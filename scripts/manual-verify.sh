@@ -147,15 +147,15 @@ RESP=$(dispatch "{\"action\":\"message.ingest\",\"params\":{\"content\":\"Test m
 INGEST_OK=$(echo "$RESP" | jq -r '.ok // false')
 check "message.ingest succeeds" "$INGEST_OK"
 
-# 16. Message list (filter by source used in ingest above)
-RESP=$(dispatch '{"action":"message.list","params":{"source":"manual-test","limit":5}}')
+# 16. Message query (filter by source used in ingest above)
+RESP=$(dispatch '{"action":"message.query","params":{"#proxy":["manual-test"],"limit":5}}')
 MSG_OK=$(echo "$RESP" | jq -r '.ok // false')
 MSG_COUNT=$(echo "$RESP" | jq -r '.result.count // 0')
-check "message.list succeeds" "$MSG_OK"
-check "message.list returns ingested message" "$([ "$MSG_COUNT" -gt 0 ] && echo true || echo false)"
+check "message.query succeeds" "$MSG_OK"
+check "message.query returns ingested message" "$([ "$MSG_COUNT" -gt 0 ] && echo true || echo false)"
 
 # 17. Message context
-RESP=$(dispatch "{\"action\":\"message.context\",\"params\":{\"source_id\":\"$MSG_ID\",\"before\":2,\"after\":2}}")
+RESP=$(dispatch '{"action":"message.context","params":{"#proxy":["manual-test"],"#chat":["test-channel"],"limit":2}}')
 CTX_OK=$(echo "$RESP" | jq -r '.ok // false')
 check "message.context succeeds" "$CTX_OK"
 
@@ -411,7 +411,7 @@ ALL_ACTIONS=(
   "memory.list|{}"
   "memory.delete|{\"topic\":\"verify/ops-coverage\",\"visibility\":\"public\"}"
   "message.ingest|{\"content\":\"ops coverage test\",\"source\":\"ops-test\"}"
-  "message.list|{\"limit\":1}"
+  "message.query|{\"#proxy\":[\"manual-test\"],\"limit\":1}"
   "message.context|{\"source_id\":\"nonexistent\"}"
   "message.send|{\"recipient\":\"npub1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqsz03vke\",\"content\":\"test\"}"
   "entity.list|{}"

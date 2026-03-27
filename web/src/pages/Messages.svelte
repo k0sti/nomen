@@ -11,8 +11,9 @@
 
   // ── Filters ────────────────────────────────────────────────────────
   let senderFilter = $state('');
-  let channelFilter = $state('');
-  let sourceFilter = $state('');
+  let chatFilter = $state('');
+  let threadFilter = $state('');
+  let platformFilter = $state('');
   let sincePreset = $state('');
   let includeConsolidated = $state(false);
   let messageLimit = $state(100);
@@ -56,8 +57,9 @@
     expandedId = null;
     try {
       const result = await $api.listMessages({
-        source: sourceFilter || undefined,
-        channel: channelFilter || undefined,
+        platform: platformFilter || undefined,
+        chat: chatFilter || undefined,
+        thread: threadFilter || undefined,
         sender: senderFilter || undefined,
         since: sinceFromPreset(sincePreset),
         include_consolidated: includeConsolidated || undefined,
@@ -83,12 +85,12 @@
     isSearchMode = true;
     expandedId = null;
     try {
-      // Use message list/context compatibility filters; full-text search is still
-      // approximated client-side here for the web UI.
-      // so we filter client-side for now
+      // Full-text search is still approximated client-side in the web UI,
+      // but the underlying fetch now uses canonical query filters.
       const result = await $api.listMessages({
-        source: sourceFilter || undefined,
-        channel: channelFilter || undefined,
+        platform: platformFilter || undefined,
+        chat: chatFilter || undefined,
+        thread: threadFilter || undefined,
         sender: senderFilter || undefined,
         since: sinceFromPreset(sincePreset),
         include_consolidated: includeConsolidated || undefined,
@@ -98,7 +100,7 @@
       const filtered = result.messages.filter(
         m => m.content.toLowerCase().includes(lower) ||
              m.sender.toLowerCase().includes(lower) ||
-             (m.channel || '').toLowerCase().includes(lower) ||
+             ((m.thread ? `${m.chat || ''}/${m.thread}` : (m.chat || m.channel || ''))).toLowerCase().includes(lower) ||
              (m.chat || '').toLowerCase().includes(lower) ||
              (m.thread || '').toLowerCase().includes(lower) ||
              (m.community || '').toLowerCase().includes(lower) ||
@@ -118,29 +120,31 @@
   }
 
   async function toggleContext(msg: Message) {
-    if (expandedId === msg.source_id) {
+    if (expandedId === (msg.source_id || msg.id)) {
       expandedId = null;
       contextMessages = [];
       contextTargetIndex = -1;
       return;
     }
 
-    if (!msg.source_id) {
-      // No source_id, can't fetch context
+    if (!msg.chat) {
       expandedId = null;
       return;
     }
 
-    expandedId = msg.source_id;
+    expandedId = msg.source_id || msg.id;
     loadingContext = true;
     try {
       const result: MessageContextResult = await $api.getMessageContext({
-        source_id: msg.source_id,
-        before: 5,
-        after: 5,
+        platform: msg.platform,
+        community: msg.community,
+        chat: msg.chat,
+        thread: msg.thread,
+        before: Math.floor(Date.now() / 1000),
+        limit: 11,
       });
       contextMessages = result.messages;
-      contextTargetIndex = result.target_index;
+      contextTargetIndex = result.target_index ?? -1;
     } catch (err: any) {
       showError('Failed to load context: ' + (err.message || err));
       expandedId = null;
@@ -153,7 +157,9 @@
     consolidating = true;
     try {
       const report = await $api.consolidate({
-        channel: channelFilter || undefined,
+        platform: platformFilter || undefined,
+        chat: chatFilter || undefined,
+        thread: threadFilter || undefined,
       });
       showInfo(`Consolidated ${report.messages_processed} messages into ${report.memories_created} memories`);
       loadMessages();
@@ -174,8 +180,9 @@
 
   function clearFilters() {
     senderFilter = '';
-    channelFilter = '';
-    sourceFilter = '';
+    chatFilter = '';
+    threadFilter = '';
+    platformFilter = '';
     sincePreset = '';
     includeConsolidated = false;
     searchQuery = '';
@@ -248,17 +255,24 @@
     />
     <input
       type="text"
-      placeholder="Chat / thread..."
-      bind:value={channelFilter}
+      placeholder="Chat..."
+      bind:value={chatFilter}
+      onchange={applyFilters}
+      class="px-3 py-2 min-h-11 w-40 bg-gray-900 border border-gray-700 rounded-lg text-sm text-gray-200 placeholder-gray-500 focus:border-accent-500 focus:outline-none"
+    />
+    <input
+      type="text"
+      placeholder="Thread..."
+      bind:value={threadFilter}
       onchange={applyFilters}
       class="px-3 py-2 min-h-11 w-40 bg-gray-900 border border-gray-700 rounded-lg text-sm text-gray-200 placeholder-gray-500 focus:border-accent-500 focus:outline-none"
     />
     <select
-      bind:value={sourceFilter}
+      bind:value={platformFilter}
       onchange={applyFilters}
       class="px-3 py-2 min-h-11 bg-gray-900 border border-gray-700 rounded-lg text-sm text-gray-200 focus:border-accent-500 focus:outline-none"
     >
-      <option value="">All sources</option>
+      <option value="">All platforms</option>
       <option value="telegram">Telegram</option>
       <option value="nostr">Nostr</option>
       <option value="webhook">Webhook</option>
@@ -319,7 +333,7 @@
       {#each messages as message (message.source_id || message.id || message.created_at)}
         <button
           type="button"
-          class="w-full text-left hover:bg-gray-800/30 transition-colors duration-100 {expandedId === message.source_id ? 'bg-gray-800/20' : ''}"
+          class="w-full text-left hover:bg-gray-800/30 transition-colors duration-100 {expandedId === (message.source_id || message.id) ? 'bg-gray-800/20' : ''}"
           onclick={() => toggleContext(message)}
         >
           <MessageItem {message} />

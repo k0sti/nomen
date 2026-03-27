@@ -35,16 +35,22 @@ struct Fixture {
 
 /// Fixtures for common operations.
 mod fixtures {
-    use serde_json::{json, Value};
     use super::Fixture;
+    use serde_json::{json, Value};
 
     pub fn memory_list() -> Fixture {
-        Fixture { action: "memory.list", params: json!({}) }
+        Fixture {
+            action: "memory.list",
+            params: json!({}),
+        }
     }
 
     #[allow(dead_code)]
     pub fn memory_list_limited(limit: u64) -> Fixture {
-        Fixture { action: "memory.list", params: json!({ "limit": limit }) }
+        Fixture {
+            action: "memory.list",
+            params: json!({ "limit": limit }),
+        }
     }
 
     pub fn memory_put(topic: &str, content: &str) -> Fixture {
@@ -59,7 +65,10 @@ mod fixtures {
     }
 
     pub fn memory_get(d_tag: &str) -> Fixture {
-        Fixture { action: "memory.get", params: json!({ "d_tag": d_tag }) }
+        Fixture {
+            action: "memory.get",
+            params: json!({ "d_tag": d_tag }),
+        }
     }
 
     pub fn memory_search(query: &str) -> Fixture {
@@ -70,16 +79,25 @@ mod fixtures {
     }
 
     pub fn memory_search_missing_query() -> Fixture {
-        Fixture { action: "memory.search", params: json!({}) }
+        Fixture {
+            action: "memory.search",
+            params: json!({}),
+        }
     }
 
     pub fn unknown_action() -> Fixture {
-        Fixture { action: "bogus.action", params: json!({}) }
+        Fixture {
+            action: "bogus.action",
+            params: json!({}),
+        }
     }
 
     #[allow(dead_code)]
     pub fn group_list() -> Fixture {
-        Fixture { action: "group.list", params: json!({}) }
+        Fixture {
+            action: "group.list",
+            params: json!({}),
+        }
     }
 
     /// The MCP tool name for a canonical action (e.g. "memory.list" → "memory_list").
@@ -137,11 +155,15 @@ async fn dispatch_http(router: axum::Router, f: &Fixture) -> Value {
         .method("POST")
         .uri("/memory/api/dispatch")
         .header("content-type", "application/json")
-        .body(axum::body::Body::from(serde_json::to_string(&body).unwrap()))
+        .body(axum::body::Body::from(
+            serde_json::to_string(&body).unwrap(),
+        ))
         .unwrap();
 
     let resp = router.oneshot(req).await.unwrap();
-    let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+    let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+        .await
+        .unwrap();
     serde_json::from_slice(&bytes).unwrap_or(json!(null))
 }
 
@@ -176,7 +198,9 @@ async fn dispatch_cvm_tools_call(handler: &CvmHandler, f: &Fixture) -> Value {
         JsonRpcMessage::Response(r) => &r.result,
         _ => panic!("Expected Response, got: {:?}", resp),
     };
-    let text = result["content"][0]["text"].as_str().expect("content[0].text");
+    let text = result["content"][0]["text"]
+        .as_str()
+        .expect("content[0].text");
     serde_json::from_str(text).expect("valid JSON ApiResponse")
 }
 
@@ -189,16 +213,18 @@ async fn dispatch_mcp(mcp: &mut McpServer, f: &Fixture) -> Value {
         params: fixtures::mcp_tools_call(f),
     };
     let resp = mcp.handle_request(&req).await;
-    let result = resp.result.as_ref().expect("MCP response should have result");
-    let text = result["content"][0]["text"].as_str().expect("content[0].text");
+    let result = resp
+        .result
+        .as_ref()
+        .expect("MCP response should have result");
+    let text = result["content"][0]["text"]
+        .as_str()
+        .expect("content[0].text");
     serde_json::from_str(text).expect("valid JSON ApiResponse")
 }
 
 /// Socket dispatch — returns the canonical envelope as Value.
-async fn dispatch_socket(
-    client: &nomen_wire::NomenClient,
-    f: &Fixture,
-) -> Value {
+async fn dispatch_socket(client: &nomen_wire::NomenClient, f: &Fixture) -> Value {
     let resp = tokio::time::timeout(
         std::time::Duration::from_secs(5),
         client.request(f.action, f.params.clone()),
@@ -326,7 +352,12 @@ async fn dispatch_vs_cvm_memory_list() {
 async fn dispatch_vs_cvm_memory_put_get() {
     let (nomen, _tmp) = test_nomen().await.unwrap();
 
-    let put = store_test_memory(&nomen, "conformance/put-test", "Test memory for conformance").await;
+    let put = store_test_memory(
+        &nomen,
+        "conformance/put-test",
+        "Test memory for conformance",
+    )
+    .await;
     assert_ok(&put, "put");
     let d_tag = put["result"]["d_tag"].as_str().unwrap().to_string();
 
@@ -337,7 +368,11 @@ async fn dispatch_vs_cvm_memory_put_get() {
     assert_eq!(get["result"]["content"], "Test memory for conformance");
 
     // Store via CVM, get via CVM (both go through dispatch)
-    let cvm_put = dispatch_cvm(&handler, &fixtures::memory_put("conformance/cvm-put", "Stored via CVM")).await;
+    let cvm_put = dispatch_cvm(
+        &handler,
+        &fixtures::memory_put("conformance/cvm-put", "Stored via CVM"),
+    )
+    .await;
     assert_ok(&cvm_put, "CVM put");
     let cvm_d_tag = cvm_put["result"]["d_tag"].as_str().unwrap();
     let cvm_get = dispatch_cvm(&handler, &fixtures::memory_get(cvm_d_tag)).await;
@@ -392,8 +427,18 @@ async fn all_transports_memory_list_equivalence() {
     // All should have the same topic
     let direct_topic = direct["result"]["memories"][0]["topic"].as_str().unwrap();
     assert_eq!(direct_topic, "conformance/all-transports");
-    assert_eq!(direct_topic, cvm_direct["result"]["memories"][0]["topic"].as_str().unwrap());
-    assert_eq!(direct_topic, cvm_tools["result"]["memories"][0]["topic"].as_str().unwrap());
+    assert_eq!(
+        direct_topic,
+        cvm_direct["result"]["memories"][0]["topic"]
+            .as_str()
+            .unwrap()
+    );
+    assert_eq!(
+        direct_topic,
+        cvm_tools["result"]["memories"][0]["topic"]
+            .as_str()
+            .unwrap()
+    );
 }
 
 #[tokio::test]
@@ -414,7 +459,12 @@ async fn all_transports_error_equivalence() {
 #[tokio::test]
 async fn all_transports_memory_search_equivalence() {
     let (nomen, _tmp) = test_nomen().await.unwrap();
-    store_test_memory(&nomen, "conformance/search-target", "Unique searchable content for conformance testing").await;
+    store_test_memory(
+        &nomen,
+        "conformance/search-target",
+        "Unique searchable content for conformance testing",
+    )
+    .await;
 
     let f = fixtures::memory_search("conformance searchable content");
     let direct = dispatch_direct(&nomen, &f).await;
@@ -426,10 +476,18 @@ async fn all_transports_memory_search_equivalence() {
     assert_eq!(direct["result"]["count"], cvm["result"]["count"]);
 
     if direct["result"]["count"].as_u64().unwrap() > 0 {
-        let direct_topics: Vec<&str> = direct["result"]["results"].as_array().unwrap()
-            .iter().map(|r| r["topic"].as_str().unwrap()).collect();
-        let cvm_topics: Vec<&str> = cvm["result"]["results"].as_array().unwrap()
-            .iter().map(|r| r["topic"].as_str().unwrap()).collect();
+        let direct_topics: Vec<&str> = direct["result"]["results"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|r| r["topic"].as_str().unwrap())
+            .collect();
+        let cvm_topics: Vec<&str> = cvm["result"]["results"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|r| r["topic"].as_str().unwrap())
+            .collect();
         assert_eq!(direct_topics, cvm_topics);
     }
 }
@@ -483,8 +541,10 @@ async fn http_dispatch_malformed_request() {
 
     let resp = router.oneshot(req).await.unwrap();
     assert!(
-        resp.status() == http::StatusCode::BAD_REQUEST || resp.status() == http::StatusCode::UNPROCESSABLE_ENTITY,
-        "malformed JSON should return 4xx, got {}", resp.status()
+        resp.status() == http::StatusCode::BAD_REQUEST
+            || resp.status() == http::StatusCode::UNPROCESSABLE_ENTITY,
+        "malformed JSON should return 4xx, got {}",
+        resp.status()
     );
 }
 
@@ -517,7 +577,9 @@ async fn http_health_endpoint() {
     let resp = router.oneshot(req).await.unwrap();
     assert_eq!(resp.status(), http::StatusCode::OK);
 
-    let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+    let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+        .await
+        .unwrap();
     let val: Value = serde_json::from_slice(&bytes).unwrap();
     assert_eq!(val["status"], "ok");
 }
@@ -544,7 +606,11 @@ async fn mcp_tools_call_memory_put_get() {
     let (nomen, _tmp) = test_nomen().await.unwrap();
     let mut mcp = make_mcp_server(nomen);
 
-    let put = dispatch_mcp(&mut mcp, &fixtures::memory_put("conformance/mcp-put", "Stored via MCP adapter")).await;
+    let put = dispatch_mcp(
+        &mut mcp,
+        &fixtures::memory_put("conformance/mcp-put", "Stored via MCP adapter"),
+    )
+    .await;
     assert_ok(&put, "MCP put");
     let d_tag = put["result"]["d_tag"].as_str().unwrap();
 
@@ -572,7 +638,10 @@ async fn mcp_tools_call_unknown_tool() {
     };
     let resp = mcp.handle_request(&req).await;
     let result = resp.result.as_ref().unwrap();
-    assert!(result["isError"].as_bool().unwrap_or(false), "unknown tool should return isError");
+    assert!(
+        result["isError"].as_bool().unwrap_or(false),
+        "unknown tool should return isError"
+    );
 }
 
 #[tokio::test]
@@ -601,7 +670,9 @@ async fn mcp_tools_list_returns_all_actions() {
         params: json!({}),
     };
     let resp = mcp.handle_request(&req).await;
-    let tools = resp.result.as_ref().unwrap()["tools"].as_array().expect("tools array");
+    let tools = resp.result.as_ref().unwrap()["tools"]
+        .as_array()
+        .expect("tools array");
 
     for tool in tools {
         let name = tool["name"].as_str().unwrap();
@@ -612,7 +683,14 @@ async fn mcp_tools_list_returns_all_actions() {
     }
 
     let names: Vec<&str> = tools.iter().map(|t| t["name"].as_str().unwrap()).collect();
-    for expected in ["memory_search", "memory_put", "memory_list", "message_ingest", "entity_list", "group_list"] {
+    for expected in [
+        "memory_search",
+        "memory_put",
+        "memory_list",
+        "message_ingest",
+        "entity_list",
+        "group_list",
+    ] {
         assert!(names.contains(&expected), "should have {expected}");
     }
 }
@@ -642,7 +720,11 @@ async fn mcp_vs_cvm_vs_http_memory_list() {
     for (label, val) in [("MCP", &mcp_val), ("CVM", &cvm_val), ("HTTP", &http_val)] {
         assert_ok(val, label);
         assert_envelope_eq(&direct, val, "direct", label);
-        assert_eq!(count, val["result"]["count"].as_u64().unwrap(), "{label} count should match");
+        assert_eq!(
+            count,
+            val["result"]["count"].as_u64().unwrap(),
+            "{label} count should match"
+        );
     }
 }
 
@@ -654,13 +736,20 @@ async fn mcp_vs_cvm_vs_http_memory_list() {
 async fn socket_vs_direct_memory_list() {
     let (db, _db_tmp) = init_test_db().await.unwrap();
     let nomen_direct = nomen::Nomen::from_db(db.clone());
-    store_test_memory(&nomen_direct, "conformance/socket-list", "Socket conformance").await;
+    store_test_memory(
+        &nomen_direct,
+        "conformance/socket-list",
+        "Socket conformance",
+    )
+    .await;
 
     let f = fixtures::memory_list();
     let direct = dispatch_direct(&nomen_direct, &f).await;
 
     let (_server, sock_path, _sock_tmp, _handle) = setup_socket_server(db).await;
-    let client = nomen_wire::NomenClient::connect(&sock_path).await.expect("connect");
+    let client = nomen_wire::NomenClient::connect(&sock_path)
+        .await
+        .expect("connect");
     let sock = dispatch_socket(&client, &f).await;
 
     assert_ok(&direct, "direct");
@@ -675,9 +764,15 @@ async fn socket_vs_direct_memory_list() {
 async fn socket_vs_direct_memory_put_get() {
     let (db, _db_tmp) = init_test_db().await.unwrap();
     let (_server, sock_path, _sock_tmp, _handle) = setup_socket_server(db.clone()).await;
-    let client = nomen_wire::NomenClient::connect(&sock_path).await.expect("connect");
+    let client = nomen_wire::NomenClient::connect(&sock_path)
+        .await
+        .expect("connect");
 
-    let put = dispatch_socket(&client, &fixtures::memory_put("conformance/socket-put", "Stored via socket")).await;
+    let put = dispatch_socket(
+        &client,
+        &fixtures::memory_put("conformance/socket-put", "Stored via socket"),
+    )
+    .await;
     assert_ok(&put, "socket put");
     let d_tag = put["result"]["d_tag"].as_str().unwrap();
 
@@ -699,7 +794,9 @@ async fn socket_vs_direct_error_equivalence() {
     let direct = dispatch_direct(&nomen_direct, &f).await;
 
     let (_server, sock_path, _sock_tmp, _handle) = setup_socket_server(db).await;
-    let client = nomen_wire::NomenClient::connect(&sock_path).await.expect("connect");
+    let client = nomen_wire::NomenClient::connect(&sock_path)
+        .await
+        .expect("connect");
     let sock = dispatch_socket(&client, &f).await;
 
     assert_err(&direct, "direct");
@@ -718,7 +815,9 @@ async fn socket_unknown_action_equivalence() {
     let direct = dispatch_direct(&nomen_direct, &f).await;
 
     let (_server, sock_path, _sock_tmp, _handle) = setup_socket_server(db).await;
-    let client = nomen_wire::NomenClient::connect(&sock_path).await.expect("connect");
+    let client = nomen_wire::NomenClient::connect(&sock_path)
+        .await
+        .expect("connect");
     let sock = dispatch_socket(&client, &f).await;
 
     assert_err(&direct, "direct");
@@ -775,7 +874,10 @@ async fn e2e_http_smoke_test() {
     let list: Value = list_resp.json().await.unwrap();
     assert_ok(&list, "e2e list");
     assert_eq!(list["meta"]["version"], "v2");
-    assert!(list["result"]["count"].as_u64().unwrap() >= 1, "should have at least 1 memory");
+    assert!(
+        list["result"]["count"].as_u64().unwrap() >= 1,
+        "should have at least 1 memory"
+    );
 
     // 3. Dispatch: memory.put
     let put_resp = client

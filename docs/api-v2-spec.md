@@ -455,19 +455,21 @@ Ingest a raw message for later consolidation.
 
 ---
 
-### `message.list`
+### `message.query`
 
-Query raw messages with filters.
+Canonical collected-message query operation.
 
-Note: this section still describes a legacy/raw-message compatibility surface. Canonical normalized collected-message queries should use structured hierarchy fields/tags (`platform`, optional `community`, `chat`, optional `thread`).
+Use normalized hierarchy filters for new clients: `#proxy` / `#community` / `#chat` / `#thread`.
 
 **Request:**
 
 ```json
 {
-  "action": "message.list",
+  "action": "message.query",
   "params": {
-    "channel": "telegram:-1003821690204:9225",
+    "#proxy": ["telegram"],
+    "#chat": ["-1003821690204"],
+    "#thread": ["9225"],
     "since": "2026-03-12T00:00:00Z",
     "limit": 50
   }
@@ -478,10 +480,13 @@ Note: this section still describes a legacy/raw-message compatibility surface. C
 
 | Param | Type | Required | Default | Description |
 |-------|------|----------|---------|-------------|
-| `source` | string | — | — | Filter by source |
-| `channel` | string | — | — | Legacy raw-message/container filter |
-| `sender` | string | — | — | Filter by sender |
-| `since` | string | — | — | RFC3339 timestamp |
+| `#proxy` | array<string> | — | — | Filter by normalized platform namespace |
+| `#community` | array<string> | — | — | Filter by normalized community id |
+| `#chat` | array<string> | — | — | Filter by normalized chat id |
+| `#thread` | array<string> | — | — | Filter by normalized thread/topic id |
+| `#sender` | array<string> | — | — | Filter by sender identity |
+| `since` | string/integer | — | — | RFC3339 timestamp or unix timestamp |
+| `until` | string/integer | — | — | RFC3339 timestamp or unix timestamp |
 | `limit` | integer | — | 50 | Max results |
 
 **Response result:**
@@ -489,24 +494,26 @@ Note: this section still describes a legacy/raw-message compatibility surface. C
 ```json
 {
   "count": 12,
-  "messages": [
+  "events": [
     {
-      "source": "telegram",
-      "sender": "kosti",
-      "channel": "telegram:-1003821690204:9225",
+      "kind": 30100,
       "content": "...",
-      "consolidated": false,
-      "created_at": "2026-03-12T10:30:00Z"
+      "tags": [
+        ["proxy", "telegram:-1003821690204:14352", "telegram"],
+        ["chat", "-1003821690204"],
+        ["thread", "9225"]
+      ]
     }
   ]
 }
 ```
 
+
 ---
 
 ### `message.context`
 
-Get messages surrounding a specific message (context window).
+Get recent conversation context using canonical hierarchy filters.
 
 **Request:**
 
@@ -514,9 +521,11 @@ Get messages surrounding a specific message (context window).
 {
   "action": "message.context",
   "params": {
-    "source_id": "msg_123",
-    "before": 5,
-    "after": 5
+    "#proxy": ["telegram"],
+    "#chat": ["-1003821690204"],
+    "#thread": ["9225"],
+    "before": 1711540200,
+    "limit": 50
   }
 }
 ```
@@ -525,9 +534,14 @@ Get messages surrounding a specific message (context window).
 
 | Param | Type | Required | Default | Description |
 |-------|------|----------|---------|-------------|
-| `source_id` | string | ✅ | — | Source message ID to center on |
-| `before` | integer | — | 5 | Messages before |
-| `after` | integer | — | 5 | Messages after |
+| `#proxy` | array<string> | — | — | Filter by normalized platform namespace |
+| `#community` | array<string> | — | — | Filter by normalized community id |
+| `#chat` | array<string> | ✅ | — | Filter by normalized chat id |
+| `#thread` | array<string> | — | — | Filter by normalized thread/topic id |
+| `#sender` | array<string> | — | — | Optional sender filter |
+| `since` | integer | — | — | Lower bound unix timestamp |
+| `before` | integer | — | — | Upper bound unix timestamp |
+| `limit` | integer | — | 50 | Max messages |
 
 ---
 
@@ -537,7 +551,7 @@ Get messages surrounding a specific message (context window).
 
 Trigger consolidation pipeline: group → extract → merge/dedup → store.
 
-Note: `channel` below is legacy naming from the raw-message compatibility layer. Canonical normalized grouping should be understood in terms of conversation-container hierarchy (`platform/community/chat/thread`).
+Note: canonical filtering is now supported via `#proxy`, `#community`, `#chat`, and `#thread`. `channel` remains as a legacy compatibility alias for chat/container identity.
 
 **Request:**
 
@@ -558,8 +572,12 @@ Note: `channel` below is legacy naming from the raw-message compatibility layer.
 
 | Param | Type | Required | Default | Description |
 |-------|------|----------|---------|-------------|
-| `channel` | string | — | — | Legacy raw-message/container filter |
-| `since` | string | — | — | Only messages since (RFC3339) |
+| `channel` | string | — | — | Legacy raw-message/container filter (compatibility alias for chat_id) |
+| `#proxy` | array<string> | — | — | Filter by normalized platform namespace |
+| `#community` | array<string> | — | — | Filter by normalized community id |
+| `#chat` | array<string> | — | — | Filter by normalized chat id |
+| `#thread` | array<string> | — | — | Filter by normalized thread/topic id |
+| `since` | string/integer | — | — | Only messages since (RFC3339 or unix timestamp) |
 | `min_messages` | integer | — | 3 | Minimum messages to trigger |
 | `batch_size` | integer | — | 50 | Max messages per run |
 | `dry_run` | boolean | — | false | Preview without publishing |
@@ -741,7 +759,7 @@ Each canonical operation maps to an MCP tool with the same name and argument sch
 | `memory.list` | `memory_list` | |
 | `memory.delete` | `memory_delete` | |
 | `message.ingest` | `message_ingest` | |
-| `message.list` | `message_list` | |
+| `message.query` | `message_query` | |
 | `message.context` | `message_context` | |
 | `message.send` | `message_send` | |
 | `entity.list` | `entity_list` | |

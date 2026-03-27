@@ -7,11 +7,8 @@ use async_trait::async_trait;
 
 use nomen_api::{ListReport, NomenBackend};
 use nomen_core::collected::{CollectedEvent, CollectedEventFilter};
-use nomen_media::MediaRef;
 use nomen_core::groups::Group;
-use nomen_core::ops::{
-    ClusterParams, ConsolidateParams, EmbedReport, ListOptions, SyncReport,
-};
+use nomen_core::ops::{ClusterParams, ConsolidateParams, EmbedReport, ListOptions, SyncReport};
 use nomen_core::search::{SearchOptions, SearchResult};
 use nomen_core::send::{SendOptions, SendResult};
 use nomen_core::session::ResolvedSession;
@@ -23,6 +20,7 @@ use nomen_db::{
 };
 use nomen_llm::cluster::ClusterReport;
 use nomen_llm::consolidate::{BatchExtraction, CommitResult, ConsolidationReport, PrepareResult};
+use nomen_media::MediaRef;
 
 use crate::{ClusterOptions, ConsolidateOptions, Nomen};
 
@@ -86,11 +84,7 @@ impl NomenBackend for Nomen {
         self.store_media(data, mime_type).await
     }
 
-    fn resolve_session(
-        &self,
-        session_id: &str,
-        default_channel: &str,
-    ) -> Result<ResolvedSession> {
+    fn resolve_session(&self, session_id: &str, default_channel: &str) -> Result<ResolvedSession> {
         self.resolve_session(session_id, default_channel)
     }
 

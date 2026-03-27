@@ -87,9 +87,10 @@ Query `raw_message` table for unconsolidated messages matching filters:
 | Minimum messages | `--min-messages` | `3` |
 
 ```sql
-SELECT * FROM raw_message
+SELECT * FROM collected_message
 WHERE consolidated = false
   AND created_at < $cutoff
+  AND platform/chat_id/thread_id filters match when provided
 ORDER BY created_at ASC
 LIMIT $batch_size
 ```
@@ -111,7 +112,7 @@ Messages in #techteam/topic:8485     → Group D (8 messages)
 Messages in #techteam/topic:8399     → Group E (3 messages)
 ```
 
-**Forum/thread partitioning:** Platforms like Telegram forums have multiple topics within a single chat. Canonically, these should partition on structured `thread_id` metadata within the normalized message hierarchy. Some legacy raw-message compatibility paths still recover topic identity from sender strings; those should be removed as the canonical collected-message path takes over fully.
+**Forum/thread partitioning:** Platforms like Telegram forums have multiple topics within a single chat. Canonically, these partition on structured `thread_id` metadata within the normalized message hierarchy. The current consolidation path already accepts canonical `#community` / `#chat` / `#thread` filters at the API boundary; remaining cleanup is about removing deeper legacy compatibility assumptions, not adding top-level filter support.
 
 ### Stage 3: Extraction (LLM)
 

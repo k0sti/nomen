@@ -75,7 +75,8 @@ pub fn parse_event(event: &Event, signer: &dyn NomenSigner) -> ParsedMemory {
     let d_tag_raw = get_tag_value(tags, "d").unwrap_or_default();
     let topic = parse_d_tag(&d_tag_raw);
     let tier = parse_tier(tags);
-    let visibility = get_tag_value(tags, "visibility").unwrap_or_else(|| base_tier(&tier).to_string());
+    let visibility =
+        get_tag_value(tags, "visibility").unwrap_or_else(|| base_tier(&tier).to_string());
     let model = get_tag_value(tags, "model").unwrap_or_else(|| "unknown".to_string());
     let importance = get_tag_value(tags, "importance").and_then(|v| v.parse::<i32>().ok());
 

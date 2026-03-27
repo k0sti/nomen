@@ -3,6 +3,20 @@ use serde::{Deserialize, Serialize};
 /// Time window for grouping messages (4 hours in seconds).
 pub(crate) const TIME_WINDOW_SECS: i64 = 4 * 3600;
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ConsolidationMessage {
+    pub id: String,
+    pub sender: String,
+    pub content: String,
+    pub source: String,
+    pub community: String,
+    pub chat: String,
+    pub thread: String,
+    pub container: String,
+    pub created_at: String,
+    pub created_at_ts: i64,
+}
+
 /// A memory extracted by the LLM from a batch of messages.
 #[derive(Debug, Clone)]
 pub struct ExtractedMemory {
@@ -27,6 +41,16 @@ pub struct ConsolidationConfig {
     pub older_than: Option<String>,
     /// Only consolidate messages matching this tier.
     pub tier: Option<String>,
+    /// Restrict consolidation input to matching normalized platform(s).
+    pub platform: Option<Vec<String>>,
+    /// Restrict consolidation input to matching normalized community/container ids.
+    pub community_id: Option<Vec<String>>,
+    /// Restrict consolidation input to matching normalized chat ids.
+    pub chat_id: Option<Vec<String>>,
+    /// Restrict consolidation input to matching normalized thread/topic ids.
+    pub thread_id: Option<Vec<String>>,
+    /// Restrict consolidation input to messages created at/after this unix timestamp.
+    pub since: Option<i64>,
     /// Author's hex pubkey, used for v0.2 d-tag context on personal/internal memories.
     pub author_pubkey: Option<String>,
 }
@@ -41,6 +65,11 @@ impl Default for ConsolidationConfig {
             dry_run: false,
             older_than: None,
             tier: None,
+            platform: None,
+            community_id: None,
+            chat_id: None,
+            thread_id: None,
+            since: None,
             author_pubkey: None,
         }
     }
@@ -54,9 +83,8 @@ pub struct ConsolidationReport {
     pub memories_updated: usize,
     pub events_deleted: usize,
     pub events_published: usize,
-    /// Legacy reporting field name. Values currently represent the primary
-    /// conversation container used during grouping (typically chat or
-    /// chat/thread identity).
+    /// Legacy reporting field name. Values represent the primary conversation
+    /// container used during grouping (typically chat or chat/thread identity).
     pub channels: Vec<String>,
     pub groups: Vec<GroupSummary>,
     pub dry_run: bool,
@@ -74,8 +102,8 @@ pub struct GroupSummary {
 #[derive(Debug, Clone, Hash, Eq, PartialEq)]
 pub(crate) struct GroupKey {
     /// Sender identity for private batches, or primary conversation container
-    /// identity for group/public batches. In the current compatibility layer
-    /// this is still derived from legacy raw-message `channel` data.
+    /// identity for group/public batches. Prefer canonical chat/thread
+    /// identity, with legacy `channel` only as a fallback.
     pub identity: String,
     /// Time window index (created_at / TIME_WINDOW_SECS)
     pub window: i64,

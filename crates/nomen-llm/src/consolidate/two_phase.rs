@@ -6,7 +6,9 @@ use tracing::warn;
 use nomen_core::embed::Embedder;
 use nomen_relay::RelayManager;
 
-use super::grouping::{derive_tier_from_messages, enforce_tier_guard, group_messages};
+use super::grouping::{
+    derive_tier_from_messages, enforce_tier_guard, group_messages, ConsolidationMessageLike,
+};
 use super::pipeline::{bump_memory_version, get_existing_memory, get_memory_record_id};
 use super::types::{
     BatchExtraction, BatchMessage, CommitResult, ConsolidationConfig, PrepareResult, PreparedBatch,
@@ -43,16 +45,20 @@ pub async fn prepare(
         db,
         config.batch_size,
         cutoff_ts,
+        Some(&nomen_core::collected::CollectedEventFilter {
+            platform: config.platform.clone(),
+            community_id: config.community_id.clone(),
+            chat_id: config.chat_id.clone(),
+            sender_id: None,
+            thread_id: config.thread_id.clone(),
+            since: config.since,
+            until: None,
+            limit: None,
+        }),
     )
     .await?;
 
-    // Convert to RawMessageRecord for pipeline compatibility
-    let messages: Vec<nomen_db::RawMessageRecord> = collected
-        .iter()
-        .map(|cm| cm.to_raw_message_record())
-        .collect();
-
-    if messages.len() < config.min_messages {
+    if collected.len() < config.min_messages {
         return Ok(PrepareResult {
             session_id: None,
             expires_at: None,
@@ -63,8 +69,8 @@ pub async fn prepare(
     }
 
     // Stage 2: Group
-    let grouped = group_messages(messages.clone());
-    let total_messages = messages.len();
+    let grouped = group_messages(collected.clone());
+    let total_messages = collected.len();
 
     let mut batches = Vec::new();
     let mut batch_idx = 0;
@@ -77,49 +83,47 @@ pub async fn prepare(
         let derived_tier = derive_tier_from_messages(group_msgs);
         let most_restrictive = if group_msgs.iter().any(|m| {
             let container = super::grouping::primary_container_id(m);
-            m.source == "dm"
-                || m.source == "telegram_dm"
-                || (m.source == "nostr" && (container.is_empty() || container == "dm"))
+            m.source() == "dm"
+                || m.source() == "telegram_dm"
+                || (m.source() == "nostr" && (container.is_empty() || container == "dm"))
         }) {
             "personal"
-        } else if group_msgs
-            .iter()
-            .any(|m| {
-                let container = super::grouping::primary_container_id(m);
-                !container.is_empty() && container != "dm" && container != "general"
-            })
-        {
+        } else if group_msgs.iter().any(|m| {
+            let container = super::grouping::primary_container_id(m);
+            !container.is_empty() && container != "dm" && container != "general"
+        }) {
             "group"
         } else {
             "public"
         };
         let visibility = enforce_tier_guard(&derived_tier, most_restrictive);
 
-        let timestamps: Vec<&str> = group_msgs.iter().map(|m| m.created_at.as_str()).collect();
-        let start = timestamps.iter().min().unwrap_or(&"").to_string();
-        let end = timestamps.iter().max().unwrap_or(&"").to_string();
+        let start_ts = group_msgs.iter().map(|m| m.created_at).min().unwrap_or(0);
+        let end_ts = group_msgs.iter().map(|m| m.created_at).max().unwrap_or(0);
+        let start = chrono::DateTime::from_timestamp(start_ts, 0)
+            .map(|dt| dt.to_rfc3339())
+            .unwrap_or_default();
+        let end = chrono::DateTime::from_timestamp(end_ts, 0)
+            .map(|dt| dt.to_rfc3339())
+            .unwrap_or_default();
 
         let batch_messages: Vec<BatchMessage> = group_msgs
             .iter()
             .map(|m| {
-                let container = if !m.thread_id.is_empty() {
-                    let chat = if m.chat_id.is_empty() { &m.channel } else { &m.chat_id };
-                    if chat.is_empty() { m.thread_id.clone() } else { format!("{chat}/{}", m.thread_id) }
-                } else if !m.chat_id.is_empty() {
-                    m.chat_id.clone()
-                } else {
-                    m.channel.clone()
-                };
+                let container = super::grouping::primary_container_id(m);
+                let chat = m.chat_id.clone().unwrap_or_default();
                 BatchMessage {
-                    id: m.id.clone(),
-                    sender: m.sender.clone(),
+                    id: m.d_tag.clone(),
+                    sender: m.sender_id.clone().unwrap_or_default(),
                     content: m.content.clone(),
                     channel: container.clone(),
                     container,
-                    chat: if m.chat_id.is_empty() { m.channel.clone() } else { m.chat_id.clone() },
-                    thread: m.thread_id.clone(),
-                    source: m.source.clone(),
-                    created_at: m.created_at.clone(),
+                    chat,
+                    thread: m.thread_id.clone().unwrap_or_default(),
+                    source: m.platform.clone().unwrap_or_default(),
+                    created_at: chrono::DateTime::from_timestamp(m.created_at, 0)
+                        .map(|dt| dt.to_rfc3339())
+                        .unwrap_or_default(),
                 }
             })
             .collect();
@@ -241,11 +245,7 @@ pub async fn commit(
 
             // Check for existing memory to merge
             let existing = get_existing_memory(db, &d_tag).await;
-            let is_merge = existing
-                .as_ref()
-                .ok()
-                .map(|r| r.is_some())
-                .unwrap_or(false);
+            let is_merge = existing.as_ref().ok().map(|r| r.is_some()).unwrap_or(false);
 
             let mem = nomen_core::NewMemory {
                 topic: d_tag.clone(),

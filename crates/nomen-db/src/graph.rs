@@ -75,12 +75,12 @@ pub async fn create_consolidated_edge(
         "LET $msg = (SELECT id FROM collected_message WHERE d_tag = $dtag LIMIT 1); \
          IF $msg[0] != NONE THEN \
            (RELATE $from->consolidated_from->$msg[0].id) \
-         END"
+         END",
     )
-        .bind(("from", RecordId::new("memory", memory_id)))
-        .bind(("dtag", message_d_tag.to_string()))
-        .await?
-        .check()?;
+    .bind(("from", RecordId::new("memory", memory_id)))
+    .bind(("dtag", message_d_tag.to_string()))
+    .await?
+    .check()?;
     Ok(())
 }
 

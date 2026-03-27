@@ -2,8 +2,8 @@
 
 use serde_json::{json, Value};
 
-use nomen_core::api::errors::ApiError;
 use crate::NomenBackend;
+use nomen_core::api::errors::ApiError;
 
 pub async fn list(
     nomen: &dyn NomenBackend,

@@ -231,15 +231,12 @@ async fn graph_expand(
             let is_contradiction = effective_edge_type == "contradicts";
 
             // Parse timestamp
-            let ts = neighbor
-                .created_at
-                .parse::<u64>()
-                .unwrap_or_else(|_| {
-                    std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .unwrap_or_default()
-                        .as_secs()
-                });
+            let ts = neighbor.created_at.parse::<u64>().unwrap_or_else(|_| {
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs()
+            });
 
             expanded.push(SearchResult {
                 tier: neighbor.tier,
@@ -446,8 +443,10 @@ fn aggregate_results(results: Vec<SearchResult>) -> Vec<SearchResult> {
                 if !combined_content.is_empty() {
                     combined_content.push_str("\n---\n");
                 }
-                combined_content
-                    .push_str(&format!("[{}] {}", results[idx].topic, results[idx].content));
+                combined_content.push_str(&format!(
+                    "[{}] {}",
+                    results[idx].topic, results[idx].content
+                ));
             }
 
             let topic_display = if topics.len() > 1 {

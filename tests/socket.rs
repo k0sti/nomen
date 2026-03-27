@@ -45,12 +45,8 @@ async fn setup_server() -> (
         max_frame_size: 16 * 1024 * 1024,
     };
 
-    let server = nomen::socket::SocketServer::new(
-        Arc::new(nomen),
-        &config,
-        "test".to_string(),
-        None,
-    );
+    let server =
+        nomen::socket::SocketServer::new(Arc::new(nomen), &config, "test".to_string(), None);
 
     (server, sock_path, db_tmp, sock_tmp)
 }
@@ -88,10 +84,13 @@ async fn t_sock_01_basic_request_response() {
     let server = Arc::new(server);
     let (client, _handle) = spawn_and_connect(server, &sock_path).await;
 
-    let resp = timeout(Duration::from_secs(5), client.request("memory.list", json!({})))
-        .await
-        .expect("timeout")
-        .expect("request");
+    let resp = timeout(
+        Duration::from_secs(5),
+        client.request("memory.list", json!({})),
+    )
+    .await
+    .expect("timeout")
+    .expect("request");
 
     assert!(resp.ok, "memory.list should succeed: {:?}", resp.error);
     assert!(resp.result.is_some());
@@ -362,10 +361,7 @@ async fn t_sock_08_client_disconnect_cleanup() {
     let client_a = nomen_wire::NomenClient::connect(&sock_path)
         .await
         .expect("client_a");
-    let mut events_a = client_a
-        .subscribe(&["*"])
-        .await
-        .expect("subscribe");
+    let mut events_a = client_a.subscribe(&["*"]).await.expect("subscribe");
 
     // Connect client B using a raw UnixStream so we can fully close it
     {

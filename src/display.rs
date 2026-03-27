@@ -46,11 +46,7 @@ pub fn display_memories(npubs: &[String], memories: &[ParsedMemory], lesson_coun
             _ => tier_display.yellow(),
         };
 
-        println!(
-            "\n{} {}",
-            tier_colored,
-            mem.topic.bold(),
-        );
+        println!("\n{} {}", tier_colored, mem.topic.bold(),);
         println!("  Model: {}", mem.model);
         println!("  Summary: {}", crate::memory::first_line(&mem.content));
         println!("  Created: {}", format_timestamp(mem.created_at.as_u64()));

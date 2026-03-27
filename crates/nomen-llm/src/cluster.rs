@@ -129,7 +129,8 @@ struct LlmClusterOutput {
 #[async_trait]
 impl ClusterLlmProvider for OpenAiClusterLlmProvider {
     async fn synthesize_cluster(&self, prefix: &str, context: &str) -> Result<ClusterSynthesis> {
-        let system_prompt = "You are a memory synthesis agent. Given a collection of related memories \
+        let system_prompt =
+            "You are a memory synthesis agent. Given a collection of related memories \
 grouped under the same topic namespace, produce a coherent, comprehensive summary that captures \
 the key information across all of them. \
 Return JSON with this exact structure: {\"content\": \"comprehensive synthesis as plain text\"}. \
@@ -253,9 +254,7 @@ fn derive_cluster_tier(members: &[&ClusterableMemory]) -> String {
     let has_private = members
         .iter()
         .any(|m| m.tier == "private" || m.tier == "internal");
-    let has_personal = members
-        .iter()
-        .any(|m| m.tier == "personal");
+    let has_personal = members.iter().any(|m| m.tier == "personal");
     let has_group = members.iter().any(|m| m.tier.starts_with("group"));
 
     if has_private {

@@ -11,10 +11,7 @@ use crate::SessionRecord;
 // ── Session CRUD ─────────────────────────────────────────────────────
 
 /// Create or update a session record.
-pub async fn create_session(
-    db: &Surreal<Db>,
-    session: &ResolvedSession,
-) -> Result<String> {
+pub async fn create_session(db: &Surreal<Db>, session: &ResolvedSession) -> Result<String> {
     let now = chrono::Utc::now().to_rfc3339();
 
     #[derive(Serialize, SurrealValue)]

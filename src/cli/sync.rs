@@ -33,11 +33,7 @@ pub async fn cmd_embed(backend: &Backend, nomen: Option<&Nomen>, limit: usize) -
     if total == 0 {
         println!("All memories already have embeddings.");
     } else {
-        println!(
-            "{}: {} memories embedded",
-            "Done".green().bold(),
-            embedded
-        );
+        println!("{}: {} memories embedded", "Done".green().bold(), embedded);
     }
 
     Ok(())
@@ -227,7 +223,11 @@ pub async fn cmd_cluster(
         println!(
             "{}: {} clusters from {} memories",
             prefix_display,
-            if dry_run { clusters_found } else { clusters_synthesized },
+            if dry_run {
+                clusters_found
+            } else {
+                clusters_synthesized
+            },
             memories_scanned
         );
 

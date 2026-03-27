@@ -25,7 +25,8 @@ async fn test_store_and_search() -> Result<()> {
         visibility: "public".to_string(),
         topic: "rust/error-handling".to_string(),
         model: "test".to_string(),
-        content: "Use anyhow for application errors\n\nanyhow provides easy error context chaining".to_string(),
+        content: "Use anyhow for application errors\n\nanyhow provides easy error context chaining"
+            .to_string(),
         created_at: nostr_sdk::Timestamp::now(),
         d_tag: "snow:memory:rust/error-handling".to_string(),
         source: "test".to_string(),
@@ -64,7 +65,11 @@ async fn test_ingest_and_consolidate() -> Result<()> {
             pubkey: String::new(),
             tags: vec![
                 vec!["d".to_string(), format!("test:msg-{i}")],
-                vec!["proxy".to_string(), format!("test:msg-{i}"), "test".to_string()],
+                vec![
+                    "proxy".to_string(),
+                    format!("test:msg-{i}"),
+                    "test".to_string(),
+                ],
                 vec!["sender".to_string(), "alice".to_string()],
                 vec!["chat".to_string(), "general".to_string()],
             ],
@@ -103,8 +108,12 @@ async fn test_ingest_and_consolidate() -> Result<()> {
     );
 
     // Verify messages are marked consolidated
-    let unconsolidated = nomen::db::get_unconsolidated_collected(&db, 100, None).await?;
-    assert_eq!(unconsolidated.len(), 0, "All messages should be consolidated");
+    let unconsolidated = nomen::db::get_unconsolidated_collected(&db, 100, None, None).await?;
+    assert_eq!(
+        unconsolidated.len(),
+        0,
+        "All messages should be consolidated"
+    );
 
     Ok(())
 }
@@ -208,7 +217,11 @@ async fn test_collected_message_lifecycle() -> Result<()> {
             pubkey: String::new(),
             tags: vec![
                 vec!["d".to_string(), format!("test:old-{i}")],
-                vec!["proxy".to_string(), format!("test:old-{i}"), "test".to_string()],
+                vec![
+                    "proxy".to_string(),
+                    format!("test:old-{i}"),
+                    "test".to_string(),
+                ],
                 vec!["sender".to_string(), "bob".to_string()],
                 vec!["chat".to_string(), "general".to_string()],
             ],
@@ -220,7 +233,7 @@ async fn test_collected_message_lifecycle() -> Result<()> {
     }
 
     // Verify they're unconsolidated
-    let unconsolidated = nomen::db::get_unconsolidated_collected(&db, 100, None).await?;
+    let unconsolidated = nomen::db::get_unconsolidated_collected(&db, 100, None, None).await?;
     assert_eq!(unconsolidated.len(), 3);
 
     // Mark them consolidated
@@ -228,7 +241,7 @@ async fn test_collected_message_lifecycle() -> Result<()> {
     nomen::db::mark_collected_consolidated(&db, &d_tags).await?;
 
     // Verify they're now consolidated (messages stay, flag changes)
-    let unconsolidated = nomen::db::get_unconsolidated_collected(&db, 100, None).await?;
+    let unconsolidated = nomen::db::get_unconsolidated_collected(&db, 100, None, None).await?;
     assert_eq!(unconsolidated.len(), 0, "All should be consolidated");
 
     let total = nomen::db::count_collected_events(&db, None).await?;

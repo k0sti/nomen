@@ -33,8 +33,9 @@
   );
 
   const containerLabel = $derived.by(() => {
-    if (message.thread) return `${message.chat || message.channel || 'chat'} / ${message.thread}`;
+    if (message.thread) return `${message.chat || 'chat'} / ${message.thread}`;
     if (message.chat) return message.chat;
+    if (message.community) return message.community;
     return message.channel;
   });
 </script>

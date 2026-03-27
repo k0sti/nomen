@@ -268,13 +268,9 @@ async fn handle_request_with_backend(
         "unsubscribe" => handle_unsubscribe(state, conn_id, &req).await,
         // Canonical dispatch — same semantics as HTTP/MCP/CVM
         _ => {
-            let api_resp = nomen_api::dispatch(
-                backend,
-                &state.default_channel,
-                &req.action,
-                &req.params,
-            )
-            .await;
+            let api_resp =
+                nomen_api::dispatch(backend, &state.default_channel, &req.action, &req.params)
+                    .await;
 
             // Map canonical ApiResponse to wire Response envelope
             let resp_value = serde_json::to_value(&api_resp).unwrap_or_default();
@@ -335,9 +331,8 @@ async fn handle_identity_auth(
         Ok(keys) => {
             let signer = Arc::new(nomen_relay::signer::KeysSigner::new(keys));
             info!(conn_id, pubkey = %signer.public_key().to_hex(), "Socket: session identity set");
-            let session_backend: Arc<dyn NomenBackend> = Arc::new(
-                nomen_api::SessionBackend::new(state.nomen.clone(), signer),
-            );
+            let session_backend: Arc<dyn NomenBackend> =
+                Arc::new(nomen_api::SessionBackend::new(state.nomen.clone(), signer));
 
             let resp_value = serde_json::to_value(&api_resp).unwrap_or_default();
             (
@@ -354,7 +349,11 @@ async fn handle_identity_auth(
         Err(e) => {
             warn!(conn_id, "Socket: identity.auth failed to parse nsec: {e}");
             (
-                Response::error(req.id.clone(), "invalid_params", &format!("invalid nsec: {e}")),
+                Response::error(
+                    req.id.clone(),
+                    "invalid_params",
+                    &format!("invalid nsec: {e}"),
+                ),
                 None,
             )
         }

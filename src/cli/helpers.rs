@@ -163,19 +163,20 @@ pub async fn dispatch_http(
     if let Some(nsec) = nsec {
         req = req.header("Authorization", format!("Nostr {nsec}"));
     }
-    let resp = req
-        .send()
-        .await
-        .context("HTTP dispatch request failed")?;
+    let resp = req.send().await.context("HTTP dispatch request failed")?;
     let status = resp.status();
-    let payload: serde_json::Value = resp.json().await.context("Failed to parse dispatch response")?;
+    let payload: serde_json::Value = resp
+        .json()
+        .await
+        .context("Failed to parse dispatch response")?;
     if !status.is_success() || payload.get("ok").and_then(|v| v.as_bool()) != Some(true) {
-        let err = payload["error"]
-            .as_str()
-            .unwrap_or("unknown error");
+        let err = payload["error"].as_str().unwrap_or("unknown error");
         bail!("{action}: {err}");
     }
-    Ok(payload.get("result").cloned().unwrap_or(serde_json::Value::Null))
+    Ok(payload
+        .get("result")
+        .cloned()
+        .unwrap_or(serde_json::Value::Null))
 }
 
 /// Call api::dispatch (direct) or HTTP dispatch, and extract the result or bail on error.
@@ -186,7 +187,9 @@ pub async fn cli_dispatch(
     params: &serde_json::Value,
 ) -> Result<serde_json::Value> {
     match backend {
-        Backend::Http(base_url, nsec) => dispatch_http(base_url, action, params, nsec.as_deref()).await,
+        Backend::Http(base_url, nsec) => {
+            dispatch_http(base_url, action, params, nsec.as_deref()).await
+        }
         Backend::Direct => {
             let nomen = nomen.expect("Direct backend requires a Nomen instance");
             let resp = nomen::api::dispatch(nomen, CLI_CHANNEL, action, params).await;

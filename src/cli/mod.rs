@@ -6,7 +6,6 @@ pub mod group;
 pub mod helpers;
 pub mod memory;
 pub mod message;
-pub mod migrate;
 pub mod server;
 pub mod sync;
 
@@ -71,7 +70,7 @@ pub enum Command {
         /// Event ID to delete
         #[arg(long)]
         id: Option<String>,
-        /// Delete ephemeral (raw) messages instead of memories
+        /// Delete ephemeral collected messages instead of memories
         #[arg(long)]
         ephemeral: bool,
         /// Delete items older than this duration (e.g. 7d, 24h). Requires --ephemeral
@@ -115,7 +114,7 @@ pub enum Command {
         #[command(subcommand)]
         action: GroupAction,
     },
-    /// Ingest a raw message
+    /// Ingest a collected message
     Ingest {
         /// Message content
         content: String,
@@ -125,18 +124,30 @@ pub enum Command {
         /// Sender identifier
         #[arg(long, default_value = "local")]
         sender: String,
-        /// Legacy chat/container identifier for raw-message ingest
+        /// Canonical platform namespace (defaults to source)
         #[arg(long)]
-        channel: Option<String>,
+        platform: Option<String>,
+        /// Canonical community/container id
+        #[arg(long)]
+        community: Option<String>,
+        /// Canonical chat id
+        #[arg(long)]
+        chat: Option<String>,
+        /// Canonical thread/topic id
+        #[arg(long)]
+        thread: Option<String>,
     },
-    /// List raw messages
+    /// List collected messages
     Messages {
-        /// Filter by source
+        /// Filter by platform
         #[arg(long)]
-        source: Option<String>,
-        /// Filter by chat/container identifier (legacy `channel` flag name)
+        platform: Option<String>,
+        /// Filter by chat id
         #[arg(long)]
-        channel: Option<String>,
+        chat: Option<String>,
+        /// Filter by thread/topic id
+        #[arg(long)]
+        thread: Option<String>,
         /// Filter by sender
         #[arg(long)]
         sender: Option<String>,
@@ -146,14 +157,14 @@ pub enum Command {
         /// Max results
         #[arg(long, default_value = "50")]
         limit: usize,
-        /// Show N messages around a specific source_id
+        /// Show recent context for a chat/thread selection (requires --chat)
         #[arg(long)]
         around: Option<String>,
         /// Number of context messages before/after --around target
         #[arg(long, default_value = "5")]
         context: usize,
     },
-    /// Consolidate raw messages into memories
+    /// Consolidate collected messages into memories
     Consolidate {
         /// Min messages required to trigger consolidation
         #[arg(long, default_value = "3")]
@@ -195,7 +206,7 @@ pub enum Command {
         #[arg(long, default_value = "2")]
         namespace_depth: usize,
     },
-    /// Prune unused/low-confidence memories and old raw messages
+    /// Prune unused/low-confidence memories and old collected messages
     Prune {
         /// Delete items older than N days
         #[arg(long, default_value = "90")]
@@ -214,11 +225,6 @@ pub enum Command {
         /// Delivery channel (default: nostr)
         #[arg(long)]
         channel: Option<String>,
-    },
-    /// Run database migrations
-    Migrate {
-        #[command(subcommand)]
-        action: MigrateAction,
     },
     /// Interactive first-time setup wizard
     Init {
@@ -350,17 +356,5 @@ pub enum GroupAction {
         id: String,
         /// Member npub to remove
         npub: String,
-    },
-}
-
-#[derive(Subcommand)]
-pub enum MigrateAction {
-    /// Show pending migrations and current DB state
-    Status,
-    /// Run all pending migrations
-    Run {
-        /// Preview what would be migrated without making changes
-        #[arg(long)]
-        dry_run: bool,
     },
 }

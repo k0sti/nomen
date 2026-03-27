@@ -19,7 +19,9 @@ fn build_dispatch(backend: &Backend) -> fs::DispatchFn {
             Box::new(move |action, params| {
                 let base_url = base_url.clone();
                 let nsec = nsec.clone();
-                Box::pin(async move { dispatch_http(&base_url, &action, &params, nsec.as_deref()).await })
+                Box::pin(async move {
+                    dispatch_http(&base_url, &action, &params, nsec.as_deref()).await
+                })
             })
         }
         Backend::Direct => {
@@ -44,19 +46,31 @@ pub async fn cmd_fs(backend: &Backend, action: FsAction) -> Result<()> {
         FsAction::Init { dir } => {
             let dir = dir.unwrap_or_else(|| PathBuf::from("."));
             fs::init_sync_dir(&dir)?;
-            println!("{} Initialized sync directory: {}", "Done".green().bold(), dir.display());
+            println!(
+                "{} Initialized sync directory: {}",
+                "Done".green().bold(),
+                dir.display()
+            );
         }
         FsAction::Pull { dir } => {
             let dir = dir.unwrap_or_else(|| PathBuf::from("."));
             let dispatch = build_dispatch(backend);
             let count = fs::pull(&dispatch, &dir).await?;
-            println!("{}: {} files written", "Pull complete".green().bold(), count);
+            println!(
+                "{}: {} files written",
+                "Pull complete".green().bold(),
+                count
+            );
         }
         FsAction::Push { dir } => {
             let dir = dir.unwrap_or_else(|| PathBuf::from("."));
             let dispatch = build_dispatch(backend);
             let count = fs::push(&dispatch, &dir).await?;
-            println!("{}: {} memories updated", "Push complete".green().bold(), count);
+            println!(
+                "{}: {} memories updated",
+                "Push complete".green().bold(),
+                count
+            );
         }
         FsAction::Status { dir } => {
             let dir = dir.unwrap_or_else(|| PathBuf::from("."));

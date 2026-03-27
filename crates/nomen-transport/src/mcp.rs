@@ -194,14 +194,13 @@ fn v2_tools_list() -> Value {
             },
             {
                 "name": "message_ingest",
-                "description": "Ingest a raw message for later consolidation",
+                "description": "Ingest a collected message for later consolidation",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
                         "content": { "type": "string", "description": "Message content" },
                         "source": { "type": "string", "description": "Source system" },
                         "sender": { "type": "string", "description": "Sender identifier" },
-                        "channel": { "type": "string", "description": "Legacy raw-message chat/container identity" },
                         "platform": { "type": "string", "description": "Normalized platform namespace" },
                         "community_id": { "type": "string", "description": "Optional normalized community/container above chat" },
                         "chat_id": { "type": "string", "description": "Normalized chat identifier" },
@@ -213,33 +212,38 @@ fn v2_tools_list() -> Value {
                 }
             },
             {
-                "name": "message_list",
+                "name": "message_query",
                 "description": "Query messages with normalized hierarchy filters",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
-                        "source": { "type": "string", "description": "Legacy source/platform filter" },
-                        "channel": { "type": "string", "description": "Legacy raw-message chat/container filter" },
+                        "#proxy": { "type": "array", "items": { "type": "string" }, "description": "Filter by normalized platform namespace" },
                         "#community": { "type": "array", "items": { "type": "string" }, "description": "Filter by normalized community_id" },
                         "#chat": { "type": "array", "items": { "type": "string" }, "description": "Filter by normalized chat_id" },
                         "#thread": { "type": "array", "items": { "type": "string" }, "description": "Filter by normalized thread_id" },
-                        "sender": { "type": "string", "description": "Filter by sender" },
-                        "since": { "type": "string", "description": "RFC3339 timestamp" },
+                        "#sender": { "type": "array", "items": { "type": "string" }, "description": "Filter by sender identity" },
+                        "since": { "type": "string", "description": "RFC3339 timestamp or unix timestamp" },
+                        "until": { "type": "string", "description": "RFC3339 timestamp or unix timestamp" },
                         "limit": { "type": "integer", "description": "Max results (default 50)" }
                     }
                 }
             },
             {
                 "name": "message_context",
-                "description": "Get messages surrounding a specific message (context window)",
+                "description": "Get recent conversation context using canonical hierarchy filters",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
-                        "source_id": { "type": "string", "description": "Source message ID to center on" },
-                        "before": { "type": "integer", "description": "Messages before (default 5)" },
-                        "after": { "type": "integer", "description": "Messages after (default 5)" }
+                        "#proxy": { "type": "array", "items": { "type": "string" }, "description": "Filter by normalized platform namespace" },
+                        "#community": { "type": "array", "items": { "type": "string" }, "description": "Filter by normalized community_id" },
+                        "#chat": { "type": "array", "items": { "type": "string" }, "description": "Filter by normalized chat_id" },
+                        "#thread": { "type": "array", "items": { "type": "string" }, "description": "Filter by normalized thread_id" },
+                        "#sender": { "type": "array", "items": { "type": "string" }, "description": "Optional sender filter" },
+                        "since": { "type": "integer", "description": "Lower bound unix timestamp" },
+                        "before": { "type": "integer", "description": "Upper bound unix timestamp (exclusive-ish context cutoff)" },
+                        "limit": { "type": "integer", "description": "Max messages (default 50)" }
                     },
-                    "required": ["source_id"]
+                    "required": ["#chat"]
                 }
             },
             {
@@ -283,10 +287,10 @@ fn v2_tools_list() -> Value {
                 "inputSchema": {
                     "type": "object",
                     "properties": {
-                        "channel": { "type": "string", "description": "Legacy raw-message/container filter (planned compatibility surface)" },
-                        "#community": { "type": "array", "items": { "type": "string" }, "description": "Planned normalized community_id filter" },
-                        "#chat": { "type": "array", "items": { "type": "string" }, "description": "Planned normalized chat_id filter" },
-                        "#thread": { "type": "array", "items": { "type": "string" }, "description": "Planned normalized thread_id filter" },
+                        "#proxy": { "type": "array", "items": { "type": "string" }, "description": "Filter by normalized platform namespace" },
+                        "#community": { "type": "array", "items": { "type": "string" }, "description": "Filter by normalized community_id" },
+                        "#chat": { "type": "array", "items": { "type": "string" }, "description": "Filter by normalized chat_id" },
+                        "#thread": { "type": "array", "items": { "type": "string" }, "description": "Filter by normalized thread_id" },
                         "since": { "type": "string", "description": "Only messages since (RFC3339)" },
                         "min_messages": { "type": "integer", "description": "Minimum messages to trigger (default 3)" },
                         "batch_size": { "type": "integer", "description": "Max messages per run (default 50)" },
@@ -520,9 +524,13 @@ impl McpServer {
             );
         }
 
-        let api_resp =
-            nomen_api::dispatch(&*self.active_nomen, &self.default_channel, &action, &arguments)
-                .await;
+        let api_resp = nomen_api::dispatch(
+            &*self.active_nomen,
+            &self.default_channel,
+            &action,
+            &arguments,
+        )
+        .await;
 
         let result_json = serde_json::to_value(&api_resp).unwrap_or_else(|_| json!({"ok": false}));
 
@@ -563,10 +571,7 @@ impl McpServer {
         }
 
         // Now create the session signer
-        let nsec = arguments
-            .get("nsec")
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
+        let nsec = arguments.get("nsec").and_then(|v| v.as_str()).unwrap_or("");
         match nostr_sdk::Keys::parse(nsec) {
             Ok(keys) => {
                 let signer = Arc::new(nomen_relay::signer::KeysSigner::new(keys));
@@ -718,11 +723,7 @@ async fn handle_legacy_request(
                 .get("name")
                 .and_then(|n| n.as_str())
                 .unwrap_or("");
-            let arguments = req
-                .params
-                .get("arguments")
-                .cloned()
-                .unwrap_or(json!({}));
+            let arguments = req.params.get("arguments").cloned().unwrap_or(json!({}));
 
             debug!(tool = tool_name, "MCP tool call");
 
@@ -742,8 +743,7 @@ async fn handle_legacy_request(
                 }
             };
 
-            let api_resp =
-                nomen_api::dispatch(nomen, default_channel, &action, &arguments).await;
+            let api_resp = nomen_api::dispatch(nomen, default_channel, &action, &arguments).await;
 
             let result_json =
                 serde_json::to_value(&api_resp).unwrap_or_else(|_| json!({"ok": false}));

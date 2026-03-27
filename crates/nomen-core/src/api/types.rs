@@ -36,7 +36,10 @@ impl ApiResponse {
             ok: true,
             result: Some(result),
             error: None,
-            meta: ApiMeta { version: "v2", request_id: None },
+            meta: ApiMeta {
+                version: "v2",
+                request_id: None,
+            },
         }
     }
 
@@ -45,7 +48,10 @@ impl ApiResponse {
             ok: true,
             result: Some(result),
             error: None,
-            meta: ApiMeta { version: "v2", request_id },
+            meta: ApiMeta {
+                version: "v2",
+                request_id,
+            },
         }
     }
 
@@ -57,7 +63,10 @@ impl ApiResponse {
                 code: err.code().to_string(),
                 message: err.message().to_string(),
             }),
-            meta: ApiMeta { version: "v2", request_id: None },
+            meta: ApiMeta {
+                version: "v2",
+                request_id: None,
+            },
         }
     }
 
@@ -69,7 +78,10 @@ impl ApiResponse {
                 code: err.code().to_string(),
                 message: err.message().to_string(),
             }),
-            meta: ApiMeta { version: "v2", request_id },
+            meta: ApiMeta {
+                version: "v2",
+                request_id,
+            },
         }
     }
 

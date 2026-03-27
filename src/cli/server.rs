@@ -98,14 +98,14 @@ pub async fn cmd_serve(
     let socket_enabled = socket || socket_config.map(|c| c.enabled).unwrap_or(false);
 
     if socket_enabled {
-        let sock_config = socket_config.cloned().unwrap_or_else(|| {
-            nomen::config::SocketConfig {
+        let sock_config = socket_config
+            .cloned()
+            .unwrap_or_else(|| nomen::config::SocketConfig {
                 enabled: true,
                 path: nomen::config::default_socket_path(),
                 max_connections: 32,
                 max_frame_size: 16 * 1024 * 1024,
-            }
-        });
+            });
 
         let (event_tx, _) = tokio::sync::broadcast::channel(1024);
 
@@ -174,7 +174,8 @@ pub async fn cmd_serve(
             };
 
             let http_state = nomen::http::AppState {
-                nomen: std::sync::Arc::new(nomen_instance) as std::sync::Arc<dyn nomen_api::NomenBackend>,
+                nomen: std::sync::Arc::new(nomen_instance)
+                    as std::sync::Arc<dyn nomen_api::NomenBackend>,
                 default_channel: default_channel.clone(),
                 config: std::sync::Arc::new(tokio::sync::RwLock::new(config.clone())),
             };
@@ -203,7 +204,8 @@ pub async fn cmd_serve(
                 } else {
                     nomen::Nomen::open_with_db(config, shared_db.clone()).await?
                 };
-                let mcp_nomen_arc: std::sync::Arc<dyn nomen_api::NomenBackend> = std::sync::Arc::new(mcp_nomen);
+                let mcp_nomen_arc: std::sync::Arc<dyn nomen_api::NomenBackend> =
+                    std::sync::Arc::new(mcp_nomen);
                 let mcp_fut = mcp::serve_stdio_arc(mcp_nomen_arc, default_channel);
                 let cvm_fut = cvm.run();
                 tokio::select! {
@@ -223,7 +225,8 @@ pub async fn cmd_serve(
             } else {
                 nomen::Nomen::open_with_db(config, shared_db.clone()).await?
             };
-            let nomen_arc: std::sync::Arc<dyn nomen_api::NomenBackend> = std::sync::Arc::new(nomen_instance);
+            let nomen_arc: std::sync::Arc<dyn nomen_api::NomenBackend> =
+                std::sync::Arc::new(nomen_instance);
             mcp::serve_stdio_arc(nomen_arc, default_channel).await
         }
     }

@@ -9,34 +9,42 @@ use nomen::Nomen;
 
 use super::helpers::{cli_dispatch, Backend};
 
-/// Ingest a message via the current raw-message compatibility path.
-///
-/// The `channel` parameter is legacy naming for the primary chat/container
-/// identifier. Canonical normalized messaging uses structured
-/// `platform/community/chat/thread` metadata.
+/// Ingest a collected message using canonical platform/community/chat/thread
+/// fields.
 pub async fn cmd_ingest(
     backend: &Backend,
     nomen: Option<&Nomen>,
     content: &str,
     source: &str,
     sender: &str,
-    channel: Option<&str>,
+    platform: Option<&str>,
+    community: Option<&str>,
+    chat: Option<&str>,
+    thread: Option<&str>,
 ) -> Result<()> {
     let params = json!({
         "content": content,
         "source": source,
         "sender": sender,
-        "channel": channel,
+        "platform": platform,
+        "community_id": community,
+        "chat_id": chat,
+        "thread_id": thread,
     });
 
     let result = cli_dispatch(backend, nomen, "message.ingest", &params).await?;
     let d_tag = result["d_tag"].as_str().unwrap_or("");
+    let location = if let Some(thread) = thread {
+        format!(" #{} / {}", chat.unwrap_or("chat"), thread)
+    } else {
+        chat.map(|c| format!(" #{c}")).unwrap_or_default()
+    };
     println!(
         "{} message from {} [{}]{}",
         "Ingested".green().bold(),
         sender.bold(),
-        source,
-        channel.map(|c| format!(" #{c}")).unwrap_or_default()
+        platform.unwrap_or(source),
+        location
     );
     debug!("d_tag: {d_tag}");
     Ok(())
@@ -45,8 +53,9 @@ pub async fn cmd_ingest(
 pub async fn cmd_messages(
     backend: &Backend,
     nomen: Option<&Nomen>,
-    source: Option<&str>,
-    channel: Option<&str>,
+    platform: Option<&str>,
+    chat: Option<&str>,
+    thread: Option<&str>,
     sender: Option<&str>,
     since: Option<&str>,
     limit: usize,
@@ -55,21 +64,24 @@ pub async fn cmd_messages(
 ) -> Result<()> {
     let result = if let Some(_around_id) = around {
         // Context query requires the primary chat/container identity.
-        if channel.is_none() {
-            bail!("--around requires --channel to be set (legacy flag for chat/container identity)");
+        if chat.is_none() {
+            bail!("--around requires --chat to be set");
         }
         let params = json!({
-            "#chat": [channel.unwrap()],
+            "#chat": [chat.unwrap()],
             "limit": context_count * 2 + 1,
         });
         cli_dispatch(backend, nomen, "message.context", &params).await?
     } else {
         let mut params = json!({ "limit": limit });
-        if let Some(p) = source {
+        if let Some(p) = platform {
             params["#proxy"] = json!([p]);
         }
-        if let Some(c) = channel {
+        if let Some(c) = chat {
             params["#chat"] = json!([c]);
+        }
+        if let Some(t) = thread {
+            params["#thread"] = json!([t]);
         }
         if let Some(s) = sender {
             params["#sender"] = json!([s]);
@@ -83,7 +95,9 @@ pub async fn cmd_messages(
     };
 
     // message.query returns { events: [...] }, message.context returns { messages: [...] }
-    let events = result["events"].as_array().or_else(|| result["messages"].as_array());
+    let events = result["events"]
+        .as_array()
+        .or_else(|| result["messages"].as_array());
     if events.map(|m| m.is_empty()).unwrap_or(true) {
         println!("No messages found.");
         return Ok(());
@@ -153,13 +167,16 @@ pub async fn cmd_messages(
     Ok(())
 }
 
-pub async fn cmd_delete_old_messages(backend: &Backend, nomen: Option<&Nomen>, older_than: Option<&str>) -> Result<()> {
+pub async fn cmd_delete_old_messages(
+    backend: &Backend,
+    nomen: Option<&Nomen>,
+    older_than: Option<&str>,
+) -> Result<()> {
     if matches!(backend, Backend::Http(..)) {
         bail!("This command requires direct DB access. Stop the nomen service first.");
     }
-    let older_than = older_than.ok_or_else(|| {
-        anyhow::anyhow!("--older-than is required (e.g. --older-than 7d)")
-    })?;
+    let older_than = older_than
+        .ok_or_else(|| anyhow::anyhow!("--older-than is required (e.g. --older-than 7d)"))?;
 
     let nomen = nomen.expect("Direct backend requires a Nomen instance");
     let count = nomen.delete_old_messages(older_than).await?;

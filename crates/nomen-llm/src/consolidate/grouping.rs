@@ -2,35 +2,74 @@ use std::collections::HashMap;
 
 use tracing::warn;
 
-use nomen_db::RawMessageRecord;
+use nomen_db::CollectedMessageRecord;
 
-use super::types::{GroupKey, TIME_WINDOW_SECS};
+use super::types::{ConsolidationMessage, GroupKey, TIME_WINDOW_SECS};
 
-/// Derive the primary conversation container identity from a message record,
-/// preferring canonical `chat_id/thread_id` over legacy `channel`.
-pub(crate) fn primary_container_id(msg: &RawMessageRecord) -> String {
-    if !msg.thread_id.is_empty() {
-        let chat = if msg.chat_id.is_empty() { &msg.channel } else { &msg.chat_id };
-        if chat.is_empty() {
-            msg.thread_id.clone()
-        } else {
-            format!("{chat}/{}", msg.thread_id)
-        }
-    } else if !msg.chat_id.is_empty() {
-        msg.chat_id.clone()
-    } else {
-        msg.channel.clone()
+pub(crate) trait ConsolidationMessageLike {
+    fn sender(&self) -> &str;
+    fn source(&self) -> &str;
+    fn thread_id(&self) -> &str;
+    fn created_at_ts(&self) -> i64;
+    fn primary_container_id(&self) -> String;
+}
+
+impl ConsolidationMessageLike for ConsolidationMessage {
+    fn sender(&self) -> &str {
+        &self.sender
     }
+    fn source(&self) -> &str {
+        &self.source
+    }
+    fn thread_id(&self) -> &str {
+        &self.thread
+    }
+    fn created_at_ts(&self) -> i64 {
+        self.created_at_ts
+    }
+    fn primary_container_id(&self) -> String {
+        self.container.clone()
+    }
+}
+
+impl ConsolidationMessageLike for CollectedMessageRecord {
+    fn sender(&self) -> &str {
+        self.sender_id.as_deref().unwrap_or("")
+    }
+    fn source(&self) -> &str {
+        self.platform.as_deref().unwrap_or("")
+    }
+    fn thread_id(&self) -> &str {
+        self.thread_id.as_deref().unwrap_or("")
+    }
+    fn created_at_ts(&self) -> i64 {
+        self.created_at
+    }
+    fn primary_container_id(&self) -> String {
+        if let Some(thread) = self.thread_id.as_deref().filter(|s| !s.is_empty()) {
+            let chat = self.chat_id.as_deref().unwrap_or("");
+            if chat.is_empty() {
+                thread.to_string()
+            } else {
+                format!("{chat}/{thread}")
+            }
+        } else {
+            self.chat_id.clone().unwrap_or_default()
+        }
+    }
+}
+
+/// Derive the primary conversation container identity from a message record.
+pub(crate) fn primary_container_id<T: ConsolidationMessageLike>(msg: &T) -> String {
+    msg.primary_container_id()
 }
 
 /// Derive a semantic topic name from a batch of messages.
 ///
 /// Uses sender plus the current primary conversation-container identity to
-/// produce topics. Today this still flows through legacy raw-message `channel`
-/// compatibility data; longer-term it should derive from canonical
-/// `platform/community/chat/thread` fields.
-pub fn derive_topic_from_messages(messages: &[RawMessageRecord]) -> String {
-    let mut senders: Vec<&str> = messages.iter().map(|m| m.sender.as_str()).collect();
+/// produce topics using canonical conversation hierarchy.
+pub fn derive_topic_from_messages<T: ConsolidationMessageLike>(messages: &[T]) -> String {
+    let mut senders: Vec<&str> = messages.iter().map(|m| m.sender()).collect();
     senders.sort();
     senders.dedup();
 
@@ -90,15 +129,14 @@ pub(crate) fn sanitize_topic_component(s: &str) -> String {
 /// - Group/container messages -> `group`
 /// - Public/CLI/other -> `public`
 ///
-/// Note: the current implementation still infers this from legacy raw-message
-/// `channel` compatibility fields in some paths.
-pub(crate) fn derive_tier_from_messages(messages: &[RawMessageRecord]) -> String {
+/// Uses canonical conversation hierarchy to derive privacy/group tier.
+pub(crate) fn derive_tier_from_messages<T: ConsolidationMessageLike>(messages: &[T]) -> String {
     // Check sources — if any message is from a DM-like source, treat as personal
     let has_dm = messages.iter().any(|m| {
         let container = primary_container_id(m);
-        (m.source == "nostr" && (container.is_empty() || container == "dm"))
-            || m.source == "telegram_dm"
-            || m.source == "dm"
+        (m.source() == "nostr" && (container.is_empty() || container == "dm"))
+            || m.source() == "telegram_dm"
+            || m.source() == "dm"
     });
 
     let has_group = messages.iter().any(|m| {
@@ -106,7 +144,9 @@ pub(crate) fn derive_tier_from_messages(messages: &[RawMessageRecord]) -> String
         !container.is_empty()
             && container != "dm"
             && container != "general"
-            && (m.source == "nostr" || m.source == "telegram" || m.source.starts_with("group"))
+            && (m.source() == "nostr"
+                || m.source() == "telegram"
+                || m.source().starts_with("group"))
     });
 
     if has_dm {
@@ -155,7 +195,7 @@ fn extract_topic_suffix(sender: &str) -> Option<String> {
     // Match ":topic:<id>" anywhere in the sender string
     if let Some(idx) = sender.find(":topic:") {
         let suffix = &sender[idx + 1..]; // skip the leading ':'
-        // Validate it looks like "topic:<digits>"
+                                         // Validate it looks like "topic:<digits>"
         if let Some(id) = suffix.strip_prefix("topic:") {
             if !id.is_empty() && id.chars().all(|c| c.is_ascii_digit()) {
                 return Some(suffix.to_string());
@@ -165,20 +205,20 @@ fn extract_topic_suffix(sender: &str) -> Option<String> {
     None
 }
 
-/// Resolve the scope for a single raw message.
+/// Resolve the scope for a single consolidation message.
 ///
 /// Scope determines the privacy/group boundary:
 /// - DM sources -> "personal"
-/// - Group sources with a specific channel -> "group:{channel}"
+/// - Group sources with a specific conversation container -> `group:{container}`
 /// - Everything else -> "public"
 ///
 /// This is used to partition messages so that different scopes are never
 /// consolidated together (cross-group guard, TODO #7).
-pub(crate) fn resolve_message_scope(msg: &RawMessageRecord) -> String {
+pub(crate) fn resolve_message_scope<T: ConsolidationMessageLike>(msg: &T) -> String {
     let container = primary_container_id(msg);
-    let is_dm = msg.source == "dm"
-        || msg.source == "telegram_dm"
-        || (msg.source == "nostr" && (container.is_empty() || container == "dm"));
+    let is_dm = msg.source() == "dm"
+        || msg.source() == "telegram_dm"
+        || (msg.source() == "nostr" && (container.is_empty() || container == "dm"));
 
     if is_dm {
         return "personal".to_string();
@@ -187,7 +227,9 @@ pub(crate) fn resolve_message_scope(msg: &RawMessageRecord) -> String {
     let is_group = !container.is_empty()
         && container != "dm"
         && container != "general"
-        && (msg.source == "nostr" || msg.source == "telegram" || msg.source.starts_with("group"));
+        && (msg.source() == "nostr"
+            || msg.source() == "telegram"
+            || msg.source().starts_with("group"));
 
     if is_group {
         return format!("group:{container}");
@@ -196,35 +238,31 @@ pub(crate) fn resolve_message_scope(msg: &RawMessageRecord) -> String {
     "public".to_string()
 }
 
-/// Group messages by sender + time window (4-hour blocks) + scope.
+/// Group messages by sender/container + time window (4-hour blocks) + scope.
 ///
 /// The scope field in the group key ensures messages from different
 /// visibility/group scopes are never mixed in the same consolidation
 /// batch, preventing information leakage across tiers (TODO #7).
-pub(crate) fn group_messages(
-    messages: Vec<RawMessageRecord>,
-) -> HashMap<GroupKey, Vec<RawMessageRecord>> {
-    let mut groups: HashMap<GroupKey, Vec<RawMessageRecord>> = HashMap::new();
+pub(crate) fn group_messages<T: ConsolidationMessageLike + Clone>(
+    messages: Vec<T>,
+) -> HashMap<GroupKey, Vec<T>> {
+    let mut groups: HashMap<GroupKey, Vec<T>> = HashMap::new();
 
     for msg in messages {
-        let timestamp = chrono::DateTime::parse_from_rfc3339(&msg.created_at)
-            .map(|dt| dt.timestamp())
-            .unwrap_or(0);
+        let window = msg.created_at_ts() / TIME_WINDOW_SECS;
 
-        let window = timestamp / TIME_WINDOW_SECS;
-
-        // Group by sender for DMs, by channel for group messages.
-        // For forum-style chats (Telegram topics), extract the topic suffix
-        // from the sender field and append it to the channel identity so each
-        // topic is consolidated independently.
+        // Group by sender for DMs, by primary conversation container for
+        // group messages. For forum-style chats (Telegram topics), extract the
+        // topic suffix from the sender field and append it to the container
+        // identity so each topic is consolidated independently.
         let container = primary_container_id(&msg);
         let identity = if container.is_empty() || container == "general" {
-            msg.sender.clone()
-        } else if !msg.thread_id.is_empty() {
+            msg.sender().to_string()
+        } else if !msg.thread_id().is_empty() {
             container
         } else {
             let mut id = container;
-            if let Some(topic_suffix) = extract_topic_suffix(&msg.sender) {
+            if let Some(topic_suffix) = extract_topic_suffix(msg.sender()) {
                 id.push_str(&format!("/{topic_suffix}"));
             }
             id
@@ -261,10 +299,7 @@ mod tests {
             Some("topic:8485".to_string())
         );
         // No topic — regular group sender
-        assert_eq!(
-            extract_topic_suffix("telegram:group:-1003821690204"),
-            None
-        );
+        assert_eq!(extract_topic_suffix("telegram:group:-1003821690204"), None);
         // No topic — DM sender
         assert_eq!(extract_topic_suffix("telegram:60996061"), None);
         // Empty

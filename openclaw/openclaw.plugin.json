@@ -13,7 +13,7 @@
       "visibility": {
         "type": "string",
         "description": "Default visibility tier for search/store",
-        "enum": ["public", "private", "group", "personal"],
+        "enum": ["public", "private", "group", "personal", "internal"],
         "default": "internal"
       },
       "timeoutMs": {

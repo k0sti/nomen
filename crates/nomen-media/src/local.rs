@@ -52,8 +52,8 @@ impl LocalMediaStore {
     /// Find an existing file by hash (trying common extensions).
     fn find_by_hash(&self, sha256: &str) -> Option<PathBuf> {
         let exts = [
-            "jpg", "png", "gif", "webp", "svg", "bmp", "tiff", "mp4", "webm", "mov", "mp3",
-            "ogg", "wav", "weba", "pdf", "txt", "bin",
+            "jpg", "png", "gif", "webp", "svg", "bmp", "tiff", "mp4", "webm", "mov", "mp3", "ogg",
+            "wav", "weba", "pdf", "txt", "bin",
         ];
         for ext in &exts {
             let path = self.file_path(sha256, ext);

@@ -307,10 +307,12 @@ mod operations_tests {
 
         // Put
         let put_resp = nomen::api::dispatch(
-            &nomen, "test",
+            &nomen,
+            "test",
             "memory.put",
             &json!({"topic": "apiv2-test/roundtrip", "content": "Test roundtrip memory"}),
-        ).await;
+        )
+        .await;
         assert!(put_resp.ok, "put failed: {:?}", put_resp.error);
         let result = put_resp.result.unwrap();
         assert_eq!(result["topic"], "apiv2-test/roundtrip");
@@ -481,12 +483,17 @@ mod operations_tests {
             &json!({"query": "Hello API v2"}),
         )
         .await;
-        assert!(search_resp.ok, "message.search failed: {:?}", search_resp.error);
+        assert!(
+            search_resp.ok,
+            "message.search failed: {:?}",
+            search_resp.error
+        );
         let result = search_resp.result.unwrap();
         let events = result["events"].as_array().unwrap();
-        assert!(events
-            .iter()
-            .any(|e| e["content"].as_str().unwrap_or("").contains("Hello from API v2 test")));
+        assert!(events.iter().any(|e| e["content"]
+            .as_str()
+            .unwrap_or("")
+            .contains("Hello from API v2 test")));
     }
 
     #[tokio::test]

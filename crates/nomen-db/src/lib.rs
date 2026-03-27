@@ -11,16 +11,16 @@ use surrealdb::types::SurrealValue;
 use surrealdb::Surreal;
 use tracing::debug;
 
-mod schema;
+pub mod embed;
+pub mod entity;
+pub mod graph;
+pub mod groups;
 pub mod memory;
 pub mod message;
-pub mod search;
-pub mod entity;
-pub mod embed;
-pub mod graph;
 pub mod meta;
+mod schema;
+pub mod search;
 pub mod search_engine;
-pub mod groups;
 
 // ── Re-exports ──────────────────────────────────────────────────────
 // All public items re-exported so callers can use `db::function_name()`.
@@ -28,45 +28,40 @@ pub mod groups;
 pub use schema::SCHEMA;
 
 pub use memory::{
-    store_memory, store_memory_direct, list_memories, get_memory_by_dtag, get_memory_by_topic,
-    delete_memory_by_topic, delete_memory_by_dtag, delete_memory_by_nostr_id,
-    set_consolidation_tags, set_importance, count_memories_by_type, delete_collected_before,
-    update_access_tracking, update_access_tracking_batch,
-    find_prunable_memories, delete_memories_by_dtags, prune_memories,
-    PrunableMemory, PruneReport,
+    count_memories_by_type, delete_collected_before, delete_memories_by_dtags,
+    delete_memory_by_dtag, delete_memory_by_nostr_id, delete_memory_by_topic,
+    find_prunable_memories, get_memory_by_dtag, get_memory_by_topic, list_memories, prune_memories,
+    set_consolidation_tags, set_importance, store_memory, store_memory_direct,
+    update_access_tracking, update_access_tracking_batch, PrunableMemory, PruneReport,
 };
 
 pub mod collected;
 
 pub use message::{
-    create_session, get_session, update_session_last_active, list_sessions,
-    ConsolidationSessionRecord, create_consolidation_session,
-    get_consolidation_session, update_consolidation_session_status,
-    cleanup_expired_consolidation_sessions,
+    cleanup_expired_consolidation_sessions, create_consolidation_session, create_session,
+    get_consolidation_session, get_session, list_sessions, update_consolidation_session_status,
+    update_session_last_active, ConsolidationSessionRecord,
 };
 
 pub use collected::{
-    store_collected_event, query_collected_events, get_collected_event,
-    count_collected_events, get_unconsolidated_collected, mark_collected_consolidated,
-    search_collected_events, count_unconsolidated_collected,
-    migrate_raw_to_collected, CollectedMessageRecord, CollectedSearchResult,
+    count_collected_events, count_unconsolidated_collected, get_collected_event,
+    get_unconsolidated_collected, mark_collected_consolidated, query_collected_events,
+    search_collected_events, store_collected_event, CollectedMessageRecord, CollectedSearchResult,
 };
 
 pub use search::{
-    search_memories, hybrid_search, get_memories_without_embeddings,
-    TextSearchResult, HybridSearchRow, MissingEmbeddingRow, SearchDisplayResult,
+    get_memories_without_embeddings, hybrid_search, search_memories, HybridSearchRow,
+    MissingEmbeddingRow, SearchDisplayResult, TextSearchResult,
 };
 
 pub use entity::{
-    store_entity, list_entities, create_mention_edge, create_typed_edge,
-    list_entity_relationships,
+    create_mention_edge, create_typed_edge, list_entities, list_entity_relationships, store_entity,
 };
 
 pub use embed::store_embedding;
 
 pub use graph::{
-    create_references_edge, create_consolidated_edge, get_graph_neighbors_simple,
-    GraphNeighbor,
+    create_consolidated_edge, create_references_edge, get_graph_neighbors_simple, GraphNeighbor,
 };
 
 pub use meta::{get_meta, set_meta};
@@ -74,7 +69,7 @@ pub use meta::{get_meta, set_meta};
 pub use search_engine::search;
 
 pub use groups::{
-    GroupStoreExt, create_group, list_groups, get_members, add_member, remove_member,
+    add_member, create_group, get_members, list_groups, remove_member, GroupStoreExt,
 };
 
 // ── Shared deserializer helpers ─────────────────────────────────────
@@ -181,7 +176,6 @@ where
 /// SurrealDB memory record
 #[derive(Debug, Clone, Serialize, Deserialize, SurrealValue)]
 pub struct MemoryRecord {
-
     pub content: String,
     /// Legacy field — kept as Option for migration reads, never written.
     #[serde(default)]
@@ -222,59 +216,6 @@ impl nomen_core::access::AccessCheckable for MemoryRecord {
 /// Canonical normalized messaging data now lives in collected-message records
 /// using `platform/community/chat/thread/message`. This struct remains only as a
 /// compatibility bridge for older consolidation and migration paths.
-#[derive(Debug, Clone, Serialize, Deserialize, SurrealValue)]
-pub struct RawMessageRecord {
-    #[serde(default, deserialize_with = "deserialize_thing_as_string")]
-    #[surreal(default)]
-    pub id: String,
-    #[serde(default)]
-    #[surreal(default)]
-    pub source: String,
-    #[serde(default)]
-    #[surreal(default)]
-    pub source_id: String,
-    #[serde(default)]
-    #[surreal(default)]
-    pub sender: String,
-    /// Legacy raw-message container field. In canonical normalized messaging,
-    /// prefer structured `platform/community/chat/thread` fields.
-    #[serde(default)]
-    #[surreal(default)]
-    pub channel: String,
-    /// Canonical normalized platform namespace, when available.
-    #[serde(default)]
-    #[surreal(default)]
-    pub platform: String,
-    /// Optional canonical community identifier, when available.
-    #[serde(default)]
-    #[surreal(default)]
-    pub community_id: String,
-    /// Canonical primary chat identifier, when available.
-    #[serde(default)]
-    #[surreal(default)]
-    pub chat_id: String,
-    /// Optional canonical thread/topic identifier, when available.
-    #[serde(default)]
-    #[surreal(default)]
-    pub thread_id: String,
-    /// Canonical provider-native message identifier, when available.
-    #[serde(default)]
-    #[surreal(default)]
-    pub message_id: String,
-    #[serde(default)]
-    #[surreal(default)]
-    pub content: String,
-    #[serde(default)]
-    #[surreal(default)]
-    pub metadata: String,
-    #[serde(default)]
-    #[surreal(default)]
-    pub created_at: String,
-    #[serde(default)]
-    #[surreal(default)]
-    pub consolidated: bool,
-}
-
 /// SurrealDB session record.
 ///
 /// `channel` here means delivery/transport channel for session routing (for

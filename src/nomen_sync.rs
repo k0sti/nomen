@@ -51,8 +51,7 @@ impl Nomen {
         match relay.fetch_collected_messages(&pubkeys).await {
             Ok(collected_events) => {
                 for event in collected_events.into_iter() {
-                    let d_tag_val = memory::get_tag_value(&event.tags, "d")
-                        .unwrap_or_default();
+                    let d_tag_val = memory::get_tag_value(&event.tags, "d").unwrap_or_default();
                     if d_tag_val.is_empty() {
                         continue;
                     }
@@ -60,9 +59,7 @@ impl Nomen {
                     let tags: Vec<Vec<String>> = event
                         .tags
                         .iter()
-                        .map(|tag| {
-                            tag.as_slice().iter().map(|s| s.to_string()).collect()
-                        })
+                        .map(|tag| tag.as_slice().iter().map(|s| s.to_string()).collect())
                         .collect();
 
                     let collected = nomen_core::collected::CollectedEvent {
@@ -95,11 +92,14 @@ impl Nomen {
             }
         }
 
-        self.emit_event("sync.complete", serde_json::json!({
-            "stored": stored,
-            "skipped": skipped,
-            "errors": errors,
-        }));
+        self.emit_event(
+            "sync.complete",
+            serde_json::json!({
+                "stored": stored,
+                "skipped": skipped,
+                "errors": errors,
+            }),
+        );
 
         Ok(SyncReport {
             stored,
@@ -124,10 +124,7 @@ impl Nomen {
             });
         }
 
-        let texts: Vec<String> = missing
-            .iter()
-            .map(|m| m.content.clone())
-            .collect();
+        let texts: Vec<String> = missing.iter().map(|m| m.content.clone()).collect();
 
         let embeddings = self.embedder.embed(&texts).await?;
         let mut embedded = 0usize;

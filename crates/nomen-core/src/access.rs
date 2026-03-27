@@ -16,7 +16,11 @@ pub trait AccessCheckable {
 /// - personal: only the author (source) can access (user-auditable knowledge)
 /// - private: only the author (source) can access (agent-only reasoning)
 /// - internal: legacy alias for private, treated identically
-pub fn can_access(memory: &dyn AccessCheckable, requester_npub: &str, group_store: &GroupStore) -> bool {
+pub fn can_access(
+    memory: &dyn AccessCheckable,
+    requester_npub: &str,
+    group_store: &GroupStore,
+) -> bool {
     match memory.tier() {
         "public" => true,
         "group" => group_store.is_member(memory.scope(), requester_npub),

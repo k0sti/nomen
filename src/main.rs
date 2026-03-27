@@ -107,14 +107,20 @@ async fn main() -> Result<()> {
                 } else {
                     None
                 };
-                cli::message::cmd_delete_old_messages(&backend, nomen.as_ref(), older_than.as_deref()).await?;
+                cli::message::cmd_delete_old_messages(
+                    &backend,
+                    nomen.as_ref(),
+                    older_than.as_deref(),
+                )
+                .await?;
             } else {
                 let nomen = if matches!(backend, Backend::Direct) {
                     Some(build_nomen_with_relay(&config, &resolved).await?)
                 } else {
                     None
                 };
-                cli::memory::cmd_delete(&backend, nomen.as_ref(), topic.as_deref(), id.as_deref()).await?;
+                cli::memory::cmd_delete(&backend, nomen.as_ref(), topic.as_deref(), id.as_deref())
+                    .await?;
             }
         }
         Command::Search {
@@ -166,18 +172,33 @@ async fn main() -> Result<()> {
             content,
             source,
             sender,
-            channel,
+            platform,
+            community,
+            chat,
+            thread,
         } => {
             let nomen = if matches!(backend, Backend::Direct) {
                 Some(build_nomen(&config).await?)
             } else {
                 None
             };
-            cli::message::cmd_ingest(&backend, nomen.as_ref(), &content, &source, &sender, channel.as_deref()).await?;
+            cli::message::cmd_ingest(
+                &backend,
+                nomen.as_ref(),
+                &content,
+                &source,
+                &sender,
+                platform.as_deref(),
+                community.as_deref(),
+                chat.as_deref(),
+                thread.as_deref(),
+            )
+            .await?;
         }
         Command::Messages {
-            source,
-            channel,
+            platform,
+            chat,
+            thread,
             sender,
             since,
             limit,
@@ -192,8 +213,9 @@ async fn main() -> Result<()> {
             cli::message::cmd_messages(
                 &backend,
                 nomen.as_ref(),
-                source.as_deref(),
-                channel.as_deref(),
+                platform.as_deref(),
+                chat.as_deref(),
+                thread.as_deref(),
                 sender.as_deref(),
                 since.as_deref(),
                 limit,
@@ -244,7 +266,15 @@ async fn main() -> Result<()> {
             } else {
                 None
             };
-            cli::sync::cmd_cluster(&backend, nomen.as_ref(), dry_run, prefix, min_members, namespace_depth).await?;
+            cli::sync::cmd_cluster(
+                &backend,
+                nomen.as_ref(),
+                dry_run,
+                prefix,
+                min_members,
+                namespace_depth,
+            )
+            .await?;
         }
         Command::Prune { days, dry_run } => {
             let nomen = if matches!(backend, Backend::Direct) {
@@ -253,17 +283,6 @@ async fn main() -> Result<()> {
                 None
             };
             cli::admin::cmd_prune(&backend, nomen.as_ref(), days, dry_run).await?;
-        }
-        Command::Migrate { action } => {
-            let nomen = build_nomen_with_relay(&config, &resolved).await?;
-            match action {
-                cli::MigrateAction::Status => {
-                    cli::migrate::cmd_migrate_status(&nomen).await?;
-                }
-                cli::MigrateAction::Run { dry_run } => {
-                    cli::migrate::cmd_migrate_run(&nomen, dry_run).await?;
-                }
-            }
         }
         Command::Send {
             content,
@@ -275,7 +294,8 @@ async fn main() -> Result<()> {
             } else {
                 None
             };
-            cli::message::cmd_send(&backend, nomen.as_ref(), &to, &content, channel.as_deref()).await?;
+            cli::message::cmd_send(&backend, nomen.as_ref(), &to, &content, channel.as_deref())
+                .await?;
         }
         Command::Serve {
             stdio,

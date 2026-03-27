@@ -41,6 +41,12 @@ pub struct EmbedReport {
 pub struct ConsolidateParams {
     pub batch_size: usize,
     pub min_messages: usize,
+    pub platform: Option<Vec<String>>,
+    pub community_id: Option<Vec<String>>,
+    pub chat_id: Option<Vec<String>>,
+    pub thread_id: Option<Vec<String>>,
+    pub since: Option<i64>,
+    pub older_than: Option<String>,
 }
 
 impl Default for ConsolidateParams {
@@ -48,6 +54,12 @@ impl Default for ConsolidateParams {
         Self {
             batch_size: 50,
             min_messages: 3,
+            platform: None,
+            community_id: None,
+            chat_id: None,
+            thread_id: None,
+            since: None,
+            older_than: None,
         }
     }
 }

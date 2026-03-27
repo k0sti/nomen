@@ -176,8 +176,7 @@ pub async fn get_memories_without_embeddings(
     db: &Surreal<Db>,
     limit: usize,
 ) -> Result<Vec<MissingEmbeddingRow>> {
-    let sql =
-        format!("SELECT d_tag, content FROM memory WHERE embedding IS NONE LIMIT {limit}");
+    let sql = format!("SELECT d_tag, content FROM memory WHERE embedding IS NONE LIMIT {limit}");
     let results: Vec<MissingEmbeddingRow> = db.query(&sql).await?.check()?.take(0)?;
     Ok(results)
 }

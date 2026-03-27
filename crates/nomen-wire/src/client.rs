@@ -2,16 +2,16 @@
 
 use std::collections::HashMap;
 use std::path::Path;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{Context, Result};
+use futures_util::{SinkExt, StreamExt};
+use serde_json::{json, Value};
 use tokio::net::UnixStream;
 use tokio::sync::{broadcast, mpsc, oneshot, Mutex};
 use tokio_util::codec::Framed;
-use futures_util::{SinkExt, StreamExt};
-use serde_json::{json, Value};
 
 use crate::codec::NomenCodec;
 use crate::types::{Event, Frame, Request, Response};
@@ -38,9 +38,9 @@ pub struct NomenClient {
 impl NomenClient {
     /// Connect to a Nomen socket server at the given path.
     pub async fn connect(path: impl AsRef<Path>) -> Result<Self> {
-        let stream = UnixStream::connect(path.as_ref())
-            .await
-            .with_context(|| format!("Failed to connect to socket at {}", path.as_ref().display()))?;
+        let stream = UnixStream::connect(path.as_ref()).await.with_context(|| {
+            format!("Failed to connect to socket at {}", path.as_ref().display())
+        })?;
 
         let framed = Framed::new(stream, NomenCodec::new());
         let (sink, stream) = framed.split();
@@ -117,7 +117,8 @@ impl NomenClient {
 
     /// Send a request and await the correlated response.
     pub async fn request(&self, action: &str, params: Value) -> Result<Response> {
-        self.request_with_timeout(action, params, Duration::from_secs(30)).await
+        self.request_with_timeout(action, params, Duration::from_secs(30))
+            .await
     }
 
     /// Send a request with a custom timeout.
@@ -196,11 +197,7 @@ impl NomenClient {
     }
 
     /// One-shot request: connect, send, receive, disconnect.
-    pub async fn oneshot(
-        path: impl AsRef<Path>,
-        action: &str,
-        params: Value,
-    ) -> Result<Response> {
+    pub async fn oneshot(path: impl AsRef<Path>, action: &str, params: Value) -> Result<Response> {
         let client = Self::connect(path).await?;
         let resp = client.request(action, params).await?;
         client.close().await;
@@ -210,7 +207,7 @@ impl NomenClient {
     /// Graceful disconnect.
     pub async fn close(self) {
         drop(self.tx); // Close writer channel, which stops writer task.
-        // Reader task will stop when the connection drops.
+                       // Reader task will stop when the connection drops.
     }
 }
 

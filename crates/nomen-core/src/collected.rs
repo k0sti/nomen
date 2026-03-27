@@ -42,7 +42,11 @@ pub struct CollectedEventFilter {
     #[serde(rename = "#proxy", default, skip_serializing_if = "Option::is_none")]
     pub platform: Option<Vec<String>>,
     /// Filter by community_id (from `community` tag value[0]).
-    #[serde(rename = "#community", default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "#community",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
     pub community_id: Option<Vec<String>>,
     /// Filter by chat_id (from `chat` tag value[0]).
     #[serde(rename = "#chat", default, skip_serializing_if = "Option::is_none")]
@@ -277,10 +281,7 @@ mod tests {
         assert_eq!(event.thread_type(), Some("topic"));
         assert_eq!(event.message_id(), Some("13943"));
         assert_eq!(event.text(), "Explain 30100/30101 kinds");
-        assert_eq!(
-            event.reply_to(),
-            Some("telegram:-1003821690204:13939")
-        );
+        assert_eq!(event.reply_to(), Some("telegram:-1003821690204:13939"));
         assert_eq!(event.reply_to_event(), Some("event123"));
     }
 

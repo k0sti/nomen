@@ -2,11 +2,11 @@
 
 use serde_json::{json, Value};
 
+use crate::NomenBackend;
 use nomen_core::api::errors::ApiError;
 use nomen_core::collected::{CollectedEvent, CollectedEventFilter};
 use nomen_core::kinds::COLLECTED_MESSAGE_KIND;
 use nomen_core::send::{parse_recipient, SendOptions};
-use crate::NomenBackend;
 
 /// Ingest a message by converting it to a kind 30100 collected event.
 pub async fn ingest(
@@ -34,10 +34,7 @@ pub async fn ingest(
         .and_then(|v| v.as_str())
         .unwrap_or("unknown")
         .to_string();
-    let channel = params
-        .get("channel")
-        .and_then(|v| v.as_str())
-        .map(String::from);
+    // Canonical ingest fields: platform/community_id/chat_id/thread_id.
     let platform = params
         .get("platform")
         .and_then(|v| v.as_str())
@@ -50,8 +47,7 @@ pub async fn ingest(
     let chat_id = params
         .get("chat_id")
         .and_then(|v| v.as_str())
-        .map(String::from)
-        .or_else(|| channel.clone());
+        .map(String::from);
     let thread_id = params
         .get("thread_id")
         .and_then(|v| v.as_str())
@@ -64,7 +60,10 @@ pub async fn ingest(
     let now = chrono::Utc::now().timestamp();
     let d_tag = if let Some(ref sid) = source_id {
         if let Some(ref chat) = chat_id {
-            format!("{}:{chat}:{sid}", platform.clone().unwrap_or_else(|| source.clone()))
+            format!(
+                "{}:{chat}:{sid}",
+                platform.clone().unwrap_or_else(|| source.clone())
+            )
         } else {
             format!("{source}:{sid}")
         }
@@ -74,7 +73,11 @@ pub async fn ingest(
 
     let mut tags = vec![
         vec!["d".to_string(), d_tag.clone()],
-        vec!["proxy".to_string(), d_tag.clone(), platform.clone().unwrap_or_else(|| source.clone())],
+        vec![
+            "proxy".to_string(),
+            d_tag.clone(),
+            platform.clone().unwrap_or_else(|| source.clone()),
+        ],
         vec!["sender".to_string(), sender.clone()],
     ];
     if let Some(ref community) = community_id {
@@ -111,7 +114,6 @@ pub async fn ingest(
         "community_id": community_id,
         "chat_id": chat_id,
         "thread_id": thread_id,
-        "channel": channel,
     }))
 }
 
@@ -129,7 +131,10 @@ pub async fn query(
         thread_id: extract_string_array(params, "#thread"),
         since: params.get("since").and_then(|v| v.as_i64()),
         until: params.get("until").and_then(|v| v.as_i64()),
-        limit: params.get("limit").and_then(|v| v.as_u64()).map(|v| v as usize),
+        limit: params
+            .get("limit")
+            .and_then(|v| v.as_u64())
+            .map(|v| v as usize),
     };
 
     let records = nomen
@@ -161,10 +166,7 @@ pub async fn context(
         ));
     }
 
-    let limit = params
-        .get("limit")
-        .and_then(|v| v.as_u64())
-        .unwrap_or(50) as usize;
+    let limit = params.get("limit").and_then(|v| v.as_u64()).unwrap_or(50) as usize;
     let before_ts = params.get("before").and_then(|v| v.as_i64());
 
     let filter = CollectedEventFilter {
@@ -211,10 +213,7 @@ pub async fn search(
     _default_channel: &str,
     params: &Value,
 ) -> Result<Value, ApiError> {
-    let query_str = params
-        .get("query")
-        .and_then(|v| v.as_str())
-        .unwrap_or("");
+    let query_str = params.get("query").and_then(|v| v.as_str()).unwrap_or("");
 
     if query_str.is_empty() {
         return Err(ApiError::invalid_params("query is required"));
@@ -228,7 +227,10 @@ pub async fn search(
         thread_id: extract_string_array(params, "#thread"),
         since: params.get("since").and_then(|v| v.as_i64()),
         until: params.get("until").and_then(|v| v.as_i64()),
-        limit: params.get("limit").and_then(|v| v.as_u64()).map(|v| v as usize),
+        limit: params
+            .get("limit")
+            .and_then(|v| v.as_u64())
+            .map(|v| v as usize),
     };
 
     let results = nomen
@@ -303,12 +305,9 @@ pub async fn store(
         .get("event")
         .ok_or_else(|| ApiError::invalid_params("event is required"))?;
 
-    let event =
-        CollectedEvent::from_json(event_value).map_err(|e| ApiError::invalid_params(e))?;
+    let event = CollectedEvent::from_json(event_value).map_err(|e| ApiError::invalid_params(e))?;
 
-    event
-        .validate()
-        .map_err(|e| ApiError::invalid_params(e))?;
+    event.validate().map_err(|e| ApiError::invalid_params(e))?;
 
     let result = nomen
         .store_collected_event(event)
@@ -404,7 +403,10 @@ pub async fn fetch_media(
 fn extract_string_array(params: &Value, key: &str) -> Option<Vec<String>> {
     let val = params.get(key)?;
     if let Some(arr) = val.as_array() {
-        let strings: Vec<String> = arr.iter().filter_map(|v| v.as_str().map(String::from)).collect();
+        let strings: Vec<String> = arr
+            .iter()
+            .filter_map(|v| v.as_str().map(String::from))
+            .collect();
         if strings.is_empty() {
             None
         } else {

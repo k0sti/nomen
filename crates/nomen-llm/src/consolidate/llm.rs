@@ -3,23 +3,21 @@ use async_trait::async_trait;
 use serde::Deserialize;
 use tracing::warn;
 
-use nomen_db::RawMessageRecord;
-
 use super::grouping::derive_topic_from_messages;
-use super::types::ExtractedMemory;
+use super::types::{ConsolidationMessage, ExtractedMemory};
 
 /// Trait for LLM-powered consolidation. Implementations call an LLM to
-/// summarize and extract structured memories from raw messages.
+/// summarize and extract structured memories from canonical consolidation messages.
 #[async_trait]
 pub trait LlmProvider: Send + Sync {
-    async fn consolidate(&self, messages: &[RawMessageRecord]) -> Result<Vec<ExtractedMemory>>;
+    async fn consolidate(&self, messages: &[ConsolidationMessage]) -> Result<Vec<ExtractedMemory>>;
 
     /// Merge new information into an existing memory.
     /// Default implementation just returns the new extraction as-is.
     async fn merge(
         &self,
         existing_content: &str,
-        messages: &[RawMessageRecord],
+        messages: &[ConsolidationMessage],
     ) -> Result<Vec<ExtractedMemory>> {
         // Default: just consolidate the new messages (no merge logic)
         let _ = existing_content;
@@ -33,7 +31,7 @@ pub struct NoopLlmProvider;
 
 #[async_trait]
 impl LlmProvider for NoopLlmProvider {
-    async fn consolidate(&self, messages: &[RawMessageRecord]) -> Result<Vec<ExtractedMemory>> {
+    async fn consolidate(&self, messages: &[ConsolidationMessage]) -> Result<Vec<ExtractedMemory>> {
         if messages.is_empty() {
             return Ok(vec![]);
         }
@@ -133,7 +131,7 @@ impl LlmProvider for OpenAiLlmProvider {
     async fn merge(
         &self,
         existing_content: &str,
-        messages: &[RawMessageRecord],
+        messages: &[ConsolidationMessage],
     ) -> Result<Vec<ExtractedMemory>> {
         if messages.is_empty() {
             return Ok(vec![]);
@@ -141,15 +139,10 @@ impl LlmProvider for OpenAiLlmProvider {
 
         let mut transcript = String::new();
         for msg in messages {
-            let container = if !msg.thread_id.is_empty() {
-                let chat = if msg.chat_id.is_empty() { &msg.channel } else { &msg.chat_id };
-                if chat.is_empty() { msg.thread_id.clone() } else { format!("{chat}/{}", msg.thread_id) }
-            } else if !msg.chat_id.is_empty() {
-                msg.chat_id.clone()
-            } else if !msg.channel.is_empty() {
-                msg.channel.clone()
-            } else {
+            let container = if msg.container.is_empty() {
                 "general".to_string()
+            } else {
+                msg.container.clone()
             };
             transcript.push_str(&format!(
                 "[{}] #{} {}: {}\n",
@@ -222,7 +215,7 @@ The topic should remain the same as the existing memory's topic.";
             .collect())
     }
 
-    async fn consolidate(&self, messages: &[RawMessageRecord]) -> Result<Vec<ExtractedMemory>> {
+    async fn consolidate(&self, messages: &[ConsolidationMessage]) -> Result<Vec<ExtractedMemory>> {
         if messages.is_empty() {
             return Ok(vec![]);
         }
@@ -230,15 +223,10 @@ The topic should remain the same as the existing memory's topic.";
         // Build message transcript
         let mut transcript = String::new();
         for msg in messages {
-            let container = if !msg.thread_id.is_empty() {
-                let chat = if msg.chat_id.is_empty() { &msg.channel } else { &msg.chat_id };
-                if chat.is_empty() { msg.thread_id.clone() } else { format!("{chat}/{}", msg.thread_id) }
-            } else if !msg.chat_id.is_empty() {
-                msg.chat_id.clone()
-            } else if !msg.channel.is_empty() {
-                msg.channel.clone()
-            } else {
+            let container = if msg.container.is_empty() {
                 "general".to_string()
+            } else {
+                msg.container.clone()
             };
             transcript.push_str(&format!(
                 "[{}] #{} {}: {}\n",
@@ -246,7 +234,7 @@ The topic should remain the same as the existing memory's topic.";
             ));
         }
 
-        let system_prompt = "You are a memory consolidation agent. Given a batch of raw messages, \
+        let system_prompt = "You are a memory consolidation agent. Given a batch of collected conversation messages, \
 extract significant facts, decisions, and context into structured memories. \
 Return JSON with this exact structure: {\"memories\": [{\"topic\": \"category/subcategory\", \
 \"content\": \"full memory content\", \"importance\": 7}]}. \

@@ -29,7 +29,10 @@ use std::pin::Pin;
 /// A dispatch function that sends an action + params to Nomen (via HTTP or direct DB).
 /// Returns the `result` value from the response.
 pub type DispatchFn = Box<
-    dyn Fn(String, serde_json::Value) -> Pin<Box<dyn Future<Output = Result<serde_json::Value>> + Send>>
+    dyn Fn(
+            String,
+            serde_json::Value,
+        ) -> Pin<Box<dyn Future<Output = Result<serde_json::Value>> + Send>>
         + Send
         + Sync,
 >;
@@ -266,7 +269,10 @@ fn content_hash(content: &str) -> String {
     let bytes = content.as_bytes();
     let mut hash: u64 = bytes.len() as u64;
     for (i, &b) in bytes.iter().enumerate() {
-        hash = hash.wrapping_mul(31).wrapping_add(b as u64).wrapping_add(i as u64);
+        hash = hash
+            .wrapping_mul(31)
+            .wrapping_add(b as u64)
+            .wrapping_add(i as u64);
     }
     format!("{hash:016x}")
 }
@@ -449,7 +455,10 @@ pub async fn push(dispatch: &DispatchFn, dir: &Path) -> Result<usize> {
         let (visibility, scope) = if !d_tag.is_empty() {
             memory::extract_visibility_scope(&d_tag)
         } else {
-            (parsed.frontmatter.visibility.clone(), parsed.frontmatter.scope.clone())
+            (
+                parsed.frontmatter.visibility.clone(),
+                parsed.frontmatter.scope.clone(),
+            )
         };
 
         let params = serde_json::json!({
@@ -462,10 +471,7 @@ pub async fn push(dispatch: &DispatchFn, dir: &Path) -> Result<usize> {
 
         match dispatch("memory.put".to_string(), params).await {
             Ok(result) => {
-                let stored_dtag = result["d_tag"]
-                    .as_str()
-                    .unwrap_or(&d_tag)
-                    .to_string();
+                let stored_dtag = result["d_tag"].as_str().unwrap_or(&d_tag).to_string();
                 info!(d_tag = %stored_dtag, "Pushed from file");
 
                 state.files.insert(
@@ -566,7 +572,13 @@ const WRITE_SUPPRESS_MS: u64 = 1500;
 /// Watches the filesystem for changes (inotify) and polls the DB for remote updates.
 /// File changes are debounced (500ms) before pushing. Conflicts are saved to
 /// `.nomen-fs/conflicts/`.
-pub async fn start(dispatch: &DispatchFn, dir: &Path, poll_secs: u64, verbose: bool, clean: bool) -> Result<()> {
+pub async fn start(
+    dispatch: &DispatchFn,
+    dir: &Path,
+    poll_secs: u64,
+    verbose: bool,
+    clean: bool,
+) -> Result<()> {
     use notify::{EventKind, RecursiveMode, Watcher};
     use std::time::{Duration, Instant};
 
@@ -860,57 +872,55 @@ async fn pull_incremental(
 
         // Check if unchanged since last sync (and file still exists)
         if abs_path.exists() {
-        if let Some(entry) = state.files.get(&rel_key) {
-            if entry.content_hash == remote_hash && entry.version == version {
-                continue;
-            }
+            if let Some(entry) = state.files.get(&rel_key) {
+                if entry.content_hash == remote_hash && entry.version == version {
+                    continue;
+                }
 
-            // Remote metadata changed (version/updated_at) but maybe not content.
-            // Compare detail body to avoid echo-pulling after a push.
-            if abs_path.exists() {
-                let local_content = std::fs::read_to_string(&abs_path).unwrap_or_default();
-                let local_hash = content_hash(&local_content);
+                // Remote metadata changed (version/updated_at) but maybe not content.
+                // Compare detail body to avoid echo-pulling after a push.
+                if abs_path.exists() {
+                    let local_content = std::fs::read_to_string(&abs_path).unwrap_or_default();
+                    let local_hash = content_hash(&local_content);
 
-                if local_hash != entry.content_hash {
-                    // Local also changed → conflict
-                    let conflict_path = dir
-                        .join(SYNC_META_DIR)
-                        .join("conflicts")
-                        .join(&rel_key);
-                    if let Some(parent) = conflict_path.parent() {
-                        std::fs::create_dir_all(parent)?;
-                    }
-                    std::fs::write(&conflict_path, &local_content)?;
-                    warn!(
-                        path = %rel_key,
-                        "Conflict: local and remote both changed. Local saved to conflicts/"
-                    );
-                    if verbose {
-                        println!("[conflict] {} (local saved to conflicts/)", rel_key);
-                    }
-                } else {
-                    // Local unchanged — check if remote content actually differs
-                    let remote_content = mem["content"].as_str().unwrap_or("");
-                    let local_body = parse_markdown(&local_content)
-                        .map(|p| p.content)
-                        .unwrap_or_default();
-                    if local_body == remote_content {
-                        // Only metadata changed (version/updated_at), not content.
-                        // Update sync state silently, no file write needed.
-                        state.files.insert(
-                            rel_key,
-                            SyncEntry {
-                                d_tag,
-                                content_hash: remote_hash,
-                                version,
-                                synced_at: chrono::Utc::now().to_rfc3339(),
-                            },
+                    if local_hash != entry.content_hash {
+                        // Local also changed → conflict
+                        let conflict_path =
+                            dir.join(SYNC_META_DIR).join("conflicts").join(&rel_key);
+                        if let Some(parent) = conflict_path.parent() {
+                            std::fs::create_dir_all(parent)?;
+                        }
+                        std::fs::write(&conflict_path, &local_content)?;
+                        warn!(
+                            path = %rel_key,
+                            "Conflict: local and remote both changed. Local saved to conflicts/"
                         );
-                        continue;
+                        if verbose {
+                            println!("[conflict] {} (local saved to conflicts/)", rel_key);
+                        }
+                    } else {
+                        // Local unchanged — check if remote content actually differs
+                        let remote_content = mem["content"].as_str().unwrap_or("");
+                        let local_body = parse_markdown(&local_content)
+                            .map(|p| p.content)
+                            .unwrap_or_default();
+                        if local_body == remote_content {
+                            // Only metadata changed (version/updated_at), not content.
+                            // Update sync state silently, no file write needed.
+                            state.files.insert(
+                                rel_key,
+                                SyncEntry {
+                                    d_tag,
+                                    content_hash: remote_hash,
+                                    version,
+                                    synced_at: chrono::Utc::now().to_rfc3339(),
+                                },
+                            );
+                            continue;
+                        }
                     }
                 }
             }
-        }
         } // abs_path.exists
 
         // Write remote version
@@ -1029,10 +1039,7 @@ async fn push_changed_files(
             continue;
         }
 
-        let rel_path = abs_path
-            .strip_prefix(dir)
-            .unwrap_or(abs_path)
-            .to_path_buf();
+        let rel_path = abs_path.strip_prefix(dir).unwrap_or(abs_path).to_path_buf();
         let rel_key = rel_path.to_str().unwrap_or("").to_string();
 
         let content = match std::fs::read_to_string(abs_path) {
@@ -1098,10 +1105,7 @@ async fn push_changed_files(
 
         match dispatch("memory.put".to_string(), params).await {
             Ok(result) => {
-                let stored_dtag = result["d_tag"]
-                    .as_str()
-                    .unwrap_or(&d_tag)
-                    .to_string();
+                let stored_dtag = result["d_tag"].as_str().unwrap_or(&d_tag).to_string();
                 info!(d_tag = %stored_dtag, path = %rel_key, "Pushed file change");
                 if verbose {
                     println!("[push] {} -> {}", rel_key, stored_dtag);
@@ -1216,7 +1220,9 @@ async fn find_orphan_files(dispatch: &DispatchFn, dir: &Path) -> Result<Vec<Path
 
 /// Remove empty directories recursively (bottom-up), excluding the sync root.
 fn clean_empty_dirs(dir: &Path) -> Result<()> {
-    for tier in &["public", "private", "personal", "internal", "group", "circle"] {
+    for tier in &[
+        "public", "private", "personal", "internal", "group", "circle",
+    ] {
         let tier_dir = dir.join(tier);
         if tier_dir.is_dir() {
             clean_empty_dirs_recursive(&tier_dir)?;
@@ -1227,9 +1233,7 @@ fn clean_empty_dirs(dir: &Path) -> Result<()> {
 
 fn clean_empty_dirs_recursive(dir: &Path) -> Result<bool> {
     let mut all_empty = true;
-    let entries: Vec<_> = std::fs::read_dir(dir)?
-        .filter_map(|e| e.ok())
-        .collect();
+    let entries: Vec<_> = std::fs::read_dir(dir)?.filter_map(|e| e.ok()).collect();
 
     for entry in &entries {
         let path = entry.path();
@@ -1248,9 +1252,7 @@ fn clean_empty_dirs_recursive(dir: &Path) -> Result<bool> {
     }
     // Re-check after potential child removals
     if all_empty {
-        let remaining: Vec<_> = std::fs::read_dir(dir)?
-            .filter_map(|e| e.ok())
-            .collect();
+        let remaining: Vec<_> = std::fs::read_dir(dir)?.filter_map(|e| e.ok()).collect();
         if remaining.is_empty() {
             std::fs::remove_dir(dir)?;
             return Ok(true);

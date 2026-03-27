@@ -97,7 +97,7 @@ pub async fn store_memory_direct(
          content = $content, tier = $tier, scope = $scope, \
          topic = $topic, source = $source, model = $model, \
          version = $version, nostr_id = $nostr_id, d_tag = $d_tag, \
-         created_at = $created_at, updated_at = $updated_at, ephemeral = $ephemeral"
+         created_at = $created_at, updated_at = $updated_at, ephemeral = $ephemeral",
     )
     .bind(("content", record.content))
     .bind(("tier", record.tier))
@@ -249,7 +249,9 @@ pub async fn count_memories_by_type(db: &Surreal<Db>) -> Result<(usize, usize, u
 
     // Unconsolidated collected messages
     let pending: Option<CountRow> = db
-        .query("SELECT count() AS count FROM collected_message WHERE consolidated = false GROUP ALL")
+        .query(
+            "SELECT count() AS count FROM collected_message WHERE consolidated = false GROUP ALL",
+        )
         .await?
         .check()?
         .take(0)?;
@@ -277,10 +279,12 @@ pub async fn delete_collected_before(db: &Surreal<Db>, before_ts: i64) -> Result
         .take(0)?;
     let count = count_result.map(|r| r.count).unwrap_or(0);
     if count > 0 {
-        db.query("DELETE FROM collected_message WHERE consolidated = true AND created_at < $before")
-            .bind(("before", before_ts))
-            .await?
-            .check()?;
+        db.query(
+            "DELETE FROM collected_message WHERE consolidated = true AND created_at < $before",
+        )
+        .bind(("before", before_ts))
+        .await?
+        .check()?;
     }
     Ok(count)
 }

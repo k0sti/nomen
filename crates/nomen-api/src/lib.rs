@@ -10,9 +10,9 @@ pub mod session_backend;
 pub mod types;
 
 pub use dispatch::{dispatch, mcp_tool_to_action};
-pub use session_backend::SessionBackend;
 pub use nomen_core::api::errors;
 pub use nomen_core::api::types::ApiResponse;
+pub use session_backend::SessionBackend;
 
 use std::sync::Arc;
 
@@ -20,7 +20,6 @@ use anyhow::Result;
 use async_trait::async_trait;
 
 use nomen_core::collected::{CollectedEvent, CollectedEventFilter};
-use nomen_media::MediaRef;
 use nomen_core::groups::Group;
 use nomen_core::ops::{
     ClusterParams, ConsolidateParams, EmbedReport, ListOptions, ListStats, SyncReport,
@@ -35,9 +34,8 @@ use nomen_db::{
     RelationshipRecord,
 };
 use nomen_llm::cluster::ClusterReport;
-use nomen_llm::consolidate::{
-    BatchExtraction, CommitResult, ConsolidationReport, PrepareResult,
-};
+use nomen_llm::consolidate::{BatchExtraction, CommitResult, ConsolidationReport, PrepareResult};
+use nomen_media::MediaRef;
 
 /// Trait abstracting the Nomen backend for API operations.
 ///
@@ -99,11 +97,7 @@ pub trait NomenBackend: Send + Sync {
     // -- Session --
 
     /// Resolve a session ID to tier/scope/delivery-channel.
-    fn resolve_session(
-        &self,
-        session_id: &str,
-        default_channel: &str,
-    ) -> Result<ResolvedSession>;
+    fn resolve_session(&self, session_id: &str, default_channel: &str) -> Result<ResolvedSession>;
 
     // -- Entities --
 

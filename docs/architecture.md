@@ -264,7 +264,7 @@ All external operations are defined in the **canonical API layer** (`src/api/dis
 | Domain | Operations |
 |--------|-----------|
 | Memory | `memory.search`, `memory.put`, `memory.get`, `memory.list`, `memory.delete` |
-| Message | `message.ingest`, `message.list`, `message.context`, `message.send` |
+| Message | `message.ingest`, `message.query`, `message.context`, `message.send` |
 | Entity | `entity.list`, `entity.relationships` |
 | Maintenance | `memory.consolidate`, `memory.cluster`, `memory.sync`, `memory.embed`, `memory.prune` |
 | Group | `group.list`, `group.members`, `group.create`, `group.add_member`, `group.remove_member` |
@@ -385,7 +385,7 @@ This sends `tools/list` and `memory.list` requests and verifies responses.
 
 ### What Gets Published to Relay
 
-Only **named memories** are published to the Nostr relay as kind 31234 replaceable events. These are created by `memory.put` (direct API) or `memory.consolidate` (LLM extraction from raw messages).
+Only **named memories** are published to the Nostr relay as kind 31234 replaceable events. These are created by `memory.put` (direct API) or `memory.consolidate` (LLM extraction from collected messages / legacy raw-message compatibility inputs).
 
 **Raw messages** (`message.ingest`) are stored **locally in SurrealDB only** — they are never published to the relay. They are ephemeral input to the consolidation pipeline, consumed and marked `consolidated = true` once processed. This is intentional: raw messages are high-volume conversation noise; only the distilled knowledge (named memories) is durable and worth syncing across relays.
 

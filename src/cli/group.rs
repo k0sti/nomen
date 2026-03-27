@@ -9,7 +9,11 @@ use nomen::Nomen;
 use super::helpers::{cli_dispatch, Backend};
 use super::GroupAction;
 
-pub async fn cmd_group(backend: &Backend, nomen: Option<&Nomen>, action: GroupAction) -> Result<()> {
+pub async fn cmd_group(
+    backend: &Backend,
+    nomen: Option<&Nomen>,
+    action: GroupAction,
+) -> Result<()> {
     match action {
         GroupAction::Create {
             id,
@@ -102,11 +106,23 @@ pub async fn cmd_group(backend: &Backend, nomen: Option<&Nomen>, action: GroupAc
             println!();
         }
         GroupAction::AddMember { id, npub } => {
-            cli_dispatch(backend, nomen, "group.add_member", &json!({"id": id, "npub": npub})).await?;
+            cli_dispatch(
+                backend,
+                nomen,
+                "group.add_member",
+                &json!({"id": id, "npub": npub}),
+            )
+            .await?;
             println!("{} {} to group {}", "Added".green().bold(), npub, id.bold());
         }
         GroupAction::RemoveMember { id, npub } => {
-            cli_dispatch(backend, nomen, "group.remove_member", &json!({"id": id, "npub": npub})).await?;
+            cli_dispatch(
+                backend,
+                nomen,
+                "group.remove_member",
+                &json!({"id": id, "npub": npub}),
+            )
+            .await?;
             println!(
                 "{} {} from group {}",
                 "Removed".red().bold(),

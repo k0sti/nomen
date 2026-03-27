@@ -36,16 +36,13 @@ impl Nomen {
         let content_str = mem.content.clone();
 
         // Supersedes logic: check for existing memory with same topic
-        let previous_nostr_id =
-            match db::get_memory_by_topic(&self.db, &mem.topic).await? {
+        let previous_nostr_id = match db::get_memory_by_topic(&self.db, &mem.topic).await? {
+            Some(existing) => existing.nostr_id,
+            None => match db::get_memory_by_dtag(&self.db, &d_tag).await? {
                 Some(existing) => existing.nostr_id,
-                None => {
-                    match db::get_memory_by_dtag(&self.db, &d_tag).await? {
-                        Some(existing) => existing.nostr_id,
-                        None => None,
-                    }
-                }
-            };
+                None => None,
+            },
+        };
 
         let parsed = memory::ParsedMemory {
             tier: mem.tier.clone(),
@@ -147,13 +144,16 @@ impl Nomen {
             }
         }
 
-        self.emit_event("memory.updated", serde_json::json!({
-            "topic": mem.topic,
-            "visibility": base_tier,
-            "scope": scope,
-            "author": author_pubkey_hex,
-            "source": source,
-        }));
+        self.emit_event(
+            "memory.updated",
+            serde_json::json!({
+                "topic": mem.topic,
+                "visibility": base_tier,
+                "scope": scope,
+                "author": author_pubkey_hex,
+                "source": source,
+            }),
+        );
 
         Ok(d_tag)
     }
@@ -216,11 +216,14 @@ impl Nomen {
         }
 
         let deleted_topic = topic.or(id).unwrap_or_default();
-        self.emit_event("memory.deleted", serde_json::json!({
-            "topic": deleted_topic,
-            "d_tag": topic.unwrap_or_default(),
-            "author": self.signer.as_ref().map(|s| s.public_key().to_hex()).unwrap_or_default(),
-        }));
+        self.emit_event(
+            "memory.deleted",
+            serde_json::json!({
+                "topic": deleted_topic,
+                "d_tag": topic.unwrap_or_default(),
+                "author": self.signer.as_ref().map(|s| s.public_key().to_hex()).unwrap_or_default(),
+            }),
+        );
 
         Ok(())
     }

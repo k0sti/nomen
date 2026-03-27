@@ -12,9 +12,7 @@ use nomen::kinds::{LEGACY_LESSON_KIND, LESSON_KIND};
 use nomen::memory::{get_tag_value, parse_event};
 use nomen::Nomen;
 
-use super::helpers::{
-    build_relay_manager, build_signer, cli_dispatch, parse_keys, Backend,
-};
+use super::helpers::{build_relay_manager, build_signer, cli_dispatch, parse_keys, Backend};
 
 pub async fn cmd_list_relay(relay_url: &str, nsecs: &[String], named: bool) -> Result<()> {
     let (all_keys, pubkeys) = parse_keys(nsecs)?;
@@ -59,9 +57,20 @@ pub async fn cmd_list_relay(relay_url: &str, nsecs: &[String], named: bool) -> R
     Ok(())
 }
 
-pub async fn cmd_list_local(backend: &Backend, nomen: Option<&Nomen>, ephemeral: bool, stats: bool) -> Result<()> {
+pub async fn cmd_list_local(
+    backend: &Backend,
+    nomen: Option<&Nomen>,
+    ephemeral: bool,
+    stats: bool,
+) -> Result<()> {
     if stats {
-        let result = cli_dispatch(backend, nomen, "memory.list", &json!({"stats": true, "limit": 0})).await?;
+        let result = cli_dispatch(
+            backend,
+            nomen,
+            "memory.list",
+            &json!({"stats": true, "limit": 0}),
+        )
+        .await?;
         if let Some(s) = result.get("stats") {
             let total = s["total"].as_u64().unwrap_or(0);
             let pending = s["pending"].as_u64().unwrap_or(0);
@@ -78,7 +87,7 @@ pub async fn cmd_list_local(backend: &Backend, nomen: Option<&Nomen>, ephemeral:
             bail!("This command requires direct DB access. Stop the nomen service first.");
         }
         let db_handle = db::init_db().await?;
-        let messages = db::get_unconsolidated_collected(&db_handle, 200, None).await?;
+        let messages = db::get_unconsolidated_collected(&db_handle, 200, None, None).await?;
         if messages.is_empty() {
             println!("No ephemeral messages pending consolidation.");
             return Ok(());
@@ -149,7 +158,12 @@ pub async fn cmd_store(
     Ok(())
 }
 
-pub async fn cmd_delete(backend: &Backend, nomen: Option<&Nomen>, topic: Option<&str>, event_id: Option<&str>) -> Result<()> {
+pub async fn cmd_delete(
+    backend: &Backend,
+    nomen: Option<&Nomen>,
+    topic: Option<&str>,
+    event_id: Option<&str>,
+) -> Result<()> {
     if topic.is_none() && event_id.is_none() {
         bail!("Provide either a topic or --id <event-id>");
     }

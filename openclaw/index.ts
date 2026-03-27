@@ -78,6 +78,16 @@ type NomenSearchResult = {
   created_at: string;
 };
 
+type CollectedMessageEvent = {
+  kind: number;
+  created_at: number;
+  pubkey: string;
+  tags: string[][];
+  content: string;
+  id?: string;
+  sig?: string;
+};
+
 function formatSearchResults(results: NomenSearchResult[]) {
   return {
     results: results.map((r) => ({
@@ -96,6 +106,90 @@ function jsonResult(data: Record<string, unknown>) {
   return {
     content: [{ type: "text" as const, text: JSON.stringify(data) }],
   };
+}
+
+function asString(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+function normalizeThreadId(value: unknown): string | undefined {
+  if (typeof value === "string" && value.trim()) return value.trim();
+  if (typeof value === "number" && Number.isFinite(value)) return String(value);
+  return undefined;
+}
+
+function resolveContainer(params: {
+  channelId?: string;
+  conversationId?: string;
+  threadId?: unknown;
+}): { platform: string; chatId: string; threadId?: string } {
+  const platform = asString(params.channelId) ?? "unknown";
+  const conversationId = asString(params.conversationId) ?? platform;
+  const explicitThreadId = normalizeThreadId(params.threadId);
+
+  if (platform === "telegram") {
+    const topicMatch = /^(.+):topic:(.+)$/.exec(conversationId);
+    if (topicMatch) {
+      return {
+        platform,
+        chatId: topicMatch[1] ?? conversationId,
+        threadId: explicitThreadId ?? topicMatch[2],
+      };
+    }
+  }
+
+  return {
+    platform,
+    chatId: conversationId,
+    ...(explicitThreadId ? { threadId: explicitThreadId } : {}),
+  };
+}
+
+function buildCollectedMessageEvent(params: {
+  platform: string;
+  chatId: string;
+  threadId?: string;
+  messageId: string;
+  content: string;
+  senderId: string;
+  senderName?: string;
+  senderUsername?: string;
+  collectorPubkey?: string;
+  direction?: "inbound" | "outbound";
+}): CollectedMessageEvent {
+  const dTag = `${params.platform}:${params.chatId}:${params.messageId}`;
+  const tags: string[][] = [
+    ["d", dTag],
+    ["proxy", dTag, params.platform],
+    ["chat", params.chatId],
+    ["sender", params.senderId],
+  ];
+
+  if (params.senderName || params.senderUsername) {
+    tags[3] = [
+      "sender",
+      params.senderId,
+      params.senderName ?? "",
+      params.senderUsername ?? "",
+    ];
+  }
+  if (params.threadId) tags.push(["thread", params.threadId]);
+  if (params.direction) tags.push(["direction", params.direction]);
+
+  return {
+    kind: 30100,
+    created_at: Math.floor(Date.now() / 1000),
+    pubkey: params.collectorPubkey ?? "0000000000000000000000000000000000000000000000000000000000000000",
+    tags,
+    content: params.content,
+  };
+}
+
+async function storeCollectedMessage(
+  cfg: NomenConfig,
+  event: CollectedMessageEvent,
+): Promise<NomenResponse> {
+  return await nomenRequest(cfg.apiUrl, "message.store", { event }, cfg.timeoutMs, cfg.nsec);
 }
 
 // ── Plugin ───────────────────────────────────────────────────────────
@@ -421,24 +515,40 @@ const memoryNomenPlugin = {
       async (event: any, ctx: any) => {
         if (!event?.content) return;
 
+        const container = resolveContainer({
+          channelId: ctx?.channelId,
+          conversationId: ctx?.conversationId,
+          threadId: event?.metadata?.threadId,
+        });
+        const messageId = asString(event?.metadata?.messageId) ?? String(event.timestamp || Date.now());
+        const senderId = asString(event?.metadata?.senderId) ?? asString(event?.from) ?? "unknown";
+        const senderName = asString(event?.metadata?.senderName);
+        const senderUsername = asString(event?.metadata?.senderUsername);
+
         try {
-          await nomenRequest(
-            cfg.apiUrl,
-            "message.ingest",
-            {
-              source: `${ctx?.channelId || "unknown"}:${event.timestamp || Date.now()}`,
-              sender: event.from || "unknown",
+          const resp = await storeCollectedMessage(
+            cfg,
+            buildCollectedMessageEvent({
+              platform: container.platform,
+              chatId: container.chatId,
+              threadId: container.threadId,
+              messageId,
               content: event.content,
-              channel: ctx?.conversationId
-                ? `${ctx.channelId}:${ctx.conversationId}`
-                : ctx?.channelId || "unknown",
-            },
-            cfg.timeoutMs,
-            cfg.nsec,
+              senderId,
+              senderName,
+              senderUsername,
+              collectorPubkey: undefined,
+              direction: "inbound",
+            }),
           );
+          if (!resp.ok) {
+            api.logger.warn(
+              `memory-nomen: message.store inbound failed: ${resp.error?.message ?? "unknown error"}`,
+            );
+          }
         } catch (err) {
           api.logger.warn(
-            `memory-nomen: ingest failed: ${err instanceof Error ? err.message : err}`,
+            `memory-nomen: message.store inbound failed: ${err instanceof Error ? err.message : err}`,
           );
         }
       },
@@ -453,24 +563,38 @@ const memoryNomenPlugin = {
       async (event: any, ctx: any) => {
         if (!event?.content || !event.success) return;
 
+        const container = resolveContainer({
+          channelId: ctx?.channelId,
+          conversationId: ctx?.conversationId,
+          threadId: event?.metadata?.threadId,
+        });
+        const messageId = asString(event?.metadata?.messageId) ?? `sent:${Date.now()}`;
+        const provider = asString(event?.metadata?.provider) ?? container.platform;
+        const senderId = provider === "telegram" ? "openclaw" : "assistant";
+
         try {
-          await nomenRequest(
-            cfg.apiUrl,
-            "message.ingest",
-            {
-              source: `${ctx?.channelId || "unknown"}:sent:${Date.now()}`,
-              sender: "clarity",
+          const resp = await storeCollectedMessage(
+            cfg,
+            buildCollectedMessageEvent({
+              platform: container.platform,
+              chatId: container.chatId,
+              threadId: container.threadId,
+              messageId,
               content: event.content,
-              channel: ctx?.conversationId
-                ? `${ctx.channelId}:${ctx.conversationId}`
-                : ctx?.channelId || "unknown",
-            },
-            cfg.timeoutMs,
-            cfg.nsec,
+              senderId,
+              senderName: "Clarity",
+              collectorPubkey: undefined,
+              direction: "outbound",
+            }),
           );
+          if (!resp.ok) {
+            api.logger.warn(
+              `memory-nomen: message.store outbound failed: ${resp.error?.message ?? "unknown error"}`,
+            );
+          }
         } catch (err) {
           api.logger.warn(
-            `memory-nomen: ingest failed: ${err instanceof Error ? err.message : err}`,
+            `memory-nomen: message.store outbound failed: ${err instanceof Error ? err.message : err}`,
           );
         }
       },

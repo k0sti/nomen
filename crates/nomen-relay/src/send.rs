@@ -47,15 +47,20 @@ pub async fn send_message(
                 .unwrap_or_else(|_| npub.clone());
             (Some(vec!["chat".to_string(), pk]), "nostr-dm")
         }
-        SendTarget::Group(group_id) => {
-            (Some(vec!["chat".to_string(), group_id.clone()]), "nostr-group")
-        }
+        SendTarget::Group(group_id) => (
+            Some(vec!["chat".to_string(), group_id.clone()]),
+            "nostr-group",
+        ),
         SendTarget::Public => (None, "nostr"),
     };
 
     let mut tags = vec![
         vec!["d".to_string(), d_tag.clone()],
-        vec!["proxy".to_string(), d_tag.clone(), platform_hint.to_string()],
+        vec![
+            "proxy".to_string(),
+            d_tag.clone(),
+            platform_hint.to_string(),
+        ],
         vec!["sender".to_string(), sender_hex],
     ];
     if let Some(chat) = chat_tag {

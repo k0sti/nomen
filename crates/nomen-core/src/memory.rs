@@ -55,7 +55,9 @@ pub fn parse_d_tag(d_tag: &str) -> String {
 }
 
 /// Known tier prefixes for d-tag parsing.
-const TIER_PREFIXES: &[&str] = &["public", "group", "circle", "personal", "private", "internal"];
+const TIER_PREFIXES: &[&str] = &[
+    "public", "group", "circle", "personal", "private", "internal",
+];
 
 /// Check if a d-tag uses the v0.2 format: `{visibility}:{scope}:{topic}`.
 pub fn is_v2_dtag(d_tag: &str) -> bool {
@@ -105,11 +107,19 @@ fn v3_dtag_topic(d_tag: &str) -> Option<&str> {
         "personal" | "group" | "circle" => {
             let second_slash = after_tier.find('/')?;
             let topic = &after_tier[second_slash + 1..];
-            if topic.is_empty() { None } else { Some(topic) }
+            if topic.is_empty() {
+                None
+            } else {
+                Some(topic)
+            }
         }
         // Unscoped tiers: topic is everything after tier/
         "public" | "private" | "internal" => {
-            if after_tier.is_empty() { None } else { Some(after_tier) }
+            if after_tier.is_empty() {
+                None
+            } else {
+                Some(after_tier)
+            }
         }
         _ => None,
     }
@@ -156,9 +166,7 @@ fn extract_visibility_scope_v3(d_tag: &str) -> (String, String) {
     let visibility = normalize_tier_name(tier);
 
     let scope = match visibility.as_str() {
-        "personal" | "group" | "circle" => {
-            parts.next().unwrap_or("").to_string()
-        }
+        "personal" | "group" | "circle" => parts.next().unwrap_or("").to_string(),
         _ => String::new(),
     };
     (visibility, scope)
@@ -275,9 +283,18 @@ mod tests {
 
     #[test]
     fn test_dtag_topic_v3() {
-        assert_eq!(dtag_topic("public/rust-error-handling"), Some("rust-error-handling"));
-        assert_eq!(dtag_topic("public/rust/error-handling"), Some("rust/error-handling"));
-        assert_eq!(dtag_topic("private/agent-reasoning"), Some("agent-reasoning"));
+        assert_eq!(
+            dtag_topic("public/rust-error-handling"),
+            Some("rust-error-handling")
+        );
+        assert_eq!(
+            dtag_topic("public/rust/error-handling"),
+            Some("rust/error-handling")
+        );
+        assert_eq!(
+            dtag_topic("private/agent-reasoning"),
+            Some("agent-reasoning")
+        );
         assert_eq!(dtag_topic("personal/abc123/ssh-config"), Some("ssh-config"));
         assert_eq!(dtag_topic("group/techteam/deployment"), Some("deployment"));
         assert_eq!(dtag_topic("circle/abc123/notes"), Some("notes"));
@@ -285,7 +302,10 @@ mod tests {
 
     #[test]
     fn test_dtag_topic_v2() {
-        assert_eq!(dtag_topic("public::rust-error-handling"), Some("rust-error-handling"));
+        assert_eq!(
+            dtag_topic("public::rust-error-handling"),
+            Some("rust-error-handling")
+        );
         assert_eq!(dtag_topic("group:techteam:deployment"), Some("deployment"));
         assert_eq!(dtag_topic("internal:abc123:reasoning"), Some("reasoning"));
     }
@@ -329,21 +349,48 @@ mod tests {
 
     #[test]
     fn test_build_dtag() {
-        assert_eq!(build_dtag("public", "", "rust-error-handling"), "public/rust-error-handling");
-        assert_eq!(build_dtag("private", "", "agent-reasoning"), "private/agent-reasoning");
-        assert_eq!(build_dtag("personal", "abc123", "ssh-config"), "personal/abc123/ssh-config");
-        assert_eq!(build_dtag("group", "techteam", "deployment"), "group/techteam/deployment");
+        assert_eq!(
+            build_dtag("public", "", "rust-error-handling"),
+            "public/rust-error-handling"
+        );
+        assert_eq!(
+            build_dtag("private", "", "agent-reasoning"),
+            "private/agent-reasoning"
+        );
+        assert_eq!(
+            build_dtag("personal", "abc123", "ssh-config"),
+            "personal/abc123/ssh-config"
+        );
+        assert_eq!(
+            build_dtag("group", "techteam", "deployment"),
+            "group/techteam/deployment"
+        );
         // "internal" normalizes to "private"
-        assert_eq!(build_dtag("internal", "abc123", "reasoning"), "private/reasoning");
+        assert_eq!(
+            build_dtag("internal", "abc123", "reasoning"),
+            "private/reasoning"
+        );
     }
 
     #[test]
     fn test_build_dtag_from_tier() {
         assert_eq!(build_dtag_from_tier("public", "", "topic"), "public/topic");
-        assert_eq!(build_dtag_from_tier("private", "", "topic"), "private/topic");
-        assert_eq!(build_dtag_from_tier("internal", "abc123", "topic"), "private/topic");
-        assert_eq!(build_dtag_from_tier("personal", "abc123", "topic"), "personal/abc123/topic");
-        assert_eq!(build_dtag_from_tier("group:techteam", "", "topic"), "group/techteam/topic");
+        assert_eq!(
+            build_dtag_from_tier("private", "", "topic"),
+            "private/topic"
+        );
+        assert_eq!(
+            build_dtag_from_tier("internal", "abc123", "topic"),
+            "private/topic"
+        );
+        assert_eq!(
+            build_dtag_from_tier("personal", "abc123", "topic"),
+            "personal/abc123/topic"
+        );
+        assert_eq!(
+            build_dtag_from_tier("group:techteam", "", "topic"),
+            "group/techteam/topic"
+        );
     }
 
     #[test]

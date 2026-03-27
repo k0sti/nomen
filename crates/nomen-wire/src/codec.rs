@@ -105,10 +105,7 @@ mod tests {
 
     #[test]
     fn test_response_success_roundtrip() {
-        let frame = Frame::Response(Response::success(
-            "test1".to_string(),
-            json!({"count": 5}),
-        ));
+        let frame = Frame::Response(Response::success("test1".to_string(), json!({"count": 5})));
         let decoded = roundtrip(frame);
         assert!(decoded.is_response());
         if let Frame::Response(resp) = decoded {

@@ -4,8 +4,8 @@ pub use nomen_core::api::types::*;
 
 use serde_json::Value;
 
-use nomen_core::api::errors::ApiError;
 use crate::NomenBackend;
+use nomen_core::api::errors::ApiError;
 
 // -- Scope resolution (needs NomenBackend) --
 

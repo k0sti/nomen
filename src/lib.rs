@@ -48,12 +48,12 @@ pub mod socket {
 }
 
 // Split impl Nomen blocks
+mod nomen_admin;
+mod nomen_backend;
+mod nomen_consolidate;
 mod nomen_memory;
 mod nomen_message;
 mod nomen_sync;
-mod nomen_consolidate;
-mod nomen_admin;
-mod nomen_backend;
 
 use anyhow::Result;
 use surrealdb::engine::local::Db;
@@ -79,15 +79,21 @@ pub struct Nomen {
     pub(crate) media_store: Option<Box<dyn nomen_media::MediaStore>>,
 }
 
-pub use nomen_core::NewMemory;
 pub use nomen_core::ops::{
     ClusterParams, ConsolidateParams, EmbedReport, ListOptions, ListStats, SyncReport,
 };
+pub use nomen_core::NewMemory;
 
 /// Options for consolidation.
 pub struct ConsolidateOptions {
     pub batch_size: usize,
     pub min_messages: usize,
+    pub platform: Option<Vec<String>>,
+    pub community_id: Option<Vec<String>>,
+    pub chat_id: Option<Vec<String>>,
+    pub thread_id: Option<Vec<String>>,
+    pub since: Option<i64>,
+    pub older_than: Option<String>,
     pub llm_provider: Option<Box<dyn consolidate::LlmProvider>>,
     pub entity_extractor: Option<Box<dyn entities::EntityExtractor>>,
 }
@@ -97,6 +103,12 @@ impl Default for ConsolidateOptions {
         Self {
             batch_size: 50,
             min_messages: 3,
+            platform: None,
+            community_id: None,
+            chat_id: None,
+            thread_id: None,
+            since: None,
+            older_than: None,
             llm_provider: None,
             entity_extractor: None,
         }
@@ -145,7 +157,10 @@ impl Nomen {
     }
 
     /// Open with a pre-existing DB handle.
-    pub async fn open_with_db(config: &Config, db: surrealdb::Surreal<surrealdb::engine::local::Db>) -> Result<Self> {
+    pub async fn open_with_db(
+        config: &Config,
+        db: surrealdb::Surreal<surrealdb::engine::local::Db>,
+    ) -> Result<Self> {
         let embedder = config.build_embedder();
         let groups = GroupStore::load(&config.groups, &db).await?;
         let signer = config.build_signer();
@@ -162,7 +177,11 @@ impl Nomen {
     }
 
     /// Open with a pre-existing DB and relay manager.
-    pub async fn open_with_db_and_relay(config: &Config, db: surrealdb::Surreal<surrealdb::engine::local::Db>, relay: RelayManager) -> Result<Self> {
+    pub async fn open_with_db_and_relay(
+        config: &Config,
+        db: surrealdb::Surreal<surrealdb::engine::local::Db>,
+        relay: RelayManager,
+    ) -> Result<Self> {
         let mut nomen = Self::open_with_db(config, db).await?;
         if nomen.signer.is_none() {
             nomen.signer = Some(relay.arc_signer().clone());
