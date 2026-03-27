@@ -38,9 +38,8 @@ pub use memory::{
 pub mod collected;
 
 pub use message::{
-    cleanup_expired_consolidation_sessions, create_consolidation_session, create_session,
-    get_consolidation_session, get_session, list_sessions, update_consolidation_session_status,
-    update_session_last_active, ConsolidationSessionRecord,
+    cleanup_expired_consolidation_sessions, create_consolidation_session,
+    get_consolidation_session, update_consolidation_session_status, ConsolidationSessionRecord,
 };
 
 pub use collected::{
@@ -216,24 +215,6 @@ impl nomen_core::access::AccessCheckable for MemoryRecord {
 /// Canonical normalized messaging data now lives in collected-message records
 /// using `platform/community/chat/thread/message`. This struct remains only as a
 /// compatibility bridge for older consolidation and migration paths.
-/// SurrealDB session record.
-///
-/// `channel` here means delivery/transport channel for session routing (for
-/// example `nostr` or `telegram`), not the canonical normalized conversation
-/// container hierarchy used by collected messages.
-#[derive(Debug, Clone, Serialize, Deserialize, SurrealValue)]
-pub struct SessionRecord {
-    #[serde(default, deserialize_with = "deserialize_thing_as_string")]
-    pub id: String,
-    pub session_id: String,
-    pub tier: String,
-    pub scope: String,
-    pub channel: String,
-    pub group_id: String,
-    pub participants: Vec<String>,
-    pub created_at: String,
-    pub last_active: String,
-}
 
 /// An entity record from SurrealDB.
 #[derive(Debug, Clone, Serialize, Deserialize, SurrealValue)]

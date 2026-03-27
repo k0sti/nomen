@@ -26,7 +26,6 @@ use nomen_core::ops::{
 };
 use nomen_core::search::{SearchOptions, SearchResult};
 use nomen_core::send::{SendOptions, SendResult};
-use nomen_core::session::ResolvedSession;
 use nomen_core::signer::NomenSigner;
 use nomen_core::NewMemory;
 use nomen_db::{
@@ -97,7 +96,6 @@ pub trait NomenBackend: Send + Sync {
     // -- Session --
 
     /// Resolve a session ID to tier/scope/delivery-channel.
-    fn resolve_session(&self, session_id: &str, default_channel: &str) -> Result<ResolvedSession>;
 
     // -- Entities --
 

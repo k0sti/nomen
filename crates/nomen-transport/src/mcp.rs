@@ -450,17 +450,15 @@ pub struct McpServer {
     base_nomen: Arc<dyn NomenBackend>,
     /// The active backend — either base or a SessionBackend with per-session signer.
     active_nomen: Arc<dyn NomenBackend>,
-    pub default_channel: String,
     /// Whether the client has authenticated via identity.auth.
     authenticated: bool,
 }
 
 impl McpServer {
-    pub fn new(nomen: Arc<dyn NomenBackend>, default_channel: String) -> Self {
+    pub fn new(nomen: Arc<dyn NomenBackend>) -> Self {
         Self {
             base_nomen: nomen.clone(),
             active_nomen: nomen,
-            default_channel,
             authenticated: false,
         }
     }
@@ -524,13 +522,7 @@ impl McpServer {
             );
         }
 
-        let api_resp = nomen_api::dispatch(
-            &*self.active_nomen,
-            &self.default_channel,
-            &action,
-            &arguments,
-        )
-        .await;
+        let api_resp = nomen_api::dispatch(&*self.active_nomen, &action, &arguments).await;
 
         let result_json = serde_json::to_value(&api_resp).unwrap_or_else(|_| json!({"ok": false}));
 
@@ -548,13 +540,7 @@ impl McpServer {
     /// Handle identity.auth: parse nsec, create KeysSigner, wrap backend.
     async fn handle_identity_auth(&mut self, id: Value, arguments: &Value) -> JsonRpcResponse {
         // Use dispatch to validate the nsec and get the pubkey
-        let api_resp = nomen_api::dispatch(
-            &*self.base_nomen,
-            &self.default_channel,
-            "identity.auth",
-            arguments,
-        )
-        .await;
+        let api_resp = nomen_api::dispatch(&*self.base_nomen, "identity.auth", arguments).await;
 
         if !api_resp.ok {
             let result_json =
@@ -614,7 +600,7 @@ impl McpServer {
 // ── Stdio event loop ────────────────────────────────────────────────
 
 /// Serve MCP over stdio (legacy reference-based, no session identity support).
-pub async fn serve_stdio(nomen: &dyn NomenBackend, default_channel: String) -> Result<()> {
+pub async fn serve_stdio(nomen: &dyn NomenBackend) -> Result<()> {
     info!("Nomen MCP server starting on stdio (legacy ref mode)");
 
     let stdin = io::stdin();
@@ -647,7 +633,7 @@ pub async fn serve_stdio(nomen: &dyn NomenBackend, default_channel: String) -> R
         // Notifications (no id) don't get responses
         let is_notification = req.id.is_none() || req.method.starts_with("notifications/");
 
-        let response = handle_legacy_request(nomen, &default_channel, &req).await;
+        let response = handle_legacy_request(nomen, &req).await;
 
         if !is_notification {
             write_response(&mut stdout, &response)?;
@@ -659,8 +645,8 @@ pub async fn serve_stdio(nomen: &dyn NomenBackend, default_channel: String) -> R
 }
 
 /// Serve MCP over stdio with session identity support.
-pub async fn serve_stdio_arc(nomen: Arc<dyn NomenBackend>, default_channel: String) -> Result<()> {
-    let mut server = McpServer::new(nomen, default_channel);
+pub async fn serve_stdio_arc(nomen: Arc<dyn NomenBackend>) -> Result<()> {
+    let mut server = McpServer::new(nomen);
 
     info!("Nomen MCP server starting on stdio");
 
@@ -706,11 +692,7 @@ pub async fn serve_stdio_arc(nomen: Arc<dyn NomenBackend>, default_channel: Stri
 }
 
 /// Legacy request handler for backward compat (no session identity).
-async fn handle_legacy_request(
-    nomen: &dyn NomenBackend,
-    default_channel: &str,
-    req: &JsonRpcRequest,
-) -> JsonRpcResponse {
+async fn handle_legacy_request(nomen: &dyn NomenBackend, req: &JsonRpcRequest) -> JsonRpcResponse {
     let id = req.id.clone().unwrap_or(Value::Null);
 
     match req.method.as_str() {
@@ -743,7 +725,7 @@ async fn handle_legacy_request(
                 }
             };
 
-            let api_resp = nomen_api::dispatch(nomen, default_channel, &action, &arguments).await;
+            let api_resp = nomen_api::dispatch(nomen, &action, &arguments).await;
 
             let result_json =
                 serde_json::to_value(&api_resp).unwrap_or_else(|_| json!({"ok": false}));

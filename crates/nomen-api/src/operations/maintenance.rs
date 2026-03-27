@@ -84,11 +84,7 @@ fn consolidate_params_from_value(params: &Value) -> Result<ConsolidateParams, Ap
     })
 }
 
-pub async fn consolidate(
-    nomen: &dyn NomenBackend,
-    _default_channel: &str,
-    params: &Value,
-) -> Result<Value, ApiError> {
+pub async fn consolidate(nomen: &dyn NomenBackend, params: &Value) -> Result<Value, ApiError> {
     let opts = consolidate_params_from_value(params)?;
 
     let report = nomen
@@ -106,7 +102,6 @@ pub async fn consolidate(
 
 pub async fn consolidate_prepare(
     nomen: &dyn NomenBackend,
-    _default_channel: &str,
     params: &Value,
 ) -> Result<Value, ApiError> {
     let ttl_minutes = params
@@ -126,7 +121,6 @@ pub async fn consolidate_prepare(
 
 pub async fn consolidate_commit(
     nomen: &dyn NomenBackend,
-    _default_channel: &str,
     params: &Value,
 ) -> Result<Value, ApiError> {
     let session_id = params
@@ -152,11 +146,7 @@ pub async fn consolidate_commit(
     Ok(serde_json::to_value(&result).map_err(|e| ApiError::internal(&e.to_string()))?)
 }
 
-pub async fn cluster(
-    nomen: &dyn NomenBackend,
-    _default_channel: &str,
-    params: &Value,
-) -> Result<Value, ApiError> {
+pub async fn cluster(nomen: &dyn NomenBackend, params: &Value) -> Result<Value, ApiError> {
     let prefix = params
         .get("prefix")
         .and_then(|v| v.as_str())
@@ -208,11 +198,7 @@ pub async fn cluster(
     }))
 }
 
-pub async fn sync(
-    nomen: &dyn NomenBackend,
-    _default_channel: &str,
-    _params: &Value,
-) -> Result<Value, ApiError> {
+pub async fn sync(nomen: &dyn NomenBackend, _params: &Value) -> Result<Value, ApiError> {
     let report = nomen.sync().await.map_err(ApiError::from_anyhow)?;
 
     Ok(json!({
@@ -222,11 +208,7 @@ pub async fn sync(
     }))
 }
 
-pub async fn embed(
-    nomen: &dyn NomenBackend,
-    _default_channel: &str,
-    params: &Value,
-) -> Result<Value, ApiError> {
+pub async fn embed(nomen: &dyn NomenBackend, params: &Value) -> Result<Value, ApiError> {
     let limit = params.get("limit").and_then(|v| v.as_u64()).unwrap_or(100) as usize;
 
     let report = nomen.embed(limit).await.map_err(ApiError::from_anyhow)?;
@@ -237,11 +219,7 @@ pub async fn embed(
     }))
 }
 
-pub async fn prune(
-    nomen: &dyn NomenBackend,
-    _default_channel: &str,
-    params: &Value,
-) -> Result<Value, ApiError> {
+pub async fn prune(nomen: &dyn NomenBackend, params: &Value) -> Result<Value, ApiError> {
     let days = params.get("days").and_then(|v| v.as_u64()).unwrap_or(90);
     let dry_run = params
         .get("dry_run")

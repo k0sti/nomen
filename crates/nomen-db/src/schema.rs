@@ -71,16 +71,6 @@ DEFINE INDEX IF NOT EXISTS meta_key   ON meta FIELDS key UNIQUE;
 DEFINE TABLE IF NOT EXISTS kv_meta SCHEMALESS;
 DEFINE INDEX IF NOT EXISTS kv_meta_key ON kv_meta FIELDS key UNIQUE;
 
-DEFINE TABLE IF NOT EXISTS session SCHEMAFULL;
-DEFINE FIELD IF NOT EXISTS session_id    ON session TYPE string;
-DEFINE FIELD IF NOT EXISTS tier          ON session TYPE string;
-DEFINE FIELD IF NOT EXISTS scope         ON session TYPE string;
-DEFINE FIELD IF NOT EXISTS channel       ON session TYPE string;
-DEFINE FIELD IF NOT EXISTS group_id      ON session TYPE string;
-DEFINE FIELD IF NOT EXISTS participants  ON session TYPE array;
-DEFINE FIELD IF NOT EXISTS participants.* ON session TYPE string;
-DEFINE FIELD IF NOT EXISTS created_at    ON session TYPE string;
-DEFINE FIELD IF NOT EXISTS last_active   ON session TYPE string;
 DEFINE INDEX IF NOT EXISTS session_sid   ON session FIELDS session_id UNIQUE;
 
 -- Consolidation sessions (two-phase agent mode)

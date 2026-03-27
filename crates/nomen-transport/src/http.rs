@@ -25,7 +25,6 @@ use nomen_core::signer::NomenSigner;
 
 pub struct AppState {
     pub nomen: Arc<dyn NomenBackend>,
-    pub default_channel: String,
     pub config: Arc<RwLock<Config>>,
 }
 
@@ -119,14 +118,9 @@ async fn api_dispatch(
             // Allow health/stats endpoints and identity.auth without auth
             if req.action == "identity.auth" {
                 // identity.auth validates nsec and returns pubkey — doesn't need a session
-                let resp = nomen_api::dispatch(
-                    &*state.nomen,
-                    &state.default_channel,
-                    &req.action,
-                    &req.params,
-                )
-                .await
-                .with_request_id(request_id);
+                let resp = nomen_api::dispatch(&*state.nomen, &req.action, &req.params)
+                    .await
+                    .with_request_id(request_id);
                 return Json(serde_json::to_value(&resp).unwrap_or_default());
             }
             let resp = nomen_core::api::types::ApiResponse::error(
@@ -139,7 +133,7 @@ async fn api_dispatch(
         }
     };
 
-    let resp = nomen_api::dispatch(&*backend, &state.default_channel, &req.action, &req.params)
+    let resp = nomen_api::dispatch(&*backend, &req.action, &req.params)
         .await
         .with_request_id(request_id);
     Json(serde_json::to_value(&resp).unwrap_or_default())

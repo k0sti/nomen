@@ -4,7 +4,6 @@ pub use nomen_core::api::types::*;
 
 use serde_json::Value;
 
-use crate::NomenBackend;
 use nomen_core::api::errors::ApiError;
 
 // -- Scope resolution (needs NomenBackend) --
@@ -12,8 +11,6 @@ use nomen_core::api::errors::ApiError;
 /// Resolve visibility and scope from params, with legacy fallback.
 pub fn resolve_visibility_scope(
     params: &Value,
-    nomen: &dyn NomenBackend,
-    default_channel: &str,
 ) -> Result<(Option<Visibility>, Option<String>), ApiError> {
     // Try canonical fields first
     let vis = params
@@ -33,19 +30,6 @@ pub fn resolve_visibility_scope(
     if let Some(tier_str) = params.get("tier").and_then(|v| v.as_str()) {
         let (v, s) = parse_legacy_tier(tier_str);
         return Ok((v, s.or(scope)));
-    }
-
-    // Fallback: session_id
-    if let Some(sid) = params.get("session_id").and_then(|v| v.as_str()) {
-        if let Ok(resolved) = nomen.resolve_session(sid, default_channel) {
-            let v = Visibility::parse(&resolved.tier);
-            let s = if resolved.scope.is_empty() {
-                None
-            } else {
-                Some(resolved.scope)
-            };
-            return Ok((v, s));
-        }
     }
 
     Ok((vis, scope))

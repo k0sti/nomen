@@ -14,8 +14,6 @@ use nomen::Nomen;
 
 use super::Cli;
 
-pub const CLI_CHANNEL: &str = "cli";
-
 // ── Resolve keys + relay from CLI + config ──────────────────────────
 
 pub struct ResolvedConfig {
@@ -192,7 +190,7 @@ pub async fn cli_dispatch(
         }
         Backend::Direct => {
             let nomen = nomen.expect("Direct backend requires a Nomen instance");
-            let resp = nomen::api::dispatch(nomen, CLI_CHANNEL, action, params).await;
+            let resp = nomen::api::dispatch(nomen, action, params).await;
             if resp.ok {
                 Ok(resp.result.unwrap_or(serde_json::Value::Null))
             } else {

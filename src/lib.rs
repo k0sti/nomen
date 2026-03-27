@@ -19,7 +19,6 @@ pub mod memory;
 pub mod relay;
 pub mod search;
 pub mod send;
-pub mod session;
 pub mod signer;
 
 #[cfg(feature = "migrate")]

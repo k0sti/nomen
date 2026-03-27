@@ -53,7 +53,6 @@ pub struct CvmServer {
     gateway: NostrMCPGateway,
     allowed_npubs: HashSet<String>,
     rate_limiter: RateLimiter,
-    default_channel: String,
     announce: bool,
 }
 
@@ -65,7 +64,6 @@ impl CvmServer {
         encryption: EncryptionMode,
         allowed_npubs: Vec<String>,
         rate_limit: u32,
-        default_channel: String,
         announce: bool,
     ) -> Result<Self> {
         let server_info = ServerInfo {
@@ -102,7 +100,6 @@ impl CvmServer {
             gateway,
             allowed_npubs: allowed_npubs.into_iter().collect(),
             rate_limiter: RateLimiter::new(rate_limit),
-            default_channel,
             announce,
         })
     }
@@ -262,13 +259,7 @@ impl CvmServer {
                     _ => {
                         // Direct v2 action dispatch (e.g. "memory.search", "group.list")
                         info!(action = %method, "CVM: direct action dispatch");
-                        let api_resp = nomen_api::dispatch(
-                            &*self.nomen,
-                            &self.default_channel,
-                            method,
-                            &params,
-                        )
-                        .await;
+                        let api_resp = nomen_api::dispatch(&*self.nomen, method, &params).await;
                         let result = serde_json::to_value(&api_resp)
                             .unwrap_or_else(|_| json!({"ok": false}));
                         if !api_resp.ok {
@@ -314,8 +305,7 @@ impl CvmServer {
 
         debug!(tool = %tool_name, action = %action, "CVM: tool_call → action dispatch");
 
-        let api_resp =
-            nomen_api::dispatch(&*self.nomen, &self.default_channel, &action, &arguments).await;
+        let api_resp = nomen_api::dispatch(&*self.nomen, &action, &arguments).await;
 
         if api_resp.ok {
             debug!(tool = %tool_name, action = %action, "CVM: tool call succeeded");
@@ -343,22 +333,15 @@ pub struct CvmHandler {
     pub(crate) nomen: Box<dyn NomenBackend>,
     pub(crate) allowed_npubs: HashSet<String>,
     pub(crate) rate_limiter: RateLimiter,
-    pub(crate) default_channel: String,
 }
 
 impl CvmHandler {
     /// Create a handler for testing — no relay or transport needed.
-    pub fn new(
-        nomen: Box<dyn NomenBackend>,
-        allowed_npubs: Vec<String>,
-        rate_limit: u32,
-        default_channel: String,
-    ) -> Self {
+    pub fn new(nomen: Box<dyn NomenBackend>, allowed_npubs: Vec<String>, rate_limit: u32) -> Self {
         Self {
             nomen,
             allowed_npubs: allowed_npubs.into_iter().collect(),
             rate_limiter: RateLimiter::new(rate_limit),
-            default_channel,
         }
     }
 
@@ -391,13 +374,7 @@ impl CvmHandler {
                     "tools/call" => self.handle_tool_call(id, &params).await,
                     "ping" => make_success_response(id, json!({})),
                     _ => {
-                        let api_resp = nomen_api::dispatch(
-                            &*self.nomen,
-                            &self.default_channel,
-                            method,
-                            &params,
-                        )
-                        .await;
+                        let api_resp = nomen_api::dispatch(&*self.nomen, method, &params).await;
                         let result = serde_json::to_value(&api_resp)
                             .unwrap_or_else(|_| json!({"ok": false}));
                         make_success_response(id, result)
@@ -429,8 +406,7 @@ impl CvmHandler {
             }
         };
 
-        let api_resp =
-            nomen_api::dispatch(&*self.nomen, &self.default_channel, &action, &arguments).await;
+        let api_resp = nomen_api::dispatch(&*self.nomen, &action, &arguments).await;
 
         let result_json = serde_json::to_value(&api_resp).unwrap_or_else(|_| json!({"ok": false}));
 

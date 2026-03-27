@@ -10,13 +10,8 @@ use nomen_core::api::types::ApiResponse;
 /// Dispatch a canonical API v2 action.
 ///
 /// This is the single entry point for both CVM and MCP transports.
-pub async fn dispatch(
-    nomen: &dyn NomenBackend,
-    default_channel: &str,
-    action: &str,
-    params: &Value,
-) -> ApiResponse {
-    let result = dispatch_inner(nomen, default_channel, action, params).await;
+pub async fn dispatch(nomen: &dyn NomenBackend, action: &str, params: &Value) -> ApiResponse {
+    let result = dispatch_inner(nomen, action, params).await;
     match result {
         Ok(value) => ApiResponse::success(value),
         Err(err) => ApiResponse::error(err),
@@ -25,65 +20,54 @@ pub async fn dispatch(
 
 async fn dispatch_inner(
     nomen: &dyn NomenBackend,
-    default_channel: &str,
     action: &str,
     params: &Value,
 ) -> Result<Value, ApiError> {
     match action {
         // Memory domain
-        "memory.search" => operations::memory::search(nomen, default_channel, params).await,
-        "memory.put" => operations::memory::put(nomen, default_channel, params).await,
-        "memory.get" => operations::memory::get(nomen, default_channel, params).await,
-        "memory.list" => operations::memory::list(nomen, default_channel, params).await,
-        "memory.delete" => operations::memory::delete(nomen, default_channel, params).await,
+        "memory.search" => operations::memory::search(nomen, params).await,
+        "memory.put" => operations::memory::put(nomen, params).await,
+        "memory.get" => operations::memory::get(nomen, params).await,
+        "memory.list" => operations::memory::list(nomen, params).await,
+        "memory.delete" => operations::memory::delete(nomen, params).await,
 
         // Message domain
-        "message.ingest" => operations::message::ingest(nomen, default_channel, params).await,
-        "message.context" => operations::message::context(nomen, default_channel, params).await,
-        "message.search" => operations::message::search(nomen, default_channel, params).await,
-        "message.send" => operations::message::send_message(nomen, default_channel, params).await,
-        "message.store" => operations::message::store(nomen, default_channel, params).await,
-        "message.query" => operations::message::query(nomen, default_channel, params).await,
-        "message.store_media" => {
-            operations::message::store_media(nomen, default_channel, params).await
-        }
-        "message.import" => operations::message::import(nomen, default_channel, params).await,
-        "message.fetch_media" => {
-            operations::message::fetch_media(nomen, default_channel, params).await
-        }
+        "message.ingest" => operations::message::ingest(nomen, params).await,
+        "message.context" => operations::message::context(nomen, params).await,
+        "message.search" => operations::message::search(nomen, params).await,
+        "message.send" => operations::message::send_message(nomen, params).await,
+        "message.store" => operations::message::store(nomen, params).await,
+        "message.query" => operations::message::query(nomen, params).await,
+        "message.store_media" => operations::message::store_media(nomen, params).await,
+        "message.import" => operations::message::import(nomen, params).await,
+        "message.fetch_media" => operations::message::fetch_media(nomen, params).await,
 
         // Entity domain
-        "entity.list" => operations::entity::list(nomen, default_channel, params).await,
-        "entity.relationships" => {
-            operations::entity::relationships(nomen, default_channel, params).await
-        }
+        "entity.list" => operations::entity::list(nomen, params).await,
+        "entity.relationships" => operations::entity::relationships(nomen, params).await,
 
         // Maintenance domain
-        "memory.consolidate" => {
-            operations::maintenance::consolidate(nomen, default_channel, params).await
-        }
+        "memory.consolidate" => operations::maintenance::consolidate(nomen, params).await,
         "memory.consolidate_prepare" => {
-            operations::maintenance::consolidate_prepare(nomen, default_channel, params).await
+            operations::maintenance::consolidate_prepare(nomen, params).await
         }
         "memory.consolidate_commit" => {
-            operations::maintenance::consolidate_commit(nomen, default_channel, params).await
+            operations::maintenance::consolidate_commit(nomen, params).await
         }
-        "memory.cluster" => operations::maintenance::cluster(nomen, default_channel, params).await,
-        "memory.sync" => operations::maintenance::sync(nomen, default_channel, params).await,
-        "memory.embed" => operations::maintenance::embed(nomen, default_channel, params).await,
-        "memory.prune" => operations::maintenance::prune(nomen, default_channel, params).await,
+        "memory.cluster" => operations::maintenance::cluster(nomen, params).await,
+        "memory.sync" => operations::maintenance::sync(nomen, params).await,
+        "memory.embed" => operations::maintenance::embed(nomen, params).await,
+        "memory.prune" => operations::maintenance::prune(nomen, params).await,
 
         // Identity domain
-        "identity.auth" => operations::identity::auth(nomen, default_channel, params).await,
+        "identity.auth" => operations::identity::auth(nomen, params).await,
 
         // Group domain
-        "group.list" => operations::group::list(nomen, default_channel, params).await,
-        "group.members" => operations::group::members(nomen, default_channel, params).await,
-        "group.create" => operations::group::create(nomen, default_channel, params).await,
-        "group.add_member" => operations::group::add_member(nomen, default_channel, params).await,
-        "group.remove_member" => {
-            operations::group::remove_member(nomen, default_channel, params).await
-        }
+        "group.list" => operations::group::list(nomen, params).await,
+        "group.members" => operations::group::members(nomen, params).await,
+        "group.create" => operations::group::create(nomen, params).await,
+        "group.add_member" => operations::group::add_member(nomen, params).await,
+        "group.remove_member" => operations::group::remove_member(nomen, params).await,
 
         _ => Err(ApiError::unknown_action(action)),
     }

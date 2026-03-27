@@ -21,12 +21,6 @@ pub async fn cmd_serve(
     context_vm: bool,
     allowed_npubs: Vec<String>,
 ) -> Result<()> {
-    let default_channel = config
-        .messaging
-        .as_ref()
-        .map(|m| m.default_channel.clone())
-        .unwrap_or_else(|| "nostr".to_string());
-
     // Optionally build relay manager if nsecs are available
     let relay_manager = if !resolved.nsecs.is_empty() {
         let (all_keys, _) = parse_keys(&resolved.nsecs)?;
@@ -84,7 +78,6 @@ pub async fn cmd_serve(
                 cvm_encryption,
                 cvm_allowed,
                 cvm_rate_limit,
-                default_channel.clone(),
                 cvm_announce,
             )
             .await?,
@@ -115,7 +108,6 @@ pub async fn cmd_serve(
         let server = nomen::socket::SocketServer::new(
             std::sync::Arc::new(socket_nomen) as std::sync::Arc<dyn nomen_api::NomenBackend>,
             &sock_config,
-            default_channel.clone(),
             Some(event_tx),
         );
 
@@ -176,7 +168,6 @@ pub async fn cmd_serve(
             let http_state = nomen::http::AppState {
                 nomen: std::sync::Arc::new(nomen_instance)
                     as std::sync::Arc<dyn nomen_api::NomenBackend>,
-                default_channel: default_channel.clone(),
                 config: std::sync::Arc::new(tokio::sync::RwLock::new(config.clone())),
             };
 
@@ -206,7 +197,7 @@ pub async fn cmd_serve(
                 };
                 let mcp_nomen_arc: std::sync::Arc<dyn nomen_api::NomenBackend> =
                     std::sync::Arc::new(mcp_nomen);
-                let mcp_fut = mcp::serve_stdio_arc(mcp_nomen_arc, default_channel);
+                let mcp_fut = mcp::serve_stdio_arc(mcp_nomen_arc);
                 let cvm_fut = cvm.run();
                 tokio::select! {
                     result = mcp_fut => result,
@@ -227,7 +218,7 @@ pub async fn cmd_serve(
             };
             let nomen_arc: std::sync::Arc<dyn nomen_api::NomenBackend> =
                 std::sync::Arc::new(nomen_instance);
-            mcp::serve_stdio_arc(nomen_arc, default_channel).await
+            mcp::serve_stdio_arc(nomen_arc).await
         }
     }
 }

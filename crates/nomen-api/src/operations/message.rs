@@ -9,11 +9,7 @@ use nomen_core::kinds::COLLECTED_MESSAGE_KIND;
 use nomen_core::send::{parse_recipient, SendOptions};
 
 /// Ingest a message by converting it to a kind 30100 collected event.
-pub async fn ingest(
-    nomen: &dyn NomenBackend,
-    _default_channel: &str,
-    params: &Value,
-) -> Result<Value, ApiError> {
+pub async fn ingest(nomen: &dyn NomenBackend, params: &Value) -> Result<Value, ApiError> {
     let content = params
         .get("content")
         .and_then(|v| v.as_str())
@@ -118,11 +114,7 @@ pub async fn ingest(
 }
 
 /// Query collected events with tag-based filtering.
-pub async fn query(
-    nomen: &dyn NomenBackend,
-    _default_channel: &str,
-    params: &Value,
-) -> Result<Value, ApiError> {
+pub async fn query(nomen: &dyn NomenBackend, params: &Value) -> Result<Value, ApiError> {
     let filter = CollectedEventFilter {
         platform: extract_string_array(params, "#proxy"),
         community_id: extract_string_array(params, "#community"),
@@ -154,11 +146,7 @@ pub async fn query(
 }
 
 /// Retrieve message context using tag-based filters on collected_message.
-pub async fn context(
-    nomen: &dyn NomenBackend,
-    _default_channel: &str,
-    params: &Value,
-) -> Result<Value, ApiError> {
+pub async fn context(nomen: &dyn NomenBackend, params: &Value) -> Result<Value, ApiError> {
     let has_chat = params.get("#chat").is_some();
     if !has_chat {
         return Err(ApiError::invalid_params(
@@ -208,11 +196,7 @@ pub async fn context(
 }
 
 /// BM25 fulltext search over collected messages.
-pub async fn search(
-    nomen: &dyn NomenBackend,
-    _default_channel: &str,
-    params: &Value,
-) -> Result<Value, ApiError> {
+pub async fn search(nomen: &dyn NomenBackend, params: &Value) -> Result<Value, ApiError> {
     let query_str = params.get("query").and_then(|v| v.as_str()).unwrap_or("");
 
     if query_str.is_empty() {
@@ -255,11 +239,7 @@ pub async fn search(
     }))
 }
 
-pub async fn send_message(
-    nomen: &dyn NomenBackend,
-    _default_channel: &str,
-    params: &Value,
-) -> Result<Value, ApiError> {
+pub async fn send_message(nomen: &dyn NomenBackend, params: &Value) -> Result<Value, ApiError> {
     let recipient = params
         .get("recipient")
         .and_then(|v| v.as_str())
@@ -296,11 +276,7 @@ pub async fn send_message(
 }
 
 /// Store a kind 30100 collected event.
-pub async fn store(
-    nomen: &dyn NomenBackend,
-    _default_channel: &str,
-    params: &Value,
-) -> Result<Value, ApiError> {
+pub async fn store(nomen: &dyn NomenBackend, params: &Value) -> Result<Value, ApiError> {
     let event_value = params
         .get("event")
         .ok_or_else(|| ApiError::invalid_params("event is required"))?;
@@ -322,11 +298,7 @@ pub async fn store(
 }
 
 /// Upload media to the configured media store.
-pub async fn store_media(
-    nomen: &dyn NomenBackend,
-    _default_channel: &str,
-    params: &Value,
-) -> Result<Value, ApiError> {
+pub async fn store_media(nomen: &dyn NomenBackend, params: &Value) -> Result<Value, ApiError> {
     let mime_type = params
         .get("mime_type")
         .and_then(|v| v.as_str())
@@ -366,11 +338,7 @@ pub async fn store_media(
 /// Import historical messages from a platform.
 ///
 /// Currently a stub — requires platform-specific import clients.
-pub async fn import(
-    _nomen: &dyn NomenBackend,
-    _default_channel: &str,
-    params: &Value,
-) -> Result<Value, ApiError> {
+pub async fn import(_nomen: &dyn NomenBackend, params: &Value) -> Result<Value, ApiError> {
     let platform = params
         .get("platform")
         .and_then(|v| v.as_str())
@@ -388,11 +356,7 @@ pub async fn import(
 /// Fetch media for stored events that have original URLs but no local copies.
 ///
 /// Currently a stub — requires HTTP download + event update logic.
-pub async fn fetch_media(
-    _nomen: &dyn NomenBackend,
-    _default_channel: &str,
-    _params: &Value,
-) -> Result<Value, ApiError> {
+pub async fn fetch_media(_nomen: &dyn NomenBackend, _params: &Value) -> Result<Value, ApiError> {
     Err(ApiError::invalid_params(
         "message.fetch_media not yet implemented",
     ))

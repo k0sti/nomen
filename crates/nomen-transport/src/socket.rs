@@ -25,7 +25,6 @@ type ConnId = u64;
 /// Socket server state shared across connection tasks.
 struct ServerState {
     nomen: Arc<dyn NomenBackend>,
-    default_channel: String,
     /// Subscription registry: connection ID -> subscribed event types.
     subscriptions: RwLock<HashMap<ConnId, HashSet<String>>>,
     /// Broadcast channel for push events.
@@ -45,7 +44,6 @@ impl SocketServer {
     pub fn new(
         nomen: Arc<dyn NomenBackend>,
         config: &SocketConfig,
-        default_channel: String,
         event_tx: Option<broadcast::Sender<Event>>,
     ) -> Self {
         let event_tx = event_tx.unwrap_or_else(|| {
@@ -55,7 +53,6 @@ impl SocketServer {
         Self {
             state: Arc::new(ServerState {
                 nomen,
-                default_channel,
                 subscriptions: RwLock::new(HashMap::new()),
                 event_tx,
                 next_conn_id: AtomicU64::new(1),
@@ -268,9 +265,7 @@ async fn handle_request_with_backend(
         "unsubscribe" => handle_unsubscribe(state, conn_id, &req).await,
         // Canonical dispatch — same semantics as HTTP/MCP/CVM
         _ => {
-            let api_resp =
-                nomen_api::dispatch(backend, &state.default_channel, &req.action, &req.params)
-                    .await;
+            let api_resp = nomen_api::dispatch(backend, &req.action, &req.params).await;
 
             // Map canonical ApiResponse to wire Response envelope
             let resp_value = serde_json::to_value(&api_resp).unwrap_or_default();
@@ -295,13 +290,7 @@ async fn handle_identity_auth(
     req: &nomen_wire::Request,
 ) -> (Response, Option<Arc<dyn NomenBackend>>) {
     // Dispatch to validate the nsec
-    let api_resp = nomen_api::dispatch(
-        &*state.nomen,
-        &state.default_channel,
-        "identity.auth",
-        &req.params,
-    )
-    .await;
+    let api_resp = nomen_api::dispatch(&*state.nomen, "identity.auth", &req.params).await;
 
     if !api_resp.ok {
         let resp_value = serde_json::to_value(&api_resp).unwrap_or_default();

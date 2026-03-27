@@ -173,9 +173,9 @@ fn default_max_ephemeral_count() -> usize {
 
 #[derive(Deserialize, Serialize, Clone)]
 pub struct MessagingConfig {
-    /// Default delivery channel (e.g. "nostr", "telegram"). Defaults to "nostr".
+    /// Default delivery channel for message sending (e.g. "nostr", "telegram"). Defaults to "nostr".
     #[serde(default = "default_messaging_channel")]
-    pub default_channel: String,
+    pub delivery_channel: String,
 }
 
 fn default_messaging_channel() -> String {

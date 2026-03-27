@@ -12,11 +12,7 @@ use nomen_core::search::SearchOptions;
 use nomen_core::NewMemory;
 use nomen_db::MemoryRecord;
 
-pub async fn search(
-    nomen: &dyn NomenBackend,
-    default_channel: &str,
-    params: &Value,
-) -> Result<Value, ApiError> {
+pub async fn search(nomen: &dyn NomenBackend, params: &Value) -> Result<Value, ApiError> {
     let query = params
         .get("query")
         .and_then(|v| v.as_str())
@@ -27,7 +23,7 @@ pub async fn search(
         return Err(ApiError::invalid_params("query is required"));
     }
 
-    let (vis, scope) = resolve_visibility_scope(params, nomen, default_channel)?;
+    let (vis, scope) = resolve_visibility_scope(params)?;
     let limit = params.get("limit").and_then(|v| v.as_u64()).unwrap_or(10) as usize;
 
     let retrieval: RetrievalParams = params
@@ -106,11 +102,7 @@ pub async fn search(
     }))
 }
 
-pub async fn put(
-    nomen: &dyn NomenBackend,
-    default_channel: &str,
-    params: &Value,
-) -> Result<Value, ApiError> {
+pub async fn put(nomen: &dyn NomenBackend, params: &Value) -> Result<Value, ApiError> {
     let topic = params
         .get("topic")
         .and_then(|v| v.as_str())
@@ -127,7 +119,7 @@ pub async fn put(
         return Err(ApiError::invalid_params("topic and content are required"));
     }
 
-    let (vis, scope) = resolve_visibility_scope(params, nomen, default_channel)?;
+    let (vis, scope) = resolve_visibility_scope(params)?;
     let visibility = vis.unwrap_or(Visibility::Public);
     let scope_str = scope.unwrap_or_default();
     let tier = visibility.to_tier(&scope_str);
@@ -162,11 +154,7 @@ pub async fn put(
     }))
 }
 
-pub async fn get(
-    nomen: &dyn NomenBackend,
-    default_channel: &str,
-    params: &Value,
-) -> Result<Value, ApiError> {
+pub async fn get(nomen: &dyn NomenBackend, params: &Value) -> Result<Value, ApiError> {
     let d_tag = params.get("d_tag").and_then(|v| v.as_str());
     let topic = params.get("topic").and_then(|v| v.as_str());
 
@@ -185,7 +173,7 @@ pub async fn get(
 
     // Topic lookup -- try to build d_tag from visibility+scope+topic
     let topic = topic.unwrap();
-    let (vis, scope) = resolve_visibility_scope(params, nomen, default_channel)?;
+    let (vis, scope) = resolve_visibility_scope(params)?;
 
     if let (Some(vis), _) = (&vis, &scope) {
         let scope_str = scope.as_deref().unwrap_or("");
@@ -232,18 +220,14 @@ fn record_to_value(record: Option<MemoryRecord>) -> Value {
     }
 }
 
-pub async fn list(
-    nomen: &dyn NomenBackend,
-    default_channel: &str,
-    params: &Value,
-) -> Result<Value, ApiError> {
+pub async fn list(nomen: &dyn NomenBackend, params: &Value) -> Result<Value, ApiError> {
     let limit = params.get("limit").and_then(|v| v.as_u64()).unwrap_or(100) as usize;
     let include_stats = params
         .get("stats")
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
 
-    let (vis, _scope) = resolve_visibility_scope(params, nomen, default_channel)?;
+    let (vis, _scope) = resolve_visibility_scope(params)?;
     let tier = vis.as_ref().map(|v| v.as_str().to_string());
 
     let report = nomen
@@ -287,11 +271,7 @@ pub async fn list(
     Ok(result)
 }
 
-pub async fn delete(
-    nomen: &dyn NomenBackend,
-    default_channel: &str,
-    params: &Value,
-) -> Result<Value, ApiError> {
+pub async fn delete(nomen: &dyn NomenBackend, params: &Value) -> Result<Value, ApiError> {
     let topic = params.get("topic").and_then(|v| v.as_str());
     let d_tag = params.get("d_tag").and_then(|v| v.as_str());
     let id = params.get("id").and_then(|v| v.as_str());
@@ -302,7 +282,7 @@ pub async fn delete(
 
     // If topic is provided with visibility/scope, build d_tag
     let effective_topic = if let Some(topic) = topic {
-        let (vis, scope) = resolve_visibility_scope(params, nomen, default_channel)?;
+        let (vis, scope) = resolve_visibility_scope(params)?;
         if let Some(vis) = vis {
             let scope_str = scope.as_deref().unwrap_or("");
             let author_pubkey = nomen

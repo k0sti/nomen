@@ -16,7 +16,6 @@ pub mod memory;
 pub mod ops;
 pub mod search;
 pub mod send;
-pub mod session;
 pub mod signer;
 
 /// Options for creating a new memory directly (without relay event).

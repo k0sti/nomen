@@ -81,13 +81,6 @@ impl Nomen {
     }
 
     /// Resolve a session ID to tier/scope/delivery-channel using the loaded groups.
-    pub fn resolve_session(
-        &self,
-        session_id: &str,
-        default_channel: &str,
-    ) -> Result<crate::session::ResolvedSession> {
-        crate::session::resolve_session(session_id, &self.groups, default_channel)
-    }
 
     /// Send a message via relay.
     pub async fn send(&self, opts: crate::send::SendOptions) -> Result<crate::send::SendResult> {

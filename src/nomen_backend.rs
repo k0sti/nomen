@@ -11,7 +11,6 @@ use nomen_core::groups::Group;
 use nomen_core::ops::{ClusterParams, ConsolidateParams, EmbedReport, ListOptions, SyncReport};
 use nomen_core::search::{SearchOptions, SearchResult};
 use nomen_core::send::{SendOptions, SendResult};
-use nomen_core::session::ResolvedSession;
 use nomen_core::signer::NomenSigner;
 use nomen_core::NewMemory;
 use nomen_db::{
@@ -82,10 +81,6 @@ impl NomenBackend for Nomen {
 
     async fn store_media(&self, data: &[u8], mime_type: &str) -> Result<Option<MediaRef>> {
         self.store_media(data, mime_type).await
-    }
-
-    fn resolve_session(&self, session_id: &str, default_channel: &str) -> Result<ResolvedSession> {
-        self.resolve_session(session_id, default_channel)
     }
 
     async fn entities(&self, kind: Option<&str>) -> Result<Vec<EntityRecord>> {

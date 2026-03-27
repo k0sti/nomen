@@ -5,11 +5,7 @@ use serde_json::{json, Value};
 use crate::NomenBackend;
 use nomen_core::api::errors::ApiError;
 
-pub async fn list(
-    nomen: &dyn NomenBackend,
-    _default_channel: &str,
-    _params: &Value,
-) -> Result<Value, ApiError> {
+pub async fn list(nomen: &dyn NomenBackend, _params: &Value) -> Result<Value, ApiError> {
     let groups = nomen.group_list().await.map_err(ApiError::from_anyhow)?;
 
     let group_values: Vec<Value> = groups
@@ -31,11 +27,7 @@ pub async fn list(
     }))
 }
 
-pub async fn members(
-    nomen: &dyn NomenBackend,
-    _default_channel: &str,
-    params: &Value,
-) -> Result<Value, ApiError> {
+pub async fn members(nomen: &dyn NomenBackend, params: &Value) -> Result<Value, ApiError> {
     let id = params.get("id").and_then(|v| v.as_str()).unwrap_or("");
 
     if id.is_empty() {
@@ -54,11 +46,7 @@ pub async fn members(
     }))
 }
 
-pub async fn create(
-    nomen: &dyn NomenBackend,
-    _default_channel: &str,
-    params: &Value,
-) -> Result<Value, ApiError> {
+pub async fn create(nomen: &dyn NomenBackend, params: &Value) -> Result<Value, ApiError> {
     let id = params.get("id").and_then(|v| v.as_str()).unwrap_or("");
     let name = params.get("name").and_then(|v| v.as_str()).unwrap_or("");
 
@@ -91,11 +79,7 @@ pub async fn create(
     }))
 }
 
-pub async fn add_member(
-    nomen: &dyn NomenBackend,
-    _default_channel: &str,
-    params: &Value,
-) -> Result<Value, ApiError> {
+pub async fn add_member(nomen: &dyn NomenBackend, params: &Value) -> Result<Value, ApiError> {
     let id = params.get("id").and_then(|v| v.as_str()).unwrap_or("");
     let npub = params.get("npub").and_then(|v| v.as_str()).unwrap_or("");
 
@@ -115,11 +99,7 @@ pub async fn add_member(
     }))
 }
 
-pub async fn remove_member(
-    nomen: &dyn NomenBackend,
-    _default_channel: &str,
-    params: &Value,
-) -> Result<Value, ApiError> {
+pub async fn remove_member(nomen: &dyn NomenBackend, params: &Value) -> Result<Value, ApiError> {
     let id = params.get("id").and_then(|v| v.as_str()).unwrap_or("");
     let npub = params.get("npub").and_then(|v| v.as_str()).unwrap_or("");
 

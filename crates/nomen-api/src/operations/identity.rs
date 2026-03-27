@@ -18,11 +18,7 @@ use nomen_core::api::errors::ApiError;
 /// Returns:
 ///   - `pubkey`: hex-encoded public key
 ///   - `npub`: npub1... bech32-encoded public key
-pub async fn auth(
-    _nomen: &dyn NomenBackend,
-    _default_channel: &str,
-    params: &Value,
-) -> Result<Value, ApiError> {
+pub async fn auth(_nomen: &dyn NomenBackend, params: &Value) -> Result<Value, ApiError> {
     let nsec = params
         .get("nsec")
         .and_then(|v| v.as_str())

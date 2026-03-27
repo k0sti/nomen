@@ -6,11 +6,7 @@ use crate::NomenBackend;
 use nomen_core::api::errors::ApiError;
 use nomen_core::entities::EntityKind;
 
-pub async fn list(
-    nomen: &dyn NomenBackend,
-    _default_channel: &str,
-    params: &Value,
-) -> Result<Value, ApiError> {
+pub async fn list(nomen: &dyn NomenBackend, params: &Value) -> Result<Value, ApiError> {
     let kind_filter = params.get("kind").and_then(|v| v.as_str());
 
     if let Some(k) = kind_filter {
@@ -55,11 +51,7 @@ pub async fn list(
     }))
 }
 
-pub async fn relationships(
-    nomen: &dyn NomenBackend,
-    _default_channel: &str,
-    params: &Value,
-) -> Result<Value, ApiError> {
+pub async fn relationships(nomen: &dyn NomenBackend, params: &Value) -> Result<Value, ApiError> {
     let entity_name = params.get("name").and_then(|v| v.as_str());
 
     let rels = nomen
