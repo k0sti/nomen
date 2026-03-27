@@ -84,3 +84,48 @@ impl NomenSigner for KeysSigner {
         Some(self.keys.secret_key())
     }
 }
+
+/// Read-only signer that only knows a public key (no signing/encryption).
+///
+/// Used for NIP-98 HTTP auth where identity is verified from a signed event
+/// but the server doesn't hold the client's secret key.
+pub struct PubkeySigner {
+    pubkey: PublicKey,
+}
+
+impl PubkeySigner {
+    pub fn new(pubkey: PublicKey) -> Self {
+        Self { pubkey }
+    }
+}
+
+#[async_trait]
+impl NomenSigner for PubkeySigner {
+    async fn sign_event(&self, _unsigned: UnsignedEvent) -> Result<Event> {
+        anyhow::bail!("PubkeySigner cannot sign events (read-only identity)")
+    }
+
+    fn public_key(&self) -> PublicKey {
+        self.pubkey
+    }
+
+    fn encrypt(&self, _content: &str) -> Result<String> {
+        anyhow::bail!("PubkeySigner cannot encrypt (no secret key)")
+    }
+
+    fn decrypt(&self, _encrypted: &str) -> Result<String> {
+        anyhow::bail!("PubkeySigner cannot decrypt (no secret key)")
+    }
+
+    fn encrypt_to(&self, _content: &str, _recipient: &PublicKey) -> Result<String> {
+        anyhow::bail!("PubkeySigner cannot encrypt (no secret key)")
+    }
+
+    fn decrypt_from(&self, _encrypted: &str, _sender: &PublicKey) -> Result<String> {
+        anyhow::bail!("PubkeySigner cannot decrypt (no secret key)")
+    }
+
+    fn secret_key(&self) -> Option<&SecretKey> {
+        None
+    }
+}

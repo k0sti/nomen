@@ -1,6 +1,9 @@
 //! HTTP server: REST API + static file serving for the web UI.
 //!
-//! Supports per-request identity via `Authorization: Nostr nsec1...` header.
+//! Supports per-request identity via NIP-98 HTTP Auth:
+//! `Authorization: Nostr <base64-encoded-kind-27235-event>`
+//!
+//! Also supports legacy `Authorization: Nostr nsec1...` for backward compatibility.
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -11,11 +14,12 @@ use axum::http::HeaderMap;
 use axum::response::{IntoResponse, Json, Redirect};
 use axum::routing::{get, post};
 use axum::Router;
+use base64::engine::{general_purpose, Engine};
 use serde_json::{json, Value};
 use tokio::sync::RwLock;
 use tower_http::cors::CorsLayer;
 use tower_http::services::ServeDir;
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 
 use nomen_api::NomenBackend;
 use nomen_core::config::Config;
@@ -139,17 +143,26 @@ async fn api_dispatch(
     Json(serde_json::to_value(&resp).unwrap_or_default())
 }
 
-/// Extract a SessionBackend from the Authorization header if present.
+/// Extract identity from Authorization header.
 ///
-/// Supports: `Authorization: Nostr nsec1...`
+/// Supports:
+/// 1. NIP-98: `Authorization: Nostr <base64-encoded-kind-27235-event>`
+/// 2. Legacy: `Authorization: Nostr nsec1...` (backward compat, not recommended)
 fn extract_session_backend(
     state: &AppState,
     headers: &HeaderMap,
 ) -> Option<nomen_api::SessionBackend> {
     let auth = headers.get("authorization")?.to_str().ok()?;
-    let nsec = auth.strip_prefix("Nostr ")?;
+    let token = auth.strip_prefix("Nostr ")?;
 
-    let keys = match nostr_sdk::Keys::parse(nsec) {
+    // Try NIP-98 first: base64-encoded signed event
+    if !token.starts_with("nsec1") {
+        return extract_nip98_backend(state, token);
+    }
+
+    // Legacy: raw nsec
+    warn!("HTTP: legacy nsec auth used — consider switching to NIP-98");
+    let keys = match nostr_sdk::Keys::parse(token) {
         Ok(k) => k,
         Err(e) => {
             debug!("HTTP: invalid nsec in Authorization header: {e}");
@@ -158,7 +171,71 @@ fn extract_session_backend(
     };
 
     let signer = Arc::new(nomen_relay::signer::KeysSigner::new(keys));
-    debug!(pubkey = %signer.public_key().to_hex(), "HTTP: per-request session identity");
+    debug!(pubkey = %signer.public_key().to_hex(), "HTTP: legacy nsec identity");
+    Some(nomen_api::SessionBackend::new(state.nomen.clone(), signer))
+}
+
+/// Verify a NIP-98 auth token: base64-decode → parse event → verify signature + kind + timestamp.
+fn extract_nip98_backend(state: &AppState, token: &str) -> Option<nomen_api::SessionBackend> {
+    // Decode base64
+    let json_bytes = match general_purpose::STANDARD.decode(token) {
+        Ok(b) => b,
+        Err(e) => {
+            debug!("HTTP NIP-98: invalid base64: {e}");
+            return None;
+        }
+    };
+
+    let json_str = match std::str::from_utf8(&json_bytes) {
+        Ok(s) => s,
+        Err(e) => {
+            debug!("HTTP NIP-98: invalid UTF-8: {e}");
+            return None;
+        }
+    };
+
+    // Parse as Nostr event
+    let event: nostr_sdk::Event = match serde_json::from_str(json_str) {
+        Ok(e) => e,
+        Err(e) => {
+            debug!("HTTP NIP-98: invalid event JSON: {e}");
+            return None;
+        }
+    };
+
+    // Verify signature
+    if event.verify().is_err() {
+        debug!("HTTP NIP-98: invalid event signature");
+        return None;
+    }
+
+    // Check kind 27235
+    if event.kind != nostr_sdk::Kind::Custom(27235) {
+        debug!(
+            "HTTP NIP-98: wrong kind {}, expected 27235",
+            event.kind.as_u16()
+        );
+        return None;
+    }
+
+    // Check timestamp freshness (within 60 seconds)
+    let now = nostr_sdk::Timestamp::now().as_u64();
+    let event_ts = event.created_at.as_u64();
+    let age = if now >= event_ts {
+        now - event_ts
+    } else {
+        event_ts - now
+    };
+    if age > 60 {
+        debug!("HTTP NIP-98: event too old ({age}s), max 60s");
+        return None;
+    }
+
+    // Extract pubkey and create a read-only signer (no signing capability needed)
+    let pubkey = event.pubkey;
+    debug!(pubkey = %pubkey.to_hex(), "HTTP NIP-98: authenticated");
+
+    let signer = Arc::new(nomen_relay::signer::PubkeySigner::new(pubkey));
     Some(nomen_api::SessionBackend::new(state.nomen.clone(), signer))
 }
 

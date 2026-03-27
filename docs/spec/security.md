@@ -6,9 +6,13 @@
 
 Required by auth-enforcing relays. Client responds to relay AUTH challenge with signed kind 22242 event containing relay URL and challenge string.
 
-### HTTP Auth
+### NIP-98 HTTP Auth
 
-The HTTP transport currently has no authentication. It is intended for local/trusted network use. NIP-98 (signed HTTP events) could be added if HTTP needs to be exposed publicly.
+The HTTP transport supports NIP-98 authentication. Clients sign a kind 27235 ephemeral event containing the request URL and method, base64-encode it, and send it as `Authorization: Nostr <base64>`. The server verifies the signature, kind, and timestamp freshness (≤60s).
+
+The server never sees the client's secret key — only the signed proof of identity.
+
+Legacy `Authorization: Nostr nsec1...` is supported for backward compatibility but not recommended.
 
 ### Per-Session Identity
 
