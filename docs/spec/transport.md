@@ -8,7 +8,7 @@ All transports route through the same `api::dispatch()` function. Canonical oper
 |---|---|---|---|---|
 | **Primary use** | Remote generic | Local agent compat | Nostr-native remote | Local shared access |
 | **Framing** | HTTP POST | JSON-RPC stdio | Nostr events (NIP-44/59) | Length-prefixed JSON |
-| **Auth** | NIP-98 (planned) | N/A (local) | Nostr keypairs + ACL | Unix permissions |
+| **Auth** | None (local/trusted) | N/A (local) | Nostr keypairs + ACL | Unix permissions |
 | **Transport-specific** | Health, stats endpoints | Tool listing | Encryption, allowlist | Subscribe, push events |
 
 ## HTTP

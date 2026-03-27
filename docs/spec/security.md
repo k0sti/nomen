@@ -6,9 +6,9 @@
 
 Required by auth-enforcing relays. Client responds to relay AUTH challenge with signed kind 22242 event containing relay URL and challenge string.
 
-### NIP-98 HTTP Auth
+### HTTP Auth
 
-Planned for HTTP transport. Client signs a kind 27235 event with the request URL and method.
+The HTTP transport currently has no authentication. It is intended for local/trusted network use. NIP-98 (signed HTTP events) could be added if HTTP needs to be exposed publicly.
 
 ### Per-Session Identity
 
