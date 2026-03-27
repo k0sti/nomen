@@ -161,6 +161,57 @@ circle/a3f8b2c1e9d04712/shared-notes
 
 Content is **plain text or markdown**, not JSON. First line can serve as display title.
 
+### Memory Types
+
+All knowledge is stored as kind 31234 events. The `type` tag distinguishes what kind of knowledge:
+
+| Type | Description |
+|---|---|
+| *(absent)* | Regular memory (default) |
+| `entity:person` | Person entity |
+| `entity:project` | Project entity |
+| `entity:concept` | Concept entity |
+| `entity:place` | Place entity |
+| `entity:organization` | Organization entity |
+| `entity:technology` | Technology entity |
+| `cluster` | Synthesized cluster summary |
+
+Entities are memories with structured metadata. They follow the same d-tag namespace, visibility, and relay sync as regular memories.
+
+#### Entity Example
+
+```json
+{
+  "kind": 31234,
+  "tags": [
+    ["d", "personal/d29fe7c1.../kosti"],
+    ["visibility", "personal"],
+    ["scope", "d29fe7c1..."],
+    ["type", "entity:person"],
+    ["rel", "personal/d29fe7c1.../nomen", "works_on"],
+    ["rel", "personal/d29fe7c1.../openclaw", "works_on"]
+  ],
+  "content": "k0 / kosti — developer, runs OpenClaw and Nomen. Based in Finland."
+}
+```
+
+#### Cluster Example
+
+```json
+{
+  "kind": 31234,
+  "tags": [
+    ["d", "public/rust-error-handling-cluster"],
+    ["visibility", "public"],
+    ["scope", ""],
+    ["type", "cluster"],
+    ["ref", "public/rust-anyhow", "summarizes"],
+    ["ref", "public/rust-thiserror", "summarizes"]
+  ],
+  "content": "Rust error handling: use anyhow for applications, thiserror for libraries..."
+}
+```
+
 ### Memory Tags
 
 | Tag | Required | Description |
@@ -169,7 +220,9 @@ Content is **plain text or markdown**, not JSON. First line can serve as display
 | `visibility` | Yes | Tier: `public`, `group`, `circle`, `personal`, `private` |
 | `scope` | Yes | Group id, circle hash, hex pubkey, or empty |
 | `model` | Yes | Model that generated this memory |
-
+| `type` | No | Memory type (e.g. `entity:person`, `cluster`). Absent = regular memory |
+| `rel` | No | Directed relationship to another memory: `["rel", "<d-tag>", "<relation>"]` (repeatable) |
+| `ref` | No | Reference to another memory: `["ref", "<d-tag>", "<relation>"]` (repeatable) |
 | `version` | No | Monotonically increasing per d-tag |
 | `supersedes` | No | D-tag of previous version |
 | `pinned` | No | `"true"` if pinned |
@@ -177,6 +230,46 @@ Content is **plain text or markdown**, not JSON. First line can serve as display
 | `t` | No | Freeform topic tags (repeatable) |
 | `h` | No | NIP-29 group id (for `group` tier) |
 | `p` | No | Participant pubkeys (for `circle` tier) |
+
+### Relations
+
+All relationships are directed: the source event carries the tag, pointing to the target's d-tag.
+
+#### Entity Relations (`rel` tag)
+
+Used on `entity:*` type memories. Extracted during consolidation.
+
+| Relation | From → To | Description |
+|---|---|---|
+| `works_on` | person → project | Active contributor |
+| `collaborates_with` | person → person | Working together |
+| `manages` | person → project/org | Management role |
+| `owns` | person/org → project | Ownership |
+| `member_of` | person → org/group | Membership |
+| `depends_on` | project → project | Technical dependency |
+| `uses` | project → technology | Technology usage |
+| `created` | person → project | Original creator |
+| `located_in` | person/org → place | Geographic location |
+| `hired_by` | person → org | Employment |
+| `decided` | person → concept | Decision attribution |
+
+#### Memory References (`ref` tag)
+
+Used between regular memories and clusters. Affect search ranking.
+
+| Relation | From → To | Search weight | Description |
+|---|---|---|---|
+| `supports` | memory → memory | 0.6 | Affirms or adds evidence |
+| `contradicts` | memory → memory | 0.8 | Conflicts (flagged in results) |
+| `supersedes` | memory → memory | 0.5 | Replaces older knowledge |
+| `summarizes` | cluster → memory | 0.6 | Cluster synthesis source |
+
+#### Structural Edges (DB only, not in events)
+
+| Edge | From → To | Description |
+|---|---|---|
+| `mentions` | memory → entity | Memory references this entity |
+| `consolidated_from` | memory → collected_messages | Consolidation provenance |
 
 ### Scope and Visibility Rules
 
@@ -191,30 +284,11 @@ Legacy `internal` is normalized to `private`. Legacy `private` with pubkey scope
 ---
 
 
-## Entities
+## Entity Extraction
 
-Entities are named things extracted from messages during consolidation: people, projects, concepts, tools. They have typed relationships to each other and to memories.
+Entities are extracted from messages during consolidation by a `CompositeExtractor` (heuristic + optional LLM). They are stored as kind 31234 events with `type=entity:*` — see Memory Types above.
 
-### Current State (Local Only)
-
-Entities are stored in the local `entity` SurrealDB table with graph edges:
-
-- `mentions` — memory → entity
-- `related_to` — entity → entity (typed: `works_on`, `collaborates_with`, `manages`, `contradicts`, `depends_on`, `member_of`)
-
-Extraction is done by a `CompositeExtractor` (heuristic + optional LLM).
-
-### Planned: Relay-Published Entities
-
-Entities should be published as Nostr events so they survive DB loss and can be shared across instances. Design considerations:
-
-- **Kind:** TBD (custom addressable/replaceable, similar to 31234)
-- **D-tag:** entity type + normalized name (e.g. `person/kosti`, `project/nomen`)
-- **Content:** entity description / notes
-- **Tags:** `["kind", "person"]`, `["related", "<other-entity-d-tag>", "<relation-type>"]`
-- **Relationships** could be encoded as tags on the entity event itself, or as separate edge events
-
-This is not yet implemented. Entities currently exist only in local DB and are re-extracted on each consolidation run if the DB is rebuilt.
+Currently, entities are stored in the local `entity` SurrealDB table. Migration to kind 31234 relay events with `type` and `rel` tags is the next step to make them survive DB loss.
 
 ---
 

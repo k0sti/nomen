@@ -38,14 +38,14 @@ Nostr events are the source of truth for all persistent data. SurrealDB is a loc
 |---|---|---|---|
 | Collected messages | 30100 | ✅ | Parameterized replaceable. Bridged from any platform. Input to consolidation. |
 | Named memories | 31234 | ✅ | Addressable/replaceable. D-tag keyed. Core knowledge store. Output of consolidation. |
-| Entities | TBD | 🔜 planned | Extracted entities (person, project, concept) with typed relationships. Currently local-only. |
+| Entities | 31234 (`type=entity:*`) | 🔜 planned | Extracted entities (person, project, concept) with typed relationships. Same kind as memories, distinguished by `type` tag. Currently local-only. |
 
 ### Already implemented
 - **Collected messages (30100)** — produced by message collectors (e.g. Nocelium), stored and indexed by Nomen. Upsert by d-tag.
 - **Memories (31234)** — full bidirectional sync: publish on write, fetch on sync.
 
 ### Planned
-- **Entities** — currently extracted during consolidation and stored only in local DB. Should be published as relay events so they survive DB loss and can be shared across instances. Event kind and tag schema TBD.
+- **Entities** — currently extracted during consolidation and stored only in local DB. Will be published as kind 31234 events with `type=entity:*` tags and `rel` tags for relationships. Same relay sync as memories.
 
 
 
