@@ -110,3 +110,10 @@ tower = { version = "0.5", features = ["util"] }
 http = "1"
 http-body-util = "0.1"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+
+[profile.dev]
+split-debuginfo = "unpacked"  # Faster linking on Linux
+
+[profile.release]
+lto = "thin"        # Good optimization without slow full LTO
+codegen-units = 1   # Better optimization for release

@@ -1,0 +1,18 @@
+[target.x86_64-unknown-linux-gnu]
+linker = "clang"
+rustflags = ["-C", "link-arg=-fuse-ld=mold"]
+
+[target.aarch64-unknown-linux-gnu]
+linker = "clang"
+rustflags = ["-C", "link-arg=-fuse-ld=mold"]
+
+[build]
+jobs = 16
+
+[profile.dev]
+opt-level = 0
+debug = "line-tables-only"  # Faster than full debug info, still get backtraces
+
+[profile.dev.package."*"]
+# Optimize dependencies in dev (cached after first build, faster runtime)
+opt-level = 2

@@ -51,7 +51,13 @@
               rustToolchain
               pkg-config
               openssl
+              mold
+              sccache
+              clang
             ];
+            env = {
+              RUSTC_WRAPPER = "sccache";
+            };
           };
         });
     };
