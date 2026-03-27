@@ -39,7 +39,8 @@ Nostr events are the source of truth for all persistent data. SurrealDB is a loc
 | Named memories | 31234 | ✅ | Addressable/replaceable. D-tag keyed. Core knowledge store. |
 | Collected messages | 30100 | ✅ | Parameterized replaceable. Bridged from any platform. Input to consolidation. |
 | Entities | TBD | 🔜 planned | Extracted entities (person, project, concept) with typed relationships. Currently local-only; needs a relay-publishable event kind. |
-| Sessions | — | ❌ ephemeral | Connection-scoped runtime state. Not persisted beyond the connection lifetime. No relay representation needed. |
+
+Note: Sessions were removed from the codebase. Nomen does not have a session concept — visibility/scope is passed explicitly on each operation.
 
 ### Already implemented
 - **Memories (31234)** — full bidirectional sync: publish on write, fetch on sync.
@@ -48,8 +49,7 @@ Nostr events are the source of truth for all persistent data. SurrealDB is a loc
 ### Planned
 - **Entities** — currently extracted during consolidation and stored only in local DB. Should be published as relay events so they survive DB loss and can be shared across instances. Event kind and tag schema TBD.
 
-### Not published
-- **Sessions** — ephemeral runtime state (active connections, identity bindings). These are connection-scoped and do not need relay persistence.
+
 
 ## Crate Structure
 
@@ -76,7 +76,7 @@ Single embedded SurrealDB database (`~/.nomen/db/`, SurrealKV engine).
 | `memory` | Named memories with content, tier, scope, topic, embedding |
 | `collected_message` | Ingested messages (kind 30100 events) before/after consolidation |
 | `entity` | Extracted entities (person, project, concept) |
-| `session` | Active session tracking |
+
 | `nomen_group` | Group definitions and membership |
 
 ### Indexes

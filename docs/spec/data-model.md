@@ -214,14 +214,6 @@ This is not yet implemented. Entities currently exist only in local DB and are r
 
 ---
 
-## Sessions
-
-Sessions are **ephemeral runtime state** — they track active connections and per-session identity bindings. They are connection-scoped and do not need relay persistence.
-
-Stored in the local `session` SurrealDB table. Cleaned up on disconnect.
-
----
-
 ## Agent Identity Events
 
 ### Kind 0 — Profile Metadata
