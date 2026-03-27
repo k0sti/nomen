@@ -2,24 +2,24 @@
 
 Beyond structured consolidation (NREM-equivalent), a creative associative pass (REM-equivalent) discovers latent connections between memories.
 
-## Prerequisites (Completed)
+## Building Blocks (Implemented)
 
-1. **Graph-aware retrieval** — traverse edges from search hits
-2. **LLM entity extraction** — typed entity relationships
-3. **Cluster fusion** — namespace-grouped memory synthesis
+The following existing features provide the graph structure the dream cycle would use:
 
-These provide the rich graph structure the dream cycle needs.
+- **Graph-aware retrieval** — traverse edges from search hits (`graph_expand`)
+- **Entity extraction** — typed entity relationships (heuristic + LLM `CompositeExtractor`)
+- **Cluster fusion** — namespace-grouped memory synthesis (`memory.cluster`)
 
 ## Concept
 
-The dream cycle:
+The dream cycle would:
 
-1. Samples memories across different scopes/topics
-2. Uses embedding similarity to find non-obvious connections
-3. Creates `references` edges for discovered relationships
-4. May synthesize new bridging memories
+1. Sample memories across different scopes/topics
+2. Use embedding similarity to find non-obvious connections
+3. Create `references` edges for discovered relationships
+4. Optionally synthesize bridging memories
 
-This is speculative/research-stage. See `obsidian/03-06 Dreaming & Sleep-Inspired Memory.md` for the full design exploration.
+This is not implemented. It's a research-stage concept.
 
 ## References
 
