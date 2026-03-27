@@ -15,6 +15,7 @@ These describe the current system. Together they should be sufficient to recreat
 | [spec/identity.md](spec/identity.md) | Multi-user identity, access control, groups, encryption |
 | [spec/transport.md](spec/transport.md) | MCP, HTTP, ContextVM, socket — how they map to dispatch |
 | [spec/security.md](spec/security.md) | Auth, encryption model, key management |
+| [spec/filesystem.md](spec/filesystem.md) | Bidirectional filesystem sync (markdown ↔ memories) |
 
 ## Design
 
@@ -24,4 +25,3 @@ Forward-looking or conceptual docs that inform direction.
 |---|---|
 | [design/dreaming.md](design/dreaming.md) | Sleep-inspired associative memory discovery |
 | [design/circles.md](design/circles.md) | Circle encryption design |
-| [design/filesystem.md](design/filesystem.md) | Bidirectional filesystem sync |
