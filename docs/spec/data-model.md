@@ -188,8 +188,8 @@ Entities are memories with structured metadata. They follow the same d-tag names
     ["visibility", "personal"],
     ["scope", "d29fe7c1..."],
     ["type", "entity:person"],
-    ["rel", "personal/d29fe7c1.../nomen", "works_on"],
-    ["rel", "personal/d29fe7c1.../openclaw", "works_on"]
+    ["works_on", "personal/d29fe7c1.../nomen", "", "primary maintainer"],
+    ["works_on", "personal/d29fe7c1.../openclaw"]
   ],
   "content": "k0 / kosti — developer, runs OpenClaw and Nomen. Based in Finland."
 }
@@ -205,8 +205,8 @@ Entities are memories with structured metadata. They follow the same d-tag names
     ["visibility", "public"],
     ["scope", ""],
     ["type", "cluster"],
-    ["ref", "public/rust-anyhow", "summarizes"],
-    ["ref", "public/rust-thiserror", "summarizes"]
+    ["summarizes", "public/rust-anyhow", "0.6"],
+    ["summarizes", "public/rust-thiserror", "0.6"]
   ],
   "content": "Rust error handling: use anyhow for applications, thiserror for libraries..."
 }
@@ -221,55 +221,77 @@ Entities are memories with structured metadata. They follow the same d-tag names
 | `scope` | Yes | Group id, circle hash, hex pubkey, or empty |
 | `model` | Yes | Model that generated this memory |
 | `type` | No | Memory type (e.g. `entity:person`, `cluster`). Absent = regular memory |
-| `rel` | No | Directed relationship to another memory: `["rel", "<d-tag>", "<relation>"]` (repeatable) |
-| `ref` | No | Reference to another memory: `["ref", "<d-tag>", "<relation>"]` (repeatable) |
 | `version` | No | Monotonically increasing per d-tag |
-| `supersedes` | No | D-tag of previous version |
 | `pinned` | No | `"true"` if pinned |
 | `importance` | No | 1–10 scale |
 | `t` | No | Freeform topic tags (repeatable) |
 | `h` | No | NIP-29 group id (for `group` tier) |
 | `p` | No | Participant pubkeys (for `circle` tier) |
 
+Relationship tags use a unified format: `[relation, d-tag, weight?, detail?]`. See Relations below.
+
 ### Relations
 
 All relationships are directed: the source event carries the tag, pointing to the target's d-tag.
 
-#### Entity Relations (`rel` tag)
+**Unified tag format:** `["<relation>", "<target-d-tag>", "<weight>", "<detail>"]`
+
+- Position 0: relation name (doubles as the Nostr tag kind)
+- Position 1: target d-tag
+- Position 2: weight (optional, `""` to skip, float 0.0–1.0)
+- Position 3: detail (optional, freeform context string)
+
+On sync, every relation tag creates a `references` edge in SurrealDB. `source` tags create `consolidated_from` edges (memory → message).
+
+#### Entity Relations
 
 Used on `entity:*` type memories. Extracted during consolidation.
 
-| Relation | From → To | Description |
-|---|---|---|
-| `works_on` | person → project | Active contributor |
-| `collaborates_with` | person → person | Working together |
-| `manages` | person → project/org | Management role |
-| `owns` | person/org → project | Ownership |
-| `member_of` | person → org/group | Membership |
-| `depends_on` | project → project | Technical dependency |
-| `uses` | project → technology | Technology usage |
-| `created` | person → project | Original creator |
-| `located_in` | person/org → place | Geographic location |
-| `hired_by` | person → org | Employment |
-| `decided` | person → concept | Decision attribution |
+| Relation | From → To | Default weight | Description |
+|---|---|---|---|
+| `works_on` | person → project | — | Active contributor |
+| `collaborates_with` | person → person | — | Working together |
+| `manages` | person → project/org | — | Management role |
+| `owns` | person/org → project | — | Ownership |
+| `member_of` | person → org/group | — | Membership |
+| `depends_on` | project → project | — | Technical dependency |
+| `uses` | project → technology | — | Technology usage |
+| `created` | person → project | — | Original creator |
+| `located_in` | person/org → place | — | Geographic location |
+| `hired_by` | person → org | — | Employment |
+| `decided` | person → concept | — | Decision attribution |
 
-#### Memory References (`ref` tag)
+#### Memory References
 
 Used between regular memories and clusters. Affect search ranking.
 
-| Relation | From → To | Search weight | Description |
+| Relation | From → To | Default weight | Description |
 |---|---|---|---|
 | `supports` | memory → memory | 0.6 | Affirms or adds evidence |
 | `contradicts` | memory → memory | 0.8 | Conflicts (flagged in results) |
 | `supersedes` | memory → memory | 0.5 | Replaces older knowledge |
 | `summarizes` | cluster → memory | 0.6 | Cluster synthesis source |
+| `mentions` | memory → entity-memory | 0.5 | Entity mentioned in content |
 
-#### Structural Edges (DB only, not in events)
+#### Examples
 
-| Edge | From → To | Description |
-|---|---|---|
-| `mentions` | memory → entity | Memory references this entity |
-| `consolidated_from` | memory → collected_messages | Consolidation provenance |
+```json
+["mentions", "personal/d29fe7c1.../entity/k0", "0.8"]
+["works_on", "personal/d29fe7c1.../nomen", "", "primary maintainer"]
+["contradicts", "public/old-claim", "0.9", "updated based on new evidence"]
+["supersedes", "public/v1-doc"]
+```
+
+#### Consolidation Provenance (`source` tag)
+
+A memory lists the collected messages it was consolidated from (d-tags of kind 30100 events):
+
+```json
+["source", "telegram:-1003821690204:13943"]
+["source", "telegram:-1003821690204:13944"]
+```
+
+All relationships are in the event. If the DB is rebuilt from relay, the full graph is reconstructed from tags.
 
 ### Scope and Visibility Rules
 
