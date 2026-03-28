@@ -35,7 +35,20 @@ impl Nomen {
         nostr_group: Option<&str>,
         relay: Option<&str>,
     ) -> Result<()> {
-        crate::groups::create_group(&self.db, id, name, members, nostr_group, relay).await
+        let parent = nomen_core::groups::derive_parent(id);
+        crate::groups::create_group(&self.db, id, name, members, nostr_group, relay).await?;
+
+        // Publish to relay
+        if let Some(ref relay_mgr) = self.relay {
+            if let Err(e) = relay_mgr
+                .publish_group(id, name, members, relay, parent.as_deref())
+                .await
+            {
+                tracing::warn!("Failed to publish group to relay: {e}");
+            }
+        }
+
+        Ok(())
     }
 
     /// List all groups.

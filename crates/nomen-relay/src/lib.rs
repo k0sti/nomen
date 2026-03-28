@@ -298,4 +298,60 @@ impl RelayManager {
     pub async fn disconnect(&self) {
         self.client.disconnect().await;
     }
+
+    /// Publish a group definition as a kind 30000 event.
+    pub async fn publish_group(
+        &self,
+        group_id: &str,
+        name: &str,
+        members: &[String],
+        relay_url: Option<&str>,
+        parent: Option<&str>,
+    ) -> Result<PublishResult> {
+        let mut tags = vec![
+            Tag::custom(TagKind::Custom("d".into()), vec![group_id.to_string()]),
+            Tag::custom(TagKind::Custom("name".into()), vec![name.to_string()]),
+        ];
+        for member in members {
+            tags.push(Tag::custom(
+                TagKind::Custom("member".into()),
+                vec![member.clone()],
+            ));
+        }
+        if let Some(url) = relay_url {
+            if !url.is_empty() {
+                tags.push(Tag::custom(
+                    TagKind::Custom("relay".into()),
+                    vec![url.to_string()],
+                ));
+            }
+        }
+        if let Some(p) = parent {
+            if !p.is_empty() {
+                tags.push(Tag::custom(
+                    TagKind::Custom("parent".into()),
+                    vec![p.to_string()],
+                ));
+            }
+        }
+
+        let builder = EventBuilder::new(Kind::Custom(nomen_core::kinds::GROUP_KIND), "")
+            .tags(tags);
+
+        self.publish(builder).await
+    }
+
+    /// Fetch group events (kind 30000) from relay for the given author pubkeys.
+    pub async fn fetch_groups(&self, pubkeys: &[PublicKey]) -> Result<Vec<Event>> {
+        let filter = Filter::new()
+            .kinds(vec![Kind::Custom(nomen_core::kinds::GROUP_KIND)])
+            .authors(pubkeys.to_vec());
+
+        let events = self
+            .client
+            .fetch_events(filter, Duration::from_secs(10))
+            .await?;
+
+        Ok(events.into_iter().collect())
+    }
 }

@@ -29,3 +29,7 @@ pub const COLLECTED_MESSAGE_KIND: u16 = 30100;
 /// Chat metadata (parameterized replaceable).
 /// One per chat, updated when metadata changes.
 pub const CHAT_METADATA_KIND: u16 = 30101;
+
+/// Group definition (parameterized replaceable, NIP-51 list).
+/// Tags: d (group-id), name, member (pubkey hex), relay (optional).
+pub const GROUP_KIND: u16 = 30000;

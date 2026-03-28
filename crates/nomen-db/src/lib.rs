@@ -68,7 +68,7 @@ pub use meta::{get_meta, set_meta};
 pub use search_engine::search;
 
 pub use groups::{
-    add_member, create_group, get_members, list_groups, remove_member, GroupStoreExt,
+    add_member, create_group, delete_group, get_members, list_groups, remove_member, GroupStoreExt,
 };
 
 // ── Shared deserializer helpers ─────────────────────────────────────

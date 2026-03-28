@@ -92,6 +92,56 @@ impl Nomen {
             }
         }
 
+        // Sync group definitions (kind 30000)
+        match relay.fetch_groups(&pubkeys).await {
+            Ok(group_events) => {
+                for event in group_events {
+                    let group_id = memory::get_tag_value(&event.tags, "d").unwrap_or_default();
+                    if group_id.is_empty() {
+                        continue;
+                    }
+                    let name = memory::get_tag_value(&event.tags, "name")
+                        .unwrap_or_else(|| group_id.clone());
+                    let members: Vec<String> = event
+                        .tags
+                        .iter()
+                        .filter_map(|tag| {
+                            let s = tag.as_slice();
+                            if s.first().map(|v| v.as_str()) == Some("member") {
+                                s.get(1).map(|v| v.to_string())
+                            } else {
+                                None
+                            }
+                        })
+                        .collect();
+                    let relay_url = memory::get_tag_value(&event.tags, "relay");
+                    let nostr_group = memory::get_tag_value(&event.tags, "nostr_group");
+
+                    // Upsert: delete then create
+                    let _ = db::delete_group(&self.db, &group_id).await;
+                    match db::create_group(
+                        &self.db,
+                        &group_id,
+                        &name,
+                        &members,
+                        nostr_group.as_deref(),
+                        relay_url.as_deref(),
+                    )
+                    .await
+                    {
+                        Ok(()) => stored += 1,
+                        Err(e) => {
+                            tracing::warn!("Failed to sync group {group_id}: {e}");
+                            errors += 1;
+                        }
+                    }
+                }
+            }
+            Err(e) => {
+                tracing::warn!("Failed to fetch group events from relay: {e}");
+            }
+        }
+
         self.emit_event(
             "sync.complete",
             serde_json::json!({

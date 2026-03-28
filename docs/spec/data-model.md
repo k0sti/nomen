@@ -321,6 +321,37 @@ Behavioral learnings. Append-only log, not replaceable.
 
 ---
 
+## Group Definition Events
+
+### Kind 30000 — Group (NIP-51 list, parameterized replaceable)
+
+Groups define ACL scopes for `group`-tier memories. Stored on relay and synced to local `nomen_group` table.
+
+```json
+{
+  "kind": 30000,
+  "tags": [
+    ["d", "techteam"],
+    ["name", "TechTeam"],
+    ["member", "<pubkey-hex>"],
+    ["member", "<pubkey-hex>"],
+    ["relay", "wss://groups.example.com"]
+  ],
+  "content": ""
+}
+```
+
+| Tag | Multiplicity | Description |
+|---|---|---|
+| `d` | 1 | Group identifier (used as scope in d-tags) |
+| `name` | 1 | Human-readable name |
+| `member` | 0..n | Hex pubkeys of group members |
+| `relay` | 0..1 | NIP-29 group relay URL |
+| `parent` | 0..1 | Parent group d-tag (for hierarchy) |
+
+On sync, Nomen rebuilds the local `nomen_group` table from these events. On group create/update via API, the event is published to relay.
+
+---
 
 ## NIP Alignment
 

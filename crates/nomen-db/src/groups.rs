@@ -218,3 +218,10 @@ pub async fn remove_member(db: &Surreal<Db>, group_id: &str, npub: &str) -> Resu
         None => bail!("Group not found: {group_id}"),
     }
 }
+
+/// Delete a group from SurrealDB (used for sync upsert).
+pub async fn delete_group(db: &Surreal<Db>, group_id: &str) -> Result<()> {
+    let record_id = format!("nomen_group:`{}`", group_id);
+    db.query(&format!("DELETE {record_id}")).await?.check()?;
+    Ok(())
+}
