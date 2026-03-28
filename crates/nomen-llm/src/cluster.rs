@@ -218,7 +218,6 @@ pub struct ClusterDetail {
 struct ClusterableMemory {
     topic: String,
     d_tag: String,
-    summary: String,
     detail: String,
     tier: String,
 }
@@ -317,7 +316,6 @@ pub async fn run_cluster_fusion(
             Some(ClusterableMemory {
                 topic: m.topic.clone(),
                 d_tag: m.d_tag.unwrap_or_default(),
-                summary: m.summary.unwrap_or_default(),
                 detail: m.content,
                 tier: m.tier,
             })
@@ -371,7 +369,7 @@ pub async fn run_cluster_fusion(
                 } else {
                     m.detail.clone()
                 };
-                format!("- [{}] {}\n  {}", m.topic, m.summary, detail_preview)
+                format!("- [{}]\n  {}", m.topic, detail_preview)
             })
             .collect::<Vec<_>>()
             .join("\n");

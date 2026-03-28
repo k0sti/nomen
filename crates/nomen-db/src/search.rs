@@ -10,7 +10,6 @@ use crate::deserialize_option_string;
 #[derive(Debug, Deserialize, SurrealValue)]
 pub struct TextSearchResult {
     pub content: String,
-    pub summary: Option<String>,
     pub tier: String,
     pub topic: String,
     pub created_at: String,
@@ -22,7 +21,6 @@ pub struct TextSearchResult {
 #[derive(Debug, Deserialize, SurrealValue)]
 pub struct HybridSearchRow {
     pub content: String,
-    pub summary: Option<String>,
     pub tier: String,
     pub scope: String,
     pub topic: String,

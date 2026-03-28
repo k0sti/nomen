@@ -176,9 +176,6 @@ where
 #[derive(Debug, Clone, Serialize, Deserialize, SurrealValue)]
 pub struct MemoryRecord {
     pub content: String,
-    /// Legacy field — kept as Option for migration reads, never written.
-    #[serde(default)]
-    pub summary: Option<String>,
     pub embedding: Option<Vec<f32>>,
     pub tier: String,
     pub scope: String,
@@ -192,8 +189,6 @@ pub struct MemoryRecord {
     pub d_tag: Option<String>,
     pub created_at: String,
     pub updated_at: String,
-    #[serde(default)]
-    pub ephemeral: bool,
 }
 
 impl nomen_core::access::AccessCheckable for MemoryRecord {
