@@ -100,8 +100,14 @@ pub async fn serve(
 ) -> Result<()> {
     let app = build_router(state, static_dir, landing_dir);
 
-    let listener = tokio::net::TcpListener::bind(addr).await?;
-    info!("HTTP server listening on {addr}");
+    // Accept bare port (e.g. "3849") as "127.0.0.1:3849"
+    let bind_addr = if addr.contains(':') {
+        addr.to_string()
+    } else {
+        format!("127.0.0.1:{addr}")
+    };
+    let listener = tokio::net::TcpListener::bind(&bind_addr).await?;
+    info!("HTTP server listening on {bind_addr}");
     axum::serve(listener, app).await?;
     Ok(())
 }

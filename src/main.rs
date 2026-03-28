@@ -30,7 +30,7 @@ async fn main() -> Result<()> {
         )
         .init();
 
-    // Handle init and doctor before resolve_config (config may not exist yet)
+    // Handle init, doctor, and service before resolve_config (config may not exist yet)
     match &cli_args.command {
         Command::Init {
             force,
@@ -40,6 +40,9 @@ async fn main() -> Result<()> {
         }
         Command::Doctor => {
             return cli::admin::cmd_doctor().await;
+        }
+        Command::Service { action } => {
+            return cli::service::cmd_service(action, &cli_args.config);
         }
         _ => {}
     }
@@ -322,7 +325,9 @@ async fn main() -> Result<()> {
         Command::Fs { action } => {
             cli::fs::cmd_fs(&backend, action).await?;
         }
-        Command::Init { .. } | Command::Doctor => unreachable!("handled above"),
+        Command::Init { .. } | Command::Doctor | Command::Service { .. } => {
+            unreachable!("handled above")
+        }
     }
 
     Ok(())

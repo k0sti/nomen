@@ -7,6 +7,7 @@ pub mod helpers;
 pub mod memory;
 pub mod message;
 pub mod server;
+pub mod service;
 pub mod sync;
 
 use std::path::PathBuf;
@@ -240,6 +241,11 @@ pub enum Command {
         #[command(subcommand)]
         action: FsAction,
     },
+    /// Manage systemd user service
+    Service {
+        #[command(subcommand)]
+        action: ServiceAction,
+    },
     /// Validate config and check connectivity
     Doctor,
     /// Start MCP server (JSON-RPC over stdio) or HTTP server
@@ -357,4 +363,30 @@ pub enum GroupAction {
         /// Member npub to remove
         npub: String,
     },
+}
+
+#[derive(Subcommand)]
+pub enum ServiceAction {
+    /// Install systemd user service
+    Install {
+        /// Overwrite even if managed by Nix
+        #[arg(long)]
+        force: bool,
+    },
+    /// Start the service
+    Start,
+    /// Stop the service
+    Stop,
+    /// Restart the service
+    Restart,
+    /// Show service status
+    Status,
+    /// Follow service logs
+    Logs {
+        /// Follow log output
+        #[arg(short, long)]
+        follow: bool,
+    },
+    /// Uninstall the service
+    Uninstall,
 }

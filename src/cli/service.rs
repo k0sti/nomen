@@ -1,0 +1,210 @@
+//! Service management: install/uninstall systemd user units, start/stop/restart/status/logs.
+
+use std::path::PathBuf;
+
+use anyhow::{bail, Result};
+
+use nomen::config::Config;
+
+const SERVICE_NAME: &str = "nomen";
+
+/// Returns true if the unit file appears to be managed by Nix (symlink into /nix/store).
+fn is_nix_managed(service_file: &std::path::Path) -> bool {
+    std::fs::read_link(service_file)
+        .map(|target| target.to_string_lossy().contains("/nix/store/"))
+        .unwrap_or(false)
+}
+
+fn service_dir() -> Result<PathBuf> {
+    Ok(dirs::config_dir()
+        .ok_or_else(|| anyhow::anyhow!("Cannot determine config directory"))?
+        .join("systemd/user"))
+}
+
+fn run_systemctl(args: &[&str]) -> Result<()> {
+    let status = std::process::Command::new("systemctl")
+        .arg("--user")
+        .args(args)
+        .status()?;
+    if !status.success() {
+        bail!("systemctl --user {} failed", args.join(" "));
+    }
+    Ok(())
+}
+
+pub fn cmd_service(action: &super::ServiceAction, config_path: &Option<PathBuf>) -> Result<()> {
+    let svc_dir = service_dir()?;
+    let service_file = svc_dir.join(format!("{SERVICE_NAME}.service"));
+
+    match action {
+        super::ServiceAction::Install { force } => {
+            // Warn if nix-managed
+            if is_nix_managed(&service_file) {
+                if !force {
+                    println!(
+                        "Warning: {} is a Nix-managed symlink.",
+                        service_file.display()
+                    );
+                    println!("  Use --force to remove the symlink and install a regular unit file.");
+                    println!("  Re-enable in nix-config with `nixos-rebuild` later.");
+                    return Ok(());
+                }
+                // Remove the nix symlink so we can write a regular file
+                std::fs::remove_file(&service_file)?;
+                println!("Removed Nix-managed symlink: {}", service_file.display());
+            }
+
+            let exe = std::env::current_exe()?;
+            let exe_path = exe.display();
+
+            // Resolve config path
+            let config_arg = if let Some(p) = config_path {
+                format!(" --config {}", p.canonicalize()?.display())
+            } else {
+                let default_paths = [
+                    Config::path(),
+                    dirs::home_dir()
+                        .map(|d| d.join(".config/nomen/config.toml"))
+                        .unwrap_or_default(),
+                ];
+                match default_paths.iter().find(|p| p.exists()) {
+                    Some(p) => format!(" --config {}", p.canonicalize()?.display()),
+                    None => String::new(),
+                }
+            };
+
+            // Resolve static/landing dirs: check relative to binary, then cwd
+            let exe_dir = exe.parent().unwrap_or(std::path::Path::new("."));
+            let static_dir = [exe_dir.join("web/dist"), PathBuf::from("web/dist")]
+                .into_iter()
+                .find(|p| p.is_dir());
+            let landing_dir = [
+                exe_dir.join("web/dist-landing"),
+                PathBuf::from("web/dist-landing"),
+            ]
+            .into_iter()
+            .find(|p| p.is_dir());
+
+            // Read config to determine serve flags
+            let serve_flags = match Config::load() {
+                Ok(cfg) => {
+                    let mut flags = Vec::new();
+                    if let Some(ref server) = cfg.server {
+                        if server.enabled {
+                            flags.push(format!("--http {}", server.listen));
+                        }
+                    }
+                    if let Some(ref dir) = static_dir {
+                        if let Ok(abs) = dir.canonicalize() {
+                            flags.push(format!("--static-dir {}", abs.display()));
+                        }
+                    }
+                    if let Some(ref dir) = landing_dir {
+                        if let Ok(abs) = dir.canonicalize() {
+                            flags.push(format!("--landing-dir {}", abs.display()));
+                        }
+                    }
+                    if cfg.contextvm.as_ref().map(|c| c.enabled).unwrap_or(false) {
+                        flags.push("--context-vm".to_string());
+                    }
+                    if cfg.socket.as_ref().map(|c| c.enabled).unwrap_or(false) {
+                        flags.push("--socket".to_string());
+                    }
+                    if flags.is_empty() {
+                        "--http 127.0.0.1:3000".to_string()
+                    } else {
+                        flags.join(" ")
+                    }
+                }
+                Err(_) => "--http 127.0.0.1:3000".to_string(),
+            };
+
+            let unit = format!(
+                r#"[Unit]
+Description=Nomen Memory Service
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart={exe_path}{config_arg} serve {serve_flags}
+Restart=always
+RestartSec=5
+Environment=HOME={home}
+Environment=XDG_CONFIG_HOME={home}/.config
+Environment=RUST_LOG=nomen=info
+
+[Install]
+WantedBy=default.target
+"#,
+                home = dirs::home_dir()
+                    .unwrap_or_else(|| PathBuf::from("/home"))
+                    .display(),
+            );
+
+            std::fs::create_dir_all(&svc_dir)?;
+            std::fs::write(&service_file, unit)?;
+            run_systemctl(&["daemon-reload"])?;
+
+            println!("Service installed: {}", service_file.display());
+            println!();
+            println!("Set environment variables if needed:");
+            println!("  systemctl --user edit {SERVICE_NAME}");
+            println!("  # Add under [Service]:");
+            println!("  # Environment=OPENAI_API_KEY=sk-...");
+            println!("  # Environment=OPENROUTER_API_KEY=sk-...");
+            println!();
+            println!("Then: nomen service start");
+        }
+
+        super::ServiceAction::Start => {
+            run_systemctl(&["enable", "--now", SERVICE_NAME])?;
+            println!("Service started");
+        }
+
+        super::ServiceAction::Stop => {
+            run_systemctl(&["stop", SERVICE_NAME])?;
+            println!("Service stopped");
+        }
+
+        super::ServiceAction::Restart => {
+            run_systemctl(&["restart", SERVICE_NAME])?;
+            println!("Service restarted");
+        }
+
+        super::ServiceAction::Status => {
+            let _ = run_systemctl(&["status", SERVICE_NAME]);
+        }
+
+        super::ServiceAction::Logs { follow } => {
+            let mut args = vec!["--user", "-u", SERVICE_NAME];
+            if *follow {
+                args.push("-f");
+            }
+            let status = std::process::Command::new("journalctl")
+                .args(&args)
+                .status()?;
+            if !status.success() {
+                bail!("journalctl failed");
+            }
+        }
+
+        super::ServiceAction::Uninstall => {
+            if is_nix_managed(&service_file) {
+                println!("Warning: {} is managed by Nix.", service_file.display());
+                println!("  Remove the service from your nix-config instead.");
+                return Ok(());
+            }
+            let _ = run_systemctl(&["disable", "--now", SERVICE_NAME]);
+            if service_file.exists() {
+                std::fs::remove_file(&service_file)?;
+                run_systemctl(&["daemon-reload"])?;
+                println!("Service uninstalled");
+            } else {
+                println!("Service not installed");
+            }
+        }
+    }
+
+    Ok(())
+}
