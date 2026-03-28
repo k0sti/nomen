@@ -14,6 +14,7 @@
 
 use anyhow::Result;
 use contextvm_sdk::{JsonRpcMessage, JsonRpcRequest};
+use nostr_sdk::prelude::*;
 use serde_json::{json, Value};
 use surrealdb::engine::local::{Db, SurrealKv};
 use surrealdb::Surreal;
@@ -21,6 +22,13 @@ use surrealdb::Surreal;
 use nomen::cvm::CvmHandler;
 use nomen::mcp::McpServer;
 use nomen::socket::SocketServer;
+
+/// Generate a test nsec for authentication.
+fn test_nsec() -> String {
+    // Deterministic test key — NOT for production use
+    let keys = Keys::generate();
+    keys.secret_key().to_bech32().unwrap()
+}
 
 // ── Fixture requests ──────────────────────────────────────────────────
 //
@@ -85,6 +93,13 @@ mod fixtures {
         }
     }
 
+    pub fn identity_auth(nsec: &str) -> Fixture {
+        Fixture {
+            action: "identity.auth",
+            params: json!({ "nsec": nsec }),
+        }
+    }
+
     pub fn unknown_action() -> Fixture {
         Fixture {
             action: "bogus.action",
@@ -146,8 +161,8 @@ async fn dispatch_direct(nomen: &dyn nomen_api::NomenBackend, f: &Fixture) -> Va
     serde_json::to_value(&resp).unwrap()
 }
 
-/// HTTP dispatch via test router (in-process, no TCP).
-async fn dispatch_http(router: axum::Router, f: &Fixture) -> Value {
+/// HTTP dispatch via test router (in-process, no TCP), without auth.
+async fn dispatch_http_unauthed(router: axum::Router, f: &Fixture) -> Value {
     use tower::ServiceExt;
 
     let body = json!({ "action": f.action, "params": f.params });
@@ -155,6 +170,28 @@ async fn dispatch_http(router: axum::Router, f: &Fixture) -> Value {
         .method("POST")
         .uri("/memory/api/dispatch")
         .header("content-type", "application/json")
+        .body(axum::body::Body::from(
+            serde_json::to_string(&body).unwrap(),
+        ))
+        .unwrap();
+
+    let resp = router.oneshot(req).await.unwrap();
+    let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    serde_json::from_slice(&bytes).unwrap_or(json!(null))
+}
+
+/// HTTP dispatch via test router with nsec auth header.
+async fn dispatch_http(router: axum::Router, f: &Fixture, nsec: &str) -> Value {
+    use tower::ServiceExt;
+
+    let body = json!({ "action": f.action, "params": f.params });
+    let req = http::Request::builder()
+        .method("POST")
+        .uri("/memory/api/dispatch")
+        .header("content-type", "application/json")
+        .header("authorization", format!("Nostr {nsec}"))
         .body(axum::body::Body::from(
             serde_json::to_string(&body).unwrap(),
         ))
@@ -498,7 +535,8 @@ async fn all_transports_memory_search_equivalence() {
 async fn http_dispatch_success() {
     let (nomen, _tmp) = test_nomen().await.unwrap();
     let router = build_test_router(nomen);
-    let val = dispatch_http(router, &fixtures::memory_list()).await;
+    let nsec = test_nsec();
+    let val = dispatch_http(router, &fixtures::memory_list(), &nsec).await;
 
     assert_ok(&val, "HTTP");
     assert_eq!(val["meta"]["version"], "v2");
@@ -508,7 +546,8 @@ async fn http_dispatch_success() {
 async fn http_dispatch_error_missing_query() {
     let (nomen, _tmp) = test_nomen().await.unwrap();
     let router = build_test_router(nomen);
-    let val = dispatch_http(router, &fixtures::memory_search_missing_query()).await;
+    let nsec = test_nsec();
+    let val = dispatch_http(router, &fixtures::memory_search_missing_query(), &nsec).await;
 
     assert_err(&val, "HTTP");
     assert_eq!(val["error"]["code"], "invalid_params");
@@ -518,7 +557,8 @@ async fn http_dispatch_error_missing_query() {
 async fn http_dispatch_unknown_action() {
     let (nomen, _tmp) = test_nomen().await.unwrap();
     let router = build_test_router(nomen);
-    let val = dispatch_http(router, &fixtures::unknown_action()).await;
+    let nsec = test_nsec();
+    let val = dispatch_http(router, &fixtures::unknown_action(), &nsec).await;
 
     assert_err(&val, "HTTP");
     assert_eq!(val["error"]["code"], "unknown_action");
@@ -554,7 +594,8 @@ async fn http_dispatch_vs_direct_equivalence() {
     let f = fixtures::memory_list();
     let direct = dispatch_direct(&nomen, &f).await;
     let router = build_test_router(nomen);
-    let http_val = dispatch_http(router, &f).await;
+    let nsec = test_nsec();
+    let http_val = dispatch_http(router, &f, &nsec).await;
 
     assert_envelope_eq(&direct, &http_val, "direct", "HTTP");
     assert_eq!(direct["result"]["count"], http_val["result"]["count"]);
@@ -591,6 +632,11 @@ async fn mcp_tools_call_memory_list() {
     let (nomen, _tmp) = test_nomen().await.unwrap();
     let direct = dispatch_direct(&nomen, &fixtures::memory_list()).await;
     let mut mcp = make_mcp_server(nomen);
+    // Authenticate first
+    let nsec = test_nsec();
+    let auth = dispatch_mcp(&mut mcp, &fixtures::identity_auth(&nsec)).await;
+    assert_ok(&auth, "MCP auth");
+
     let mcp_val = dispatch_mcp(&mut mcp, &fixtures::memory_list()).await;
 
     assert_ok(&direct, "direct");
@@ -603,6 +649,10 @@ async fn mcp_tools_call_memory_list() {
 async fn mcp_tools_call_memory_put_get() {
     let (nomen, _tmp) = test_nomen().await.unwrap();
     let mut mcp = make_mcp_server(nomen);
+    // Authenticate first
+    let nsec = test_nsec();
+    let auth = dispatch_mcp(&mut mcp, &fixtures::identity_auth(&nsec)).await;
+    assert_ok(&auth, "MCP auth");
 
     let put = dispatch_mcp(
         &mut mcp,
@@ -649,6 +699,9 @@ async fn mcp_tools_call_error_equivalence() {
 
     let direct = dispatch_direct(&nomen, &f).await;
     let mut mcp = make_mcp_server(nomen);
+    // Authenticate first
+    let nsec = test_nsec();
+    dispatch_mcp(&mut mcp, &fixtures::identity_auth(&nsec)).await;
     let mcp_val = dispatch_mcp(&mut mcp, &f).await;
 
     assert_err(&direct, "direct");
@@ -710,9 +763,13 @@ async fn mcp_vs_cvm_vs_http_memory_list() {
 
     let f = fixtures::memory_list();
     let direct = dispatch_direct(&nomen1, &f).await;
-    let mcp_val = dispatch_mcp(&mut make_mcp_server(nomen2), &f).await;
+    let nsec = test_nsec();
+    let mut mcp = make_mcp_server(nomen2);
+    dispatch_mcp(&mut mcp, &fixtures::identity_auth(&nsec)).await;
+    let mcp_val = dispatch_mcp(&mut mcp, &f).await;
     let cvm_val = dispatch_cvm(&make_handler(nomen3), &f).await;
-    let http_val = dispatch_http(build_test_router(nomen4), &f).await;
+    let nsec2 = test_nsec();
+    let http_val = dispatch_http(build_test_router(nomen4), &f, &nsec2).await;
 
     let count = direct["result"]["count"].as_u64().unwrap();
     for (label, val) in [("MCP", &mcp_val), ("CVM", &cvm_val), ("HTTP", &http_val)] {
@@ -748,6 +805,11 @@ async fn socket_vs_direct_memory_list() {
     let client = nomen_wire::NomenClient::connect(&sock_path)
         .await
         .expect("connect");
+    // Authenticate
+    let nsec = test_nsec();
+    let auth = dispatch_socket(&client, &fixtures::identity_auth(&nsec)).await;
+    assert_ok(&auth, "socket auth");
+
     let sock = dispatch_socket(&client, &f).await;
 
     assert_ok(&direct, "direct");
@@ -765,6 +827,10 @@ async fn socket_vs_direct_memory_put_get() {
     let client = nomen_wire::NomenClient::connect(&sock_path)
         .await
         .expect("connect");
+    // Authenticate
+    let nsec = test_nsec();
+    let auth = dispatch_socket(&client, &fixtures::identity_auth(&nsec)).await;
+    assert_ok(&auth, "socket auth");
 
     let put = dispatch_socket(
         &client,
@@ -795,6 +861,10 @@ async fn socket_vs_direct_error_equivalence() {
     let client = nomen_wire::NomenClient::connect(&sock_path)
         .await
         .expect("connect");
+    // Authenticate
+    let nsec = test_nsec();
+    dispatch_socket(&client, &fixtures::identity_auth(&nsec)).await;
+
     let sock = dispatch_socket(&client, &f).await;
 
     assert_err(&direct, "direct");
@@ -816,6 +886,10 @@ async fn socket_unknown_action_equivalence() {
     let client = nomen_wire::NomenClient::connect(&sock_path)
         .await
         .expect("connect");
+    // Authenticate
+    let nsec = test_nsec();
+    dispatch_socket(&client, &fixtures::identity_auth(&nsec)).await;
+
     let sock = dispatch_socket(&client, &f).await;
 
     assert_err(&direct, "direct");
@@ -850,6 +924,8 @@ async fn e2e_http_smoke_test() {
 
     let client = reqwest::Client::new();
     let base = format!("http://{addr}");
+    let nsec = test_nsec();
+    let auth_header = format!("Nostr {nsec}");
 
     // 1. Health check
     let health_resp = client
@@ -864,6 +940,7 @@ async fn e2e_http_smoke_test() {
     // 2. Dispatch: memory.list
     let list_resp = client
         .post(format!("{base}/memory/api/dispatch"))
+        .header("authorization", &auth_header)
         .json(&json!({ "action": "memory.list", "params": {} }))
         .send()
         .await
@@ -880,6 +957,7 @@ async fn e2e_http_smoke_test() {
     // 3. Dispatch: memory.put
     let put_resp = client
         .post(format!("{base}/memory/api/dispatch"))
+        .header("authorization", &auth_header)
         .json(&json!({
             "action": "memory.put",
             "params": {
@@ -899,6 +977,7 @@ async fn e2e_http_smoke_test() {
     // 4. Dispatch: memory.get (roundtrip verification)
     let get_resp = client
         .post(format!("{base}/memory/api/dispatch"))
+        .header("authorization", &auth_header)
         .json(&json!({ "action": "memory.get", "params": { "d_tag": d_tag } }))
         .send()
         .await
@@ -911,6 +990,7 @@ async fn e2e_http_smoke_test() {
     // 5. Dispatch: error case (missing query)
     let err_resp = client
         .post(format!("{base}/memory/api/dispatch"))
+        .header("authorization", &auth_header)
         .json(&json!({ "action": "memory.search", "params": {} }))
         .send()
         .await
@@ -923,6 +1003,7 @@ async fn e2e_http_smoke_test() {
     // 6. Dispatch: unknown action
     let unk_resp = client
         .post(format!("{base}/memory/api/dispatch"))
+        .header("authorization", &auth_header)
         .json(&json!({ "action": "bogus.action", "params": {} }))
         .send()
         .await
