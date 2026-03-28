@@ -58,6 +58,11 @@ impl Nomen {
 
         db::store_memory_direct(&self.db, &parsed, source).await?;
 
+        // Set type if provided
+        if let Some(ref t) = mem.memory_type {
+            let _ = db::set_memory_type(&self.db, &d_tag, t).await;
+        }
+
         // Set importance if provided
         if let Some(imp) = mem.importance {
             let _ = db::set_importance(&self.db, &d_tag, imp).await;

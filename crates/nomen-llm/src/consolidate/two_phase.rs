@@ -247,6 +247,7 @@ pub async fn commit(
             let is_merge = existing.as_ref().ok().map(|r| r.is_some()).unwrap_or(false);
 
             let mem = nomen_core::NewMemory {
+                memory_type: None,
                 topic: d_tag.clone(),
                 content: memory.content.clone(),
                 tier: batch.visibility.clone(),

@@ -393,7 +393,8 @@ pub async fn run_cluster_fusion(
         let author_hex = config.author_pubkey.as_deref().unwrap_or("");
 
         // Store as cluster memory using store_direct
-        let mem = nomen_core::NewMemory {
+                let mem = nomen_core::NewMemory {
+            memory_type: Some("cluster".to_string()),
             topic: cluster_topic.clone(),
             content: synthesis.content,
             tier,

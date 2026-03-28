@@ -129,10 +129,16 @@ pub async fn put(nomen: &dyn NomenBackend, params: &Value) -> Result<Value, ApiE
         .and_then(|v| v.as_i64())
         .map(|v| v as i32);
 
+    let memory_type = params
+        .get("type")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+
     let mem = NewMemory {
         topic: topic.clone(),
         content,
         tier,
+        memory_type,
         importance,
         source: Some("api/v2".to_string()),
         model: Some("api/v2".to_string()),

@@ -146,6 +146,7 @@ fn v2_tools_list() -> Value {
                         "content": { "type": "string", "description": "Full memory content (plain text/markdown)" },
                         "visibility": { "type": "string", "description": "Visibility (public/group/circle/personal/internal, default: public)" },
                         "scope": { "type": "string", "description": "Scope (required for group/circle)" },
+                        "type": { "type": "string", "description": "Memory type (e.g. entity:person, entity:project, cluster)" },
                         "importance": { "type": "integer", "description": "Importance score 1-10" },
                         "metadata": { "type": "object", "description": "Arbitrary metadata" }
                     },

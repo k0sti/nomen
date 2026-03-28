@@ -42,6 +42,11 @@ pub async fn store_direct_with_author(
 
     nomen_db::store_memory_direct(db, &parsed, source).await?;
 
+    // Set type if provided
+    if let Some(ref t) = mem.memory_type {
+        let _ = nomen_db::set_memory_type(db, &d_tag, t).await;
+    }
+
     // Set importance if provided
     if let Some(imp) = mem.importance {
         let _ = nomen_db::set_importance(db, &d_tag, imp).await;

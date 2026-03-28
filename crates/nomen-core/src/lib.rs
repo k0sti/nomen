@@ -24,6 +24,8 @@ pub struct NewMemory {
     /// Plain-text content (the full memory body).
     pub content: String,
     pub tier: String,
+    /// Memory type (e.g. "entity:person", "cluster"). None for regular memories.
+    pub memory_type: Option<String>,
     /// Importance score (1-10). Optional.
     pub importance: Option<i32>,
     /// Source label (e.g. "api", "mcp", "contextvm"). Defaults to "api".

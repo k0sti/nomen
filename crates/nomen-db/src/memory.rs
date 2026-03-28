@@ -27,6 +27,7 @@ fn build_record(parsed: &ParsedMemory, nostr_id: &str) -> MemoryRecord {
 
     MemoryRecord {
         content: parsed.content.clone(),
+        memory_type: None,
         embedding: None,
         tier: nomen_core::memory::base_tier(&parsed.tier).to_string(),
         scope,
@@ -91,11 +92,12 @@ pub async fn store_memory_direct(
 
     db.query(
         "CREATE memory SET \
-         content = $content, tier = $tier, scope = $scope, \
+         content = $content, type = $type, tier = $tier, scope = $scope, \
          topic = $topic, source = $source, model = $model, \
          version = $version, nostr_id = $nostr_id, d_tag = $d_tag, \
          created_at = $created_at, updated_at = $updated_at",
     )
+    .bind(("type", record.memory_type))
     .bind(("content", record.content))
     .bind(("tier", record.tier))
     .bind(("scope", record.scope))
@@ -121,7 +123,7 @@ pub async fn list_memories(
 ) -> Result<Vec<MemoryRecord>> {
     let (sql, bind_tier);
     // Exclude embedding from SELECT to avoid SurrealDB HNSW index deserialization issues
-    let fields = "content, tier, scope, topic, source, model, version, nostr_id, d_tag, created_at, updated_at, last_accessed, access_count, importance";
+    let fields = "content, type, tier, scope, topic, source, model, version, nostr_id, d_tag, created_at, updated_at, last_accessed, access_count, importance";
     if let Some(t) = tier {
         sql = format!(
             "SELECT {fields} FROM memory WHERE tier = $tier ORDER BY created_at DESC LIMIT {limit}"
@@ -148,7 +150,7 @@ pub async fn list_memories(
 /// Get a single memory by d-tag (topic).
 pub async fn get_memory_by_dtag(db: &Surreal<Db>, d_tag: &str) -> Result<Option<MemoryRecord>> {
     let mut results: Vec<MemoryRecord> = db
-        .query("SELECT content, tier, scope, topic, source, model, version, nostr_id, d_tag, created_at, updated_at, last_accessed, access_count, importance FROM memory WHERE d_tag = $d_tag LIMIT 1")
+        .query("SELECT content, type, tier, scope, topic, source, model, version, nostr_id, d_tag, created_at, updated_at, last_accessed, access_count, importance FROM memory WHERE d_tag = $d_tag LIMIT 1")
         .bind(("d_tag", d_tag.to_string()))
         .await?
         .check()?
@@ -159,7 +161,7 @@ pub async fn get_memory_by_dtag(db: &Surreal<Db>, d_tag: &str) -> Result<Option<
 /// Get a single memory by topic field (raw topic, not d-tag).
 pub async fn get_memory_by_topic(db: &Surreal<Db>, topic: &str) -> Result<Option<MemoryRecord>> {
     let mut results: Vec<MemoryRecord> = db
-        .query("SELECT content, tier, scope, topic, source, model, version, nostr_id, d_tag, created_at, updated_at, last_accessed, access_count, importance FROM memory WHERE topic = $topic LIMIT 1")
+        .query("SELECT content, type, tier, scope, topic, source, model, version, nostr_id, d_tag, created_at, updated_at, last_accessed, access_count, importance FROM memory WHERE topic = $topic LIMIT 1")
         .bind(("topic", topic.to_string()))
         .await?
         .check()?
@@ -189,6 +191,16 @@ pub async fn delete_memory_by_dtag(db: &Surreal<Db>, d_tag: &str) -> Result<()> 
 pub async fn delete_memory_by_nostr_id(db: &Surreal<Db>, nostr_id: &str) -> Result<()> {
     db.query("DELETE FROM memory WHERE nostr_id = $nostr_id")
         .bind(("nostr_id", nostr_id.to_string()))
+        .await?
+        .check()?;
+    Ok(())
+}
+
+/// Set the type tag on a memory record.
+pub async fn set_memory_type(db: &Surreal<Db>, d_tag: &str, memory_type: &str) -> Result<()> {
+    db.query("UPDATE memory SET type = $type WHERE d_tag = $d_tag")
+        .bind(("d_tag", d_tag.to_string()))
+        .bind(("type", memory_type.to_string()))
         .await?
         .check()?;
     Ok(())

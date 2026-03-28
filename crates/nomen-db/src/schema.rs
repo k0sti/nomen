@@ -10,6 +10,7 @@ REMOVE FIELD IF EXISTS detail ON memory;
 REMOVE FIELD IF EXISTS pinned ON memory;
 REMOVE FIELD IF EXISTS visibility ON memory;
 DEFINE FIELD IF NOT EXISTS content    ON memory TYPE string;
+DEFINE FIELD IF NOT EXISTS type       ON memory TYPE option<string>;
 REMOVE FIELD IF EXISTS summary ON memory;
 DEFINE FIELD IF NOT EXISTS embedding  ON memory TYPE option<array<float>>;
 DEFINE FIELD IF NOT EXISTS tier       ON memory TYPE string;

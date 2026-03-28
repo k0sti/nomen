@@ -232,6 +232,7 @@ pub async fn consolidate(
                                                 is_dedup_merge = true;
                                                 // Store using the similar memory's d_tag
                                                 let mem = nomen_core::NewMemory {
+                                                    memory_type: None,
                                                     topic: sim_dtag.clone(),
                                                     content: m.content.clone(),
                                                     tier: tier.clone(),
@@ -279,6 +280,7 @@ pub async fn consolidate(
             let content_for_entities = final_content.clone();
 
             let mem = nomen_core::NewMemory {
+                memory_type: None,
                 topic: d_tag.clone(),
                 content: final_content,
                 tier: tier.clone(),
