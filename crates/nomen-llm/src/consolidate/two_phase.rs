@@ -315,6 +315,35 @@ pub async fn commit(
                             .await
                             .ok();
                         }
+
+                        // Also store entities as memories with type=entity:*
+                        for entity in &entities {
+                            let entity_topic = format!("entity/{}", entity.name.to_lowercase().replace(' ', "-"));
+                            let entity_kind_str = format!("entity:{}", entity.kind);
+                            let rels: Vec<(String, String)> = relationships
+                                .iter()
+                                .filter(|r| r.from == entity.name)
+                                .map(|r| {
+                                    let target_topic = format!("entity/{}", r.to.to_lowercase().replace(' ', "-"));
+                                    (target_topic, r.relation.clone())
+                                })
+                                .collect();
+                            let entity_mem = nomen_core::NewMemory {
+                                memory_type: Some(entity_kind_str),
+                                topic: entity_topic,
+                                content: entity.name.clone(),
+                                tier: batch.visibility.clone(),
+                                importance: None,
+                                source: Some("consolidation".to_string()),
+                                model: Some("nomen/consolidation".to_string()),
+                                rel: rels,
+                                refs: vec![],
+                                mentions: vec![stored_dtag.clone()],
+                            };
+                            if let Err(e) = crate::store::store_direct(db, embedder, entity_mem).await {
+                                tracing::warn!("Failed to store entity memory for '{}': {e}", entity.name);
+                            }
+                        }
                     }
                 }
             }

@@ -7,6 +7,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use nostr_sdk::prelude::ToBech32;
 use serde_json::json;
 use surrealdb::engine::local::{Db, SurrealKv};
 use surrealdb::Surreal;
@@ -73,6 +74,20 @@ async fn spawn_and_connect(
     (client, handle)
 }
 
+/// Authenticate a socket client with a fresh test keypair.
+async fn authenticate(client: &nomen_wire::NomenClient) {
+    let keys = nostr_sdk::Keys::generate();
+    let nsec = keys.secret_key().to_bech32().unwrap();
+    let resp = timeout(
+        Duration::from_secs(5),
+        client.request("identity.auth", json!({ "nsec": nsec })),
+    )
+    .await
+    .expect("auth timeout")
+    .expect("auth request");
+    assert!(resp.ok, "identity.auth should succeed: {:?}", resp.error);
+}
+
 // ════════════════════════════════════════════════════════════════════
 // Socket server + client integration tests
 // ════════════════════════════════════════════════════════════════════
@@ -82,6 +97,7 @@ async fn t_sock_01_basic_request_response() {
     let (server, sock_path, _db_tmp, _sock_tmp) = setup_server().await;
     let server = Arc::new(server);
     let (client, _handle) = spawn_and_connect(server, &sock_path).await;
+    authenticate(&client).await;
 
     let resp = timeout(
         Duration::from_secs(5),
@@ -102,6 +118,7 @@ async fn t_sock_02_unknown_action_returns_error() {
     let (server, sock_path, _db_tmp, _sock_tmp) = setup_server().await;
     let server = Arc::new(server);
     let (client, _handle) = spawn_and_connect(server, &sock_path).await;
+    authenticate(&client).await;
 
     let resp = timeout(
         Duration::from_secs(5),
@@ -140,6 +157,10 @@ async fn t_sock_03_multiple_concurrent_clients() {
         .await
         .expect("c3");
 
+    authenticate(&c1).await;
+    authenticate(&c2).await;
+    authenticate(&c3).await;
+
     // Each sends a request concurrently
     let (r1, r2, r3) = tokio::join!(
         c1.request("memory.list", json!({})),
@@ -162,6 +183,7 @@ async fn t_sock_04_request_id_correlation() {
     let (server, sock_path, _db_tmp, _sock_tmp) = setup_server().await;
     let server = Arc::new(server);
     let (client, _handle) = spawn_and_connect(server, &sock_path).await;
+    authenticate(&client).await;
 
     // Send 3 requests concurrently; NomenClient handles correlation internally.
     // Each should resolve to its own response.
@@ -203,6 +225,7 @@ async fn t_sock_05_subscription_opt_in() {
     let client_a = nomen_wire::NomenClient::connect(&sock_path)
         .await
         .expect("client_a");
+    authenticate(&client_a).await;
     let mut events_a = client_a
         .subscribe(&["memory.updated"])
         .await
@@ -246,6 +269,7 @@ async fn t_sock_06_wildcard_subscription() {
     let client = nomen_wire::NomenClient::connect(&sock_path)
         .await
         .expect("client");
+    authenticate(&client).await;
     let mut events = client.subscribe(&["*"]).await.expect("subscribe wildcard");
 
     // Emit different event types
@@ -297,6 +321,7 @@ async fn t_sock_07_unsubscribe_stops_events() {
     let client = nomen_wire::NomenClient::connect(&sock_path)
         .await
         .expect("client");
+    authenticate(&client).await;
     let mut events = client
         .subscribe(&["memory.updated", "sync.complete"])
         .await
@@ -360,6 +385,7 @@ async fn t_sock_08_client_disconnect_cleanup() {
     let client_a = nomen_wire::NomenClient::connect(&sock_path)
         .await
         .expect("client_a");
+    authenticate(&client_a).await;
     let mut events_a = client_a.subscribe(&["*"]).await.expect("subscribe");
 
     // Connect client B using a raw UnixStream so we can fully close it
@@ -412,6 +438,7 @@ async fn t_client_01_connect_and_request() {
     let (server, sock_path, _db_tmp, _sock_tmp) = setup_server().await;
     let server = Arc::new(server);
     let (client, _handle) = spawn_and_connect(server, &sock_path).await;
+    authenticate(&client).await;
 
     let resp = client
         .request("memory.list", json!({}))
@@ -427,6 +454,7 @@ async fn t_client_05_timeout() {
     let (server, sock_path, _db_tmp, _sock_tmp) = setup_server().await;
     let server = Arc::new(server);
     let (client, _handle) = spawn_and_connect(server, &sock_path).await;
+    authenticate(&client).await;
 
     // Verify that a normal request completes within a generous timeout
     let resp = client
@@ -443,6 +471,7 @@ async fn t_client_06_concurrent_requests() {
     let (server, sock_path, _db_tmp, _sock_tmp) = setup_server().await;
     let server = Arc::new(server);
     let (client, _handle) = spawn_and_connect(server, &sock_path).await;
+    authenticate(&client).await;
 
     let client = Arc::new(client);
 

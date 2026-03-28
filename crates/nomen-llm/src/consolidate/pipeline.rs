@@ -421,6 +421,37 @@ pub async fn consolidate(
                                     "Extracted entities and relationships from consolidated memory"
                                 );
                             }
+
+                            // Also store entities as memories with type=entity:*
+                            for entity in &extracted_entities {
+                                let entity_topic = format!("entity/{}", entity.name.to_lowercase().replace(' ', "-"));
+                                let entity_kind_str = format!("entity:{}", entity.kind);
+                                // Build rel tags from relationships involving this entity
+                                let rels: Vec<(String, String)> = extracted_relationships
+                                    .iter()
+                                    .filter(|r| r.from == entity.name)
+                                    .map(|r| {
+                                        let target_topic = format!("entity/{}", r.to.to_lowercase().replace(' ', "-"));
+                                        (target_topic, r.relation.clone())
+                                    })
+                                    .collect();
+                                let mentions_tags = vec![d_tag.clone()]; // mention the source memory
+                                let entity_mem = nomen_core::NewMemory {
+                                    memory_type: Some(entity_kind_str),
+                                    topic: entity_topic,
+                                    content: entity.name.clone(),
+                                    tier: tier.clone(),
+                                    importance: None,
+                                    source: Some("consolidation".to_string()),
+                                    model: Some("nomen/consolidation".to_string()),
+                                    rel: rels,
+                                    refs: vec![],
+                                    mentions: mentions_tags,
+                                };
+                                if let Err(e) = crate::store::store_direct(db, embedder, entity_mem).await {
+                                    warn!("Failed to store entity memory for '{}': {e}", entity.name);
+                                }
+                            }
                         }
                     }
                     Err(e) => {
@@ -477,6 +508,14 @@ pub async fn consolidate(
                         vec![consolidated_at.clone()],
                     ),
                 ];
+
+                // Add source tags with d-tags of consumed messages (provenance)
+                for msg in group_msgs {
+                    event_tags.push(Tag::custom(
+                        TagKind::Custom("source".into()),
+                        vec![msg.d_tag.clone()],
+                    ));
+                }
 
                 // Add topic tags from the LLM-derived topic
                 for part in memory.topic.split('/') {
