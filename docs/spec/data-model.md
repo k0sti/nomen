@@ -345,15 +345,15 @@ Behavioral learnings. Append-only log, not replaceable.
 
 ## Group Definition Events
 
-### Kind 30000 — Group (NIP-51 list, parameterized replaceable)
+### Kind 30078 — Group (NIP-78 app data, parameterized replaceable)
 
-Groups define ACL scopes for `group`-tier memories. Stored on relay and synced to local `nomen_group` table.
+Groups define ACL scopes for `group`-tier memories. Stored on relay as NIP-78 application data and synced to local `nomen_group` table.
 
 ```json
 {
-  "kind": 30000,
+  "kind": 30078,
   "tags": [
-    ["d", "techteam"],
+    ["d", "nomen:group:techteam"],
     ["name", "TechTeam"],
     ["member", "<pubkey-hex>"],
     ["member", "<pubkey-hex>"],
@@ -365,7 +365,7 @@ Groups define ACL scopes for `group`-tier memories. Stored on relay and synced t
 
 | Tag | Multiplicity | Description |
 |---|---|---|
-| `d` | 1 | Group identifier (used as scope in d-tags) |
+| `d` | 1 | `nomen:group:<id>` — namespaced group identifier |
 | `name` | 1 | Human-readable name |
 | `member` | 0..n | Hex pubkeys of group members |
 | `relay` | 0..1 | NIP-29 group relay URL |
@@ -390,6 +390,7 @@ On sync, Nomen rebuilds the local `nomen_group` table from these events. On grou
 | NIP-44 | Encryption |
 | NIP-48 | Proxy tags |
 | NIP-59 | Gift wrap |
+| NIP-78 | Application-specific data (groups) |
 | NIP-92 | Media attachments (`imeta`) |
 | NIP-98 | HTTP Auth |
 | NIP-94 | File metadata |

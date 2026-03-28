@@ -18,11 +18,13 @@ apiBaseUrl.subscribe((v) => localStorage.setItem('nomen:apiBaseUrl', v));
 const nomenRelay = new NomenRelay();
 nomenRelay.onConnectionChange = (connected) => relayConnected.set(connected);
 export const relay = writable<NomenRelay>(nomenRelay);
-export const api = derived(apiBaseUrl, ($url) => new NomenApi($url));
 
 // ── Auth ──────────────────────────────────────────────────────────
 export const profile = writable<NostrProfile | null>(null);
 export const signer = writable<NostrSigner | null>(null);
+
+// API instance — derived from both baseUrl and signer for NIP-98 auth
+export const api = derived([apiBaseUrl, signer], ([$url, $signer]) => new NomenApi($url, $signer));
 
 // Keep relay layer in sync with signer changes
 signer.subscribe((s) => {

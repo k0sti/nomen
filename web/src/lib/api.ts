@@ -149,17 +149,46 @@ export interface NomenConfig {
   config_path: string;
 }
 
+export interface NomenApiSigner {
+  getPublicKey(): Promise<string>;
+  signEvent(event: { kind: number; created_at: number; tags: string[][]; content: string }): Promise<{ id: string; pubkey: string; created_at: number; kind: number; tags: string[][]; content: string; sig: string }>;
+}
+
 export class NomenApi {
   private baseUrl: string;
+  private signer: NomenApiSigner | null;
 
-  constructor(baseUrl: string = '/memory/api') {
+  constructor(baseUrl: string = '/memory/api', signer?: NomenApiSigner | null) {
     this.baseUrl = baseUrl.replace(/\/$/, '');
+    this.signer = signer ?? null;
+  }
+
+  /** Build NIP-98 Authorization header if signer is available */
+  private async authHeader(url: string, method: string): Promise<Record<string, string>> {
+    if (!this.signer) return {};
+    try {
+      const event = await this.signer.signEvent({
+        kind: 27235,
+        created_at: Math.floor(Date.now() / 1000),
+        tags: [
+          ['u', url],
+          ['method', method.toUpperCase()],
+        ],
+        content: '',
+      });
+      const encoded = btoa(JSON.stringify(event));
+      return { Authorization: `Nostr ${encoded}` };
+    } catch {
+      return {};
+    }
   }
 
   private async postJson<T>(path: string, body: Record<string, unknown>): Promise<T> {
-    const resp = await fetch(`${this.baseUrl}${path}`, {
+    const url = `${this.baseUrl}${path}`;
+    const auth = await this.authHeader(new URL(url, window.location.origin).toString(), 'POST');
+    const resp = await fetch(url, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...auth },
       body: JSON.stringify(body),
     });
     if (!resp.ok) {
@@ -176,7 +205,8 @@ export class NomenApi {
         if (v !== undefined && v !== '') url.searchParams.set(k, v);
       }
     }
-    const resp = await fetch(url.toString());
+    const auth = await this.authHeader(url.toString(), 'GET');
+    const resp = await fetch(url.toString(), { headers: auth });
     if (!resp.ok) {
       const text = await resp.text().catch(() => '');
       throw new Error(`${resp.status}: ${text}`);

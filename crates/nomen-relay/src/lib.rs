@@ -309,7 +309,7 @@ impl RelayManager {
         parent: Option<&str>,
     ) -> Result<PublishResult> {
         let mut tags = vec![
-            Tag::custom(TagKind::Custom("d".into()), vec![group_id.to_string()]),
+            Tag::custom(TagKind::Custom("d".into()), vec![format!("nomen:group:{group_id}")]),
             Tag::custom(TagKind::Custom("name".into()), vec![name.to_string()]),
         ];
         for member in members {

@@ -100,7 +100,8 @@ impl Nomen {
         match relay.fetch_groups(&pubkeys).await {
             Ok(group_events) => {
                 for event in group_events {
-                    let group_id = memory::get_tag_value(&event.tags, "d").unwrap_or_default();
+                    let raw_d = memory::get_tag_value(&event.tags, "d").unwrap_or_default();
+                    let group_id = raw_d.strip_prefix("nomen:group:").unwrap_or(&raw_d).to_string();
                     if group_id.is_empty() {
                         continue;
                     }
