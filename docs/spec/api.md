@@ -147,8 +147,11 @@ Create or replace a named memory. Publishes to relay and stores locally.
 | `content` | string | ✅ | — | Full memory text (plain text/markdown) |
 | `visibility` | string | — | `public` | Tier |
 | `scope` | string | — | `""` | Scope |
+| `type` | string | — | — | Memory type (e.g. `entity:person`, `cluster`) |
 | `importance` | integer | — | — | 1–10 scale |
-| `pinned` | boolean | — | false | Pin memory |
+| `rel` | array | — | — | Relationship tags: `[["d-tag", "relation"], ...]` |
+| `ref` | array | — | — | Reference d-tags of related memories |
+| `mentions` | array | — | — | D-tags of entities mentioned in this memory |
 
 ### `memory.get`
 

@@ -338,6 +338,7 @@ Behavioral learnings. Append-only log, not replaceable.
 | NIP-48 | Proxy tags |
 | NIP-59 | Gift wrap |
 | NIP-92 | Media attachments (`imeta`) |
+| NIP-98 | HTTP Auth |
 | NIP-94 | File metadata |
 | NIP-AE | Agent attribution |
 | NIP-B7 | Blossom media server |
