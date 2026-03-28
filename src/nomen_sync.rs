@@ -38,7 +38,11 @@ impl Nomen {
 
             let parsed = memory::parse_event(&event, signer.as_ref());
             match db::store_memory(&self.db, &parsed, &event.id.to_hex()).await {
-                Ok(true) => stored += 1,
+                Ok(true) => {
+                    stored += 1;
+                    // Rebuild graph edges from relation tags
+                    self.rebuild_edges_from_tags(&d_tag, &event.tags).await;
+                }
                 Ok(false) => skipped += 1,
                 Err(e) => {
                     tracing::warn!("Failed to store memory {}: {e}", parsed.topic);
@@ -187,5 +191,49 @@ impl Nomen {
         }
 
         Ok(EmbedReport { embedded, total })
+    }
+
+    /// Known relation names for graph edge reconstruction from Nostr tags.
+    const KNOWN_RELATIONS: &'static [&'static str] = &[
+        "mentions", "works_on", "collaborates_with", "manages", "owns",
+        "member_of", "depends_on", "uses", "created", "located_in",
+        "hired_by", "decided", "supports", "contradicts", "supersedes",
+        "summarizes",
+    ];
+
+    /// Rebuild references edges from relation tags on a synced event.
+    async fn rebuild_edges_from_tags(&self, d_tag: &str, tags: &nostr_sdk::Tags) {
+        // Delete existing outgoing edges for idempotent rebuild
+        let _ = db::delete_references_for(&self.db, d_tag).await;
+
+        for tag in tags.iter() {
+            let parts: Vec<&str> = tag.as_slice().iter().map(|s| s.as_str()).collect();
+            if parts.len() < 2 {
+                continue;
+            }
+            let relation = parts[0];
+            let target_d_tag = parts[1];
+
+            // source tags → consolidated_from edges (handled elsewhere)
+            if relation == "source" {
+                continue;
+            }
+
+            // Skip system tags
+            if !Self::KNOWN_RELATIONS.contains(&relation) {
+                continue;
+            }
+
+            let weight: Option<f64> = parts.get(2)
+                .and_then(|w| if w.is_empty() { None } else { w.parse().ok() });
+            let detail: Option<&str> = parts.get(3)
+                .and_then(|d| if d.is_empty() { None } else { Some(*d) });
+
+            if let Err(e) = db::create_references_edge(
+                &self.db, d_tag, target_d_tag, relation, weight, detail,
+            ).await {
+                tracing::debug!("Failed to create edge {relation} → {target_d_tag}: {e}");
+            }
+        }
     }
 }

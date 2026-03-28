@@ -118,16 +118,16 @@ impl Nomen {
                 ));
             }
 
-            // Add relationship tags
+            // Add relationship tags: [relation, d-tag, weight?, detail?]
             for (target, relation) in &mem.rel {
                 tags.push(nostr_sdk::Tag::custom(
-                    nostr_sdk::TagKind::Custom("rel".into()),
-                    vec![target.clone(), relation.clone()],
+                    nostr_sdk::TagKind::Custom(relation.clone().into()),
+                    vec![target.clone()],
                 ));
             }
             for r in &mem.refs {
                 tags.push(nostr_sdk::Tag::custom(
-                    nostr_sdk::TagKind::Custom("ref".into()),
+                    nostr_sdk::TagKind::Custom("supersedes".into()),
                     vec![r.clone()],
                 ));
             }
