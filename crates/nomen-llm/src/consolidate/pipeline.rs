@@ -239,6 +239,9 @@ pub async fn consolidate(
                                                     importance: m.importance,
                                                     source: Some("consolidation".to_string()),
                                                     model: Some("nomen/consolidation".to_string()),
+                rel: vec![],
+                refs: vec![],
+                mentions: vec![],
                                                 };
                                                 let stored_dtag =
                                                     crate::store::store_direct(db, embedder, mem)
@@ -287,6 +290,9 @@ pub async fn consolidate(
                 importance: final_importance,
                 source: Some("consolidation".to_string()),
                 model: Some("nomen/consolidation".to_string()),
+                rel: vec![],
+                refs: vec![],
+                mentions: vec![],
             };
 
             let d_tag = crate::store::store_direct(db, embedder, mem).await?;

@@ -401,6 +401,9 @@ pub async fn run_cluster_fusion(
             importance: None,
             source: Some("cluster_fusion".to_string()),
             model: Some("nomen/cluster".to_string()),
+                rel: vec![],
+                refs: vec![],
+                mentions: vec![],
         };
 
         let d_tag =

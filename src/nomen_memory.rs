@@ -110,6 +110,34 @@ impl Nomen {
                 ));
             }
 
+            // Add type tag if set
+            if let Some(ref t) = mem.memory_type {
+                tags.push(nostr_sdk::Tag::custom(
+                    nostr_sdk::TagKind::Custom("type".into()),
+                    vec![t.clone()],
+                ));
+            }
+
+            // Add relationship tags
+            for (target, relation) in &mem.rel {
+                tags.push(nostr_sdk::Tag::custom(
+                    nostr_sdk::TagKind::Custom("rel".into()),
+                    vec![target.clone(), relation.clone()],
+                ));
+            }
+            for r in &mem.refs {
+                tags.push(nostr_sdk::Tag::custom(
+                    nostr_sdk::TagKind::Custom("ref".into()),
+                    vec![r.clone()],
+                ));
+            }
+            for m in &mem.mentions {
+                tags.push(nostr_sdk::Tag::custom(
+                    nostr_sdk::TagKind::Custom("mentions".into()),
+                    vec![m.clone()],
+                ));
+            }
+
             // Add supersedes tag if updating an existing memory
             if let Some(ref prev_id) = previous_nostr_id {
                 if !prev_id.is_empty() {

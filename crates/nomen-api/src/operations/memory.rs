@@ -134,6 +134,32 @@ pub async fn put(nomen: &dyn NomenBackend, params: &Value) -> Result<Value, ApiE
         .and_then(|v| v.as_str())
         .map(|s| s.to_string());
 
+    // Parse relationship tags
+    let rel = params
+        .get("rel")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|item| {
+                    let a = item.as_array()?;
+                    Some((a.first()?.as_str()?.to_string(), a.get(1)?.as_str()?.to_string()))
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+
+    let refs = params
+        .get("ref")
+        .and_then(|v| v.as_array())
+        .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+        .unwrap_or_default();
+
+    let mentions = params
+        .get("mentions")
+        .and_then(|v| v.as_array())
+        .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+        .unwrap_or_default();
+
     let mem = NewMemory {
         topic: topic.clone(),
         content,
@@ -142,6 +168,9 @@ pub async fn put(nomen: &dyn NomenBackend, params: &Value) -> Result<Value, ApiE
         importance,
         source: Some("api/v2".to_string()),
         model: Some("api/v2".to_string()),
+        rel,
+        refs,
+        mentions,
     };
 
     let d_tag = nomen.store(mem).await.map_err(ApiError::from_anyhow)?;

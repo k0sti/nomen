@@ -32,4 +32,10 @@ pub struct NewMemory {
     pub source: Option<String>,
     /// Model label. Defaults to "nomen/api".
     pub model: Option<String>,
+    /// Relationship tags: `["d-tag", "relation"]` pairs (e.g. `["personal/.../nomen", "works_on"]`).
+    pub rel: Vec<(String, String)>,
+    /// Reference tags: d-tags of related memories.
+    pub refs: Vec<String>,
+    /// Mention tags: d-tags of entities mentioned in this memory.
+    pub mentions: Vec<String>,
 }

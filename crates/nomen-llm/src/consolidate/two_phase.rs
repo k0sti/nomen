@@ -254,6 +254,9 @@ pub async fn commit(
                 importance: Some(memory.importance as i32),
                 source: Some("consolidation".to_string()),
                 model: Some("agent/consolidation".to_string()),
+                rel: vec![],
+                refs: vec![],
+                mentions: vec![],
             };
 
             let stored_dtag = crate::store::store_direct(db, embedder, mem).await?;

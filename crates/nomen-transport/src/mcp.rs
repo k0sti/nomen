@@ -148,6 +148,9 @@ fn v2_tools_list() -> Value {
                         "scope": { "type": "string", "description": "Scope (required for group/circle)" },
                         "type": { "type": "string", "description": "Memory type (e.g. entity:person, entity:project, cluster)" },
                         "importance": { "type": "integer", "description": "Importance score 1-10" },
+                        "rel": { "type": "array", "items": { "type": "array", "items": { "type": "string" } }, "description": "Relationship tags: [[d-tag, relation], ...]" },
+                        "ref": { "type": "array", "items": { "type": "string" }, "description": "Reference d-tags of related memories" },
+                        "mentions": { "type": "array", "items": { "type": "string" }, "description": "D-tags of entities mentioned in this memory" },
                         "metadata": { "type": "object", "description": "Arbitrary metadata" }
                     },
                     "required": ["topic", "content"]
