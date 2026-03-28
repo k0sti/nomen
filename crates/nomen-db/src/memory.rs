@@ -249,7 +249,7 @@ pub async fn count_memories_by_type(db: &Surreal<Db>) -> Result<(usize, usize, u
     // Unconsolidated collected messages
     let pending: Option<CountRow> = db
         .query(
-            "SELECT count() AS count FROM collected_message WHERE consolidated = false GROUP ALL",
+            "SELECT count() AS count FROM message WHERE consolidated = false GROUP ALL",
         )
         .await?
         .check()?
@@ -271,7 +271,7 @@ pub async fn delete_collected_before(db: &Surreal<Db>, before_ts: i64) -> Result
         count: usize,
     }
     let count_result: Option<CountResult> = db
-        .query("SELECT count() AS count FROM collected_message WHERE consolidated = true AND created_at < $before GROUP ALL")
+        .query("SELECT count() AS count FROM message WHERE consolidated = true AND created_at < $before GROUP ALL")
         .bind(("before", before_ts))
         .await?
         .check()?
@@ -279,7 +279,7 @@ pub async fn delete_collected_before(db: &Surreal<Db>, before_ts: i64) -> Result
     let count = count_result.map(|r| r.count).unwrap_or(0);
     if count > 0 {
         db.query(
-            "DELETE FROM collected_message WHERE consolidated = true AND created_at < $before",
+            "DELETE FROM message WHERE consolidated = true AND created_at < $before",
         )
         .bind(("before", before_ts))
         .await?

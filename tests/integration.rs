@@ -204,7 +204,7 @@ async fn test_groups() -> Result<()> {
 }
 
 #[tokio::test]
-async fn test_collected_message_lifecycle() -> Result<()> {
+async fn test_message_lifecycle() -> Result<()> {
     let (db, _tmp) = init_test_db().await?;
 
     // Store collected events with old timestamps

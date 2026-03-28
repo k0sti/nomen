@@ -129,7 +129,7 @@ impl RelayManager {
     }
 
     /// Fetch collected message events (kind 30100) for the given pubkeys.
-    pub async fn fetch_collected_messages(&self, pubkeys: &[PublicKey]) -> Result<Events> {
+    pub async fn fetch_messages(&self, pubkeys: &[PublicKey]) -> Result<Events> {
         let filter = Filter::new()
             .kinds(vec![Kind::Custom(COLLECTED_MESSAGE_KIND)])
             .authors(pubkeys.to_vec());

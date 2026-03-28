@@ -70,9 +70,9 @@ pub async fn create_consolidated_edge(
     memory_id: &str,
     message_d_tag: &str,
 ) -> Result<()> {
-    // Use d_tag-based lookup since collected_message uses SurrealDB auto-generated IDs
+    // Use d_tag-based lookup since message uses SurrealDB auto-generated IDs
     db.query(
-        "LET $msg = (SELECT id FROM collected_message WHERE d_tag = $dtag LIMIT 1); \
+        "LET $msg = (SELECT id FROM message WHERE d_tag = $dtag LIMIT 1); \
          IF $msg[0] != NONE THEN \
            (RELATE $from->consolidated_from->$msg[0].id) \
          END",

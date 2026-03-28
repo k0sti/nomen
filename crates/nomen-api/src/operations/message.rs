@@ -144,7 +144,7 @@ pub async fn query(nomen: &dyn NomenBackend, params: &Value) -> Result<Value, Ap
     }))
 }
 
-/// Retrieve message context using tag-based filters on collected_message.
+/// Retrieve message context using tag-based filters on message.
 pub async fn context(nomen: &dyn NomenBackend, params: &Value) -> Result<Value, ApiError> {
     let has_chat = params.get("#chat").is_some();
     if !has_chat {

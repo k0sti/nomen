@@ -1,4 +1,4 @@
-//! collected_message table CRUD — kind 30100 event storage and tag-indexed queries.
+//! message table CRUD — kind 30100 event storage and tag-indexed queries.
 
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
@@ -72,7 +72,7 @@ pub async fn store_collected_event(
         d_tag: String,
     }
     let existing: Option<ExistsRow> = db
-        .query("SELECT d_tag FROM collected_message WHERE d_tag = $dtag LIMIT 1")
+        .query("SELECT d_tag FROM message WHERE d_tag = $dtag LIMIT 1")
         .bind(("dtag", d_tag.clone()))
         .await?
         .check()?
@@ -123,7 +123,7 @@ pub async fn store_collected_event(
     if replaced {
         // Update existing record, preserve consolidated
         db.query(
-            "UPDATE collected_message SET \
+            "UPDATE message SET \
              event_json = $ej, kind = $k, pubkey = $pk, created_at = $ca, \
              content = $ct, platform = $pl, community_id = $coi, community_type = $cot, \
              chat_id = $ci, sender_id = $si, thread_id = $ti, chat_type = $ctp, \
@@ -149,7 +149,7 @@ pub async fn store_collected_event(
         .await?
         .check()?;
     } else {
-        db.query("CREATE collected_message CONTENT $record")
+        db.query("CREATE message CONTENT $record")
             .bind(("record", record))
             .await?
             .check()?;
@@ -224,7 +224,7 @@ pub async fn query_collected_events(
         "SELECT event_json, d_tag, kind, pubkey, created_at, content, \
          platform, community_id, community_type, chat_id, sender_id, thread_id, \
          chat_type, chat_name, thread_type, message_id, consolidated \
-         FROM collected_message {where_clause} \
+         FROM message {where_clause} \
          ORDER BY created_at ASC LIMIT {limit}"
     );
 
@@ -286,7 +286,7 @@ pub async fn get_collected_event(
             "SELECT event_json, d_tag, kind, pubkey, created_at, content, \
              platform, community_id, community_type, chat_id, sender_id, thread_id, \
              chat_type, chat_name, thread_type, message_id, consolidated \
-             FROM collected_message WHERE d_tag = $dtag LIMIT 1",
+             FROM message WHERE d_tag = $dtag LIMIT 1",
         )
         .bind(("dtag", d_tag.to_string()))
         .await?
@@ -304,10 +304,10 @@ pub async fn count_collected_events(db: &Surreal<Db>, consolidated: Option<bool>
 
     let sql = if let Some(extracted) = consolidated {
         format!(
-            "SELECT count() AS count FROM collected_message WHERE consolidated = {extracted} GROUP ALL"
+            "SELECT count() AS count FROM message WHERE consolidated = {extracted} GROUP ALL"
         )
     } else {
-        "SELECT count() AS count FROM collected_message GROUP ALL".to_string()
+        "SELECT count() AS count FROM message GROUP ALL".to_string()
     };
 
     let result: Option<CountRow> = db.query(&sql).await?.check()?.take(0)?;
@@ -367,7 +367,7 @@ pub async fn get_unconsolidated_collected(
         "SELECT event_json, d_tag, kind, pubkey, created_at, content, \
          platform, community_id, community_type, chat_id, sender_id, thread_id, \
          chat_type, chat_name, thread_type, message_id, consolidated \
-         FROM collected_message WHERE {where_clause} \
+         FROM message WHERE {where_clause} \
          ORDER BY created_at ASC LIMIT {limit}"
     );
 
@@ -422,7 +422,7 @@ pub async fn mark_collected_consolidated(db: &Surreal<Db>, d_tags: &[String]) ->
     if d_tags.is_empty() {
         return Ok(());
     }
-    db.query("UPDATE collected_message SET consolidated = true WHERE d_tag IN $dtags")
+    db.query("UPDATE message SET consolidated = true WHERE d_tag IN $dtags")
         .bind(("dtags", d_tags.to_vec()))
         .await?
         .check()?;
@@ -459,7 +459,7 @@ pub struct CollectedSearchResult {
 
 /// BM25 fulltext search over collected messages.
 ///
-/// Uses the `cm_fulltext` index for relevance scoring. Tag filters narrow
+/// Uses the `msg_fulltext` index for relevance scoring. Tag filters narrow
 /// the search scope before BM25 scoring.
 pub async fn search_collected_events(
     db: &Surreal<Db>,
@@ -517,7 +517,7 @@ pub async fn search_collected_events(
         "SELECT event_json, d_tag, kind, pubkey, created_at, content, \
          platform, community_id, chat_id, sender_id, thread_id, \
          search::score(0) AS score \
-         FROM collected_message {where_clause} \
+         FROM message {where_clause} \
          ORDER BY score DESC LIMIT {limit}"
     );
 
@@ -577,7 +577,7 @@ pub async fn count_unconsolidated_collected(db: &Surreal<Db>) -> Result<usize> {
     }
     let result: Option<CountRow> = db
         .query(
-            "SELECT count() AS count FROM collected_message WHERE consolidated = false GROUP ALL",
+            "SELECT count() AS count FROM message WHERE consolidated = false GROUP ALL",
         )
         .await?
         .check()?

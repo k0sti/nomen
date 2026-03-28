@@ -48,7 +48,7 @@ impl Nomen {
         }
 
         // Sync collected messages (kind 30100)
-        match relay.fetch_collected_messages(&pubkeys).await {
+        match relay.fetch_messages(&pubkeys).await {
             Ok(collected_events) => {
                 for event in collected_events.into_iter() {
                     let d_tag_val = memory::get_tag_value(&event.tags, "d").unwrap_or_default();
