@@ -15,10 +15,7 @@ use nomen_core::search::{SearchOptions, SearchResult};
 use nomen_core::send::{SendOptions, SendResult};
 use nomen_core::signer::NomenSigner;
 use nomen_core::NewMemory;
-use nomen_db::{
-    CollectedMessageRecord, CollectedSearchResult, EntityRecord, MemoryRecord, PruneReport,
-    RelationshipRecord,
-};
+use nomen_db::{CollectedMessageRecord, CollectedSearchResult, MemoryRecord, PruneReport};
 use nomen_llm::cluster::ClusterReport;
 use nomen_llm::consolidate::{BatchExtraction, CommitResult, ConsolidationReport, PrepareResult};
 use nomen_media::MediaRef;
@@ -98,15 +95,15 @@ impl NomenBackend for SessionBackend {
         self.inner.store_media(data, mime_type).await
     }
 
-    async fn entities(&self, kind: Option<&str>) -> Result<Vec<EntityRecord>> {
-        self.inner.entities(kind).await
+    async fn entity_memories(&self, type_filter: Option<&str>) -> Result<Vec<MemoryRecord>> {
+        self.inner.entity_memories(type_filter).await
     }
 
     async fn entity_relationships(
         &self,
-        entity_name: Option<&str>,
-    ) -> Result<Vec<RelationshipRecord>> {
-        self.inner.entity_relationships(entity_name).await
+        d_tag: Option<&str>,
+    ) -> Result<Vec<serde_json::Value>> {
+        self.inner.entity_relationships(d_tag).await
     }
 
     async fn group_list(&self) -> Result<Vec<Group>> {

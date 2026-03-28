@@ -422,7 +422,7 @@ pub async fn run_cluster_fusion(
             if member.d_tag.is_empty() {
                 continue;
             }
-            match nomen_db::create_references_edge(db, &d_tag, &member.d_tag, "summarizes").await {
+            match nomen_db::create_references_edge(db, &d_tag, &member.d_tag, "summarizes", Some(0.6), None).await {
                 Ok(_) => {
                     report.edges_created += 1;
                 }

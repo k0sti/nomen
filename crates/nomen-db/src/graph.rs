@@ -20,12 +20,16 @@ pub struct GraphNeighbor {
     pub last_accessed: Option<String>,
 }
 
-/// Create a "references" edge between two memories with a relation type.
+/// Create a "references" edge between two memories.
+///
+/// Schema: relation (string), weight (option<float>), detail (option<string>).
 pub async fn create_references_edge(
     db: &Surreal<Db>,
     from_d_tag: &str,
     to_d_tag: &str,
     relation: &str,
+    weight: Option<f64>,
+    detail: Option<&str>,
 ) -> Result<()> {
     // Resolve d_tags to record IDs
     #[derive(Deserialize, SurrealValue)]
@@ -54,13 +58,36 @@ pub async fn create_references_edge(
         .map(|r| &r.id)
         .ok_or_else(|| anyhow::anyhow!("Memory not found: {to_d_tag}"))?;
 
-    db.query("RELATE $from->references->$to SET relation = $relation, created_at = $now")
+    db.query("RELATE $from->references->$to SET relation = $relation, weight = $weight, detail = $detail, created_at = $now")
         .bind(("from", from_id.clone()))
         .bind(("to", to_id.clone()))
         .bind(("relation", relation.to_string()))
+        .bind(("weight", weight))
+        .bind(("detail", detail.unwrap_or("").to_string()))
         .bind(("now", chrono::Utc::now().to_rfc3339()))
         .await?
         .check()?;
+    Ok(())
+}
+
+/// Delete all outgoing references edges from a memory (for idempotent sync rebuild).
+pub async fn delete_references_for(db: &Surreal<Db>, d_tag: &str) -> Result<()> {
+    #[derive(Deserialize, SurrealValue)]
+    struct IdRow {
+        id: RecordId,
+    }
+    let rows: Vec<IdRow> = db
+        .query("SELECT id FROM memory WHERE d_tag = $d_tag LIMIT 1")
+        .bind(("d_tag", d_tag.to_string()))
+        .await?
+        .check()?
+        .take(0)?;
+    if let Some(row) = rows.first() {
+        db.query("DELETE references WHERE in = $mid")
+            .bind(("mid", row.id.clone()))
+            .await?
+            .check()?;
+    }
     Ok(())
 }
 
@@ -162,47 +189,7 @@ pub async fn get_graph_neighbors_simple(
         all.extend(mems);
     }
 
-    // 3. Shared entity mentions: find entities this memory mentions, then find other memories mentioning those entities
-    #[derive(Debug, Deserialize, SurrealValue)]
-    struct MentionEdge {
-        out: RecordId,
-    }
-    let mention_edges: Vec<MentionEdge> = db
-        .query("SELECT out FROM mentions WHERE in = $mid")
-        .bind(("mid", thing.clone()))
-        .await?
-        .check()?
-        .take(0)?;
-
-    for mention in &mention_edges {
-        // Find other memories that also mention this entity
-        #[derive(Debug, Deserialize, SurrealValue)]
-        struct MentionBack {
-            #[serde(rename = "in")]
-            #[surreal(rename = "in")]
-            in_node: RecordId,
-        }
-        let back_edges: Vec<MentionBack> = db
-            .query("SELECT in FROM mentions WHERE out = $ent AND in != $mid")
-            .bind(("ent", mention.out.clone()))
-            .bind(("mid", thing.clone()))
-            .await?
-            .check()?
-            .take(0)?;
-
-        for back in &back_edges {
-            let mems: Vec<GraphNeighbor> = db
-                .query("SELECT $edge_type AS edge_type, NONE AS relation, tier, topic, content, created_at, d_tag, importance, last_accessed FROM $target")
-                .bind(("target", back.in_node.clone()))
-                .bind(("edge_type", "mentions".to_string()))
-                .await?
-                .check()?
-                .take(0)?;
-            all.extend(mems);
-        }
-    }
-
-    // 4. Consolidated_from siblings: memories that share the same raw message sources
+    // 3. Consolidated_from siblings: memories that share the same raw message sources
     #[derive(Debug, Deserialize, SurrealValue)]
     struct ConsolidatedEdge {
         out: RecordId,

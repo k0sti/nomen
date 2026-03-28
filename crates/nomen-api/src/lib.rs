@@ -28,10 +28,7 @@ use nomen_core::search::{SearchOptions, SearchResult};
 use nomen_core::send::{SendOptions, SendResult};
 use nomen_core::signer::NomenSigner;
 use nomen_core::NewMemory;
-use nomen_db::{
-    CollectedMessageRecord, CollectedSearchResult, EntityRecord, MemoryRecord, PruneReport,
-    RelationshipRecord,
-};
+use nomen_db::{CollectedMessageRecord, CollectedSearchResult, MemoryRecord, PruneReport};
 use nomen_llm::cluster::ClusterReport;
 use nomen_llm::consolidate::{BatchExtraction, CommitResult, ConsolidationReport, PrepareResult};
 use nomen_media::MediaRef;
@@ -97,16 +94,13 @@ pub trait NomenBackend: Send + Sync {
 
     /// Resolve a session ID to tier/scope/delivery-channel.
 
-    // -- Entities --
+    // -- Entities (entity = memory with type=entity:*) --
 
-    /// List entities, optionally filtered by kind.
-    async fn entities(&self, kind: Option<&str>) -> Result<Vec<EntityRecord>>;
+    /// List entity memories, optionally filtered by type (e.g. "entity:person").
+    async fn entity_memories(&self, type_filter: Option<&str>) -> Result<Vec<MemoryRecord>>;
 
-    /// List entity relationships, optionally filtered by name.
-    async fn entity_relationships(
-        &self,
-        entity_name: Option<&str>,
-    ) -> Result<Vec<RelationshipRecord>>;
+    /// List references edges for an entity memory (by d_tag), returns JSON values.
+    async fn entity_relationships(&self, d_tag: Option<&str>) -> Result<Vec<serde_json::Value>>;
 
     // -- Groups --
 

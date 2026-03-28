@@ -282,66 +282,56 @@ pub async fn commit(
                 }
             }
 
-            // Entity extraction (heuristic)
+            // Entity extraction — store as entity memories + references edges
             {
                 let entity_text = memory.content.clone();
                 if let Ok((entities, relationships)) =
                     config.entity_extractor.extract(&entity_text, &[]).await
                 {
-                    if let Ok(record_id) = get_memory_record_id(db, &stored_dtag).await {
-                        for entity in &entities {
-                            if let Ok(entity_id) =
-                                nomen_db::store_entity(db, &entity.name, &entity.kind).await
-                            {
-                                let eid = entity_id
-                                    .split_once(':')
-                                    .map(|(_, id)| id)
-                                    .unwrap_or(&entity_id);
-                                let mid = record_id
-                                    .split_once(':')
-                                    .map(|(_, id)| id)
-                                    .unwrap_or(&record_id);
-                                nomen_db::create_mention_edge(db, mid, eid, 1.0).await.ok();
+                    for entity in &entities {
+                        let entity_topic = format!("entity/{}", entity.name.to_lowercase().replace(' ', "-"));
+                        let entity_kind_str = format!("entity:{}", entity.kind);
+                        let entity_content = entity.description.as_deref().unwrap_or(&entity.name);
+
+                        let entity_mem = nomen_core::NewMemory {
+                            memory_type: Some(entity_kind_str),
+                            topic: entity_topic,
+                            content: entity_content.to_string(),
+                            tier: batch.visibility.clone(),
+                            importance: None,
+                            source: Some("consolidation".to_string()),
+                            model: Some("nomen/consolidation".to_string()),
+                            rel: vec![],
+                            refs: vec![],
+                            mentions: vec![],
+                        };
+                        match crate::store::store_direct(db, embedder, entity_mem).await {
+                            Ok(entity_d_tag) => {
+                                // mentions edge: consolidated memory → entity
+                                nomen_db::create_references_edge(
+                                    db, &stored_dtag, &entity_d_tag, "mentions",
+                                    Some(entity.relevance), None,
+                                ).await.ok();
+                            }
+                            Err(e) => {
+                                tracing::warn!("Failed to store entity memory for '{}': {e}", entity.name);
                             }
                         }
-                        for rel in &relationships {
-                            nomen_db::create_typed_edge(
-                                db,
-                                &rel.from,
-                                &rel.to,
-                                &rel.relation,
-                                None,
-                            )
-                            .await
-                            .ok();
-                        }
+                    }
 
-                        // Also store entities as memories with type=entity:*
-                        for entity in &entities {
-                            let entity_topic = format!("entity/{}", entity.name.to_lowercase().replace(' ', "-"));
-                            let entity_kind_str = format!("entity:{}", entity.kind);
-                            let rels: Vec<(String, String)> = relationships
-                                .iter()
-                                .filter(|r| r.from == entity.name)
-                                .map(|r| {
-                                    let target_topic = format!("entity/{}", r.to.to_lowercase().replace(' ', "-"));
-                                    (target_topic, r.relation.clone())
-                                })
-                                .collect();
-                            let entity_mem = nomen_core::NewMemory {
-                                memory_type: Some(entity_kind_str),
-                                topic: entity_topic,
-                                content: entity.name.clone(),
-                                tier: batch.visibility.clone(),
-                                importance: None,
-                                source: Some("consolidation".to_string()),
-                                model: Some("nomen/consolidation".to_string()),
-                                rel: rels,
-                                refs: vec![],
-                                mentions: vec![stored_dtag.clone()],
-                            };
-                            if let Err(e) = crate::store::store_direct(db, embedder, entity_mem).await {
-                                tracing::warn!("Failed to store entity memory for '{}': {e}", entity.name);
+                    // Relationship edges between entity-memories
+                    for rel in &relationships {
+                        let from_topic = format!("entity/{}", rel.from.to_lowercase().replace(' ', "-"));
+                        let to_topic = format!("entity/{}", rel.to.to_lowercase().replace(' ', "-"));
+                        if let (Ok(Some(from_mem)), Ok(Some(to_mem))) = (
+                            nomen_db::get_memory_by_topic(db, &from_topic).await,
+                            nomen_db::get_memory_by_topic(db, &to_topic).await,
+                        ) {
+                            if let (Some(ref from_dt), Some(ref to_dt)) = (from_mem.d_tag, to_mem.d_tag) {
+                                nomen_db::create_references_edge(
+                                    db, from_dt, to_dt, &rel.relation,
+                                    None, rel.detail.as_deref(),
+                                ).await.ok();
                             }
                         }
                     }

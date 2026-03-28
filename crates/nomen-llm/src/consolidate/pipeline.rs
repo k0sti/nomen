@@ -314,7 +314,7 @@ pub async fn consolidate(
             if contradicts && is_merge {
                 let existing_d_tag = memory.topic.clone();
                 if let Err(e) =
-                    nomen_db::create_references_edge(db, &d_tag, &existing_d_tag, "contradicts")
+                    nomen_db::create_references_edge(db, &d_tag, &existing_d_tag, "contradicts", Some(0.8), None)
                         .await
                 {
                     warn!("Failed to create contradicts edge: {e}");
@@ -339,119 +339,67 @@ pub async fn consolidate(
                 let entity_text = content_for_entities.clone();
                 match config.entity_extractor.extract(&entity_text, &[]).await {
                     Ok((extracted_entities, extracted_relationships)) => {
-                        if let Ok(record_id) = get_memory_record_id(db, &d_tag).await {
-                            // Store entities and create mention edges
-                            for entity in &extracted_entities {
-                                match nomen_db::store_entity(db, &entity.name, &entity.kind).await {
-                                    Ok(entity_id) => {
-                                        let eid = entity_id
-                                            .split_once(':')
-                                            .map(|(_, id)| id)
-                                            .unwrap_or(&entity_id);
-                                        let mid = record_id
-                                            .split_once(':')
-                                            .map(|(_, id)| id)
-                                            .unwrap_or(&record_id);
-                                        if let Err(e) = nomen_db::create_mention_edge(
-                                            db,
-                                            mid,
-                                            eid,
-                                            entity.relevance,
-                                        )
-                                        .await
-                                        {
-                                            warn!(
-                                                "Failed to create mention edge for entity '{}': {e}",
-                                                entity.name
-                                            );
-                                        }
-                                    }
-                                    Err(e) => {
-                                        warn!("Failed to store entity '{}': {e}", entity.name);
+                        // Store entities as memories with type=entity:* and create references edges
+                        for entity in &extracted_entities {
+                            let entity_topic = format!("entity/{}", entity.name.to_lowercase().replace(' ', "-"));
+                            let entity_kind_str = format!("entity:{}", entity.kind);
+                            let entity_content = entity.description.as_deref().unwrap_or(&entity.name);
+
+                            let entity_mem = nomen_core::NewMemory {
+                                memory_type: Some(entity_kind_str),
+                                topic: entity_topic.clone(),
+                                content: entity_content.to_string(),
+                                tier: tier.clone(),
+                                importance: None,
+                                source: Some("consolidation".to_string()),
+                                model: Some("nomen/consolidation".to_string()),
+                                rel: vec![],
+                                refs: vec![],
+                                mentions: vec![],
+                            };
+                            match crate::store::store_direct(db, embedder, entity_mem).await {
+                                Ok(entity_d_tag) => {
+                                    // Create mentions edge: consolidated memory → entity memory
+                                    if let Err(e) = nomen_db::create_references_edge(
+                                        db, &d_tag, &entity_d_tag, "mentions",
+                                        Some(entity.relevance), None,
+                                    ).await {
+                                        warn!("Failed to create mentions edge for '{}': {e}", entity.name);
                                     }
                                 }
-                            }
-
-                            // Store typed relationships between entities
-                            for rel in &extracted_relationships {
-                                // Ensure both entities exist first
-                                let from_id = nomen_db::store_entity(
-                                    db,
-                                    &rel.from,
-                                    &nomen_core::entities::EntityKind::Concept,
-                                )
-                                .await;
-                                let to_id = nomen_db::store_entity(
-                                    db,
-                                    &rel.to,
-                                    &nomen_core::entities::EntityKind::Concept,
-                                )
-                                .await;
-
-                                if let (Ok(from_id), Ok(to_id)) = (from_id, to_id) {
-                                    let fid = from_id
-                                        .split_once(':')
-                                        .map(|(_, id)| id)
-                                        .unwrap_or(&from_id);
-                                    let tid =
-                                        to_id.split_once(':').map(|(_, id)| id).unwrap_or(&to_id);
-                                    if let Err(e) = nomen_db::create_typed_edge(
-                                        db,
-                                        fid,
-                                        tid,
-                                        &rel.relation,
-                                        rel.detail.as_deref(),
-                                    )
-                                    .await
-                                    {
-                                        warn!(
-                                            "Failed to create typed edge {} -> {}: {e}",
-                                            rel.from, rel.to
-                                        );
-                                    }
-                                }
-                            }
-
-                            if !extracted_entities.is_empty() || !extracted_relationships.is_empty()
-                            {
-                                debug!(
-                                    topic = %memory.topic,
-                                    entities = extracted_entities.len(),
-                                    relationships = extracted_relationships.len(),
-                                    "Extracted entities and relationships from consolidated memory"
-                                );
-                            }
-
-                            // Also store entities as memories with type=entity:*
-                            for entity in &extracted_entities {
-                                let entity_topic = format!("entity/{}", entity.name.to_lowercase().replace(' ', "-"));
-                                let entity_kind_str = format!("entity:{}", entity.kind);
-                                // Build rel tags from relationships involving this entity
-                                let rels: Vec<(String, String)> = extracted_relationships
-                                    .iter()
-                                    .filter(|r| r.from == entity.name)
-                                    .map(|r| {
-                                        let target_topic = format!("entity/{}", r.to.to_lowercase().replace(' ', "-"));
-                                        (target_topic, r.relation.clone())
-                                    })
-                                    .collect();
-                                let mentions_tags = vec![d_tag.clone()]; // mention the source memory
-                                let entity_mem = nomen_core::NewMemory {
-                                    memory_type: Some(entity_kind_str),
-                                    topic: entity_topic,
-                                    content: entity.name.clone(),
-                                    tier: tier.clone(),
-                                    importance: None,
-                                    source: Some("consolidation".to_string()),
-                                    model: Some("nomen/consolidation".to_string()),
-                                    rel: rels,
-                                    refs: vec![],
-                                    mentions: mentions_tags,
-                                };
-                                if let Err(e) = crate::store::store_direct(db, embedder, entity_mem).await {
+                                Err(e) => {
                                     warn!("Failed to store entity memory for '{}': {e}", entity.name);
                                 }
                             }
+                        }
+
+                        // Create references edges between entity-memories for relationships
+                        for rel in &extracted_relationships {
+                            let from_topic = format!("entity/{}", rel.from.to_lowercase().replace(' ', "-"));
+                            let to_topic = format!("entity/{}", rel.to.to_lowercase().replace(' ', "-"));
+                            // Resolve topics to d-tags
+                            if let (Ok(Some(from_mem)), Ok(Some(to_mem))) = (
+                                nomen_db::get_memory_by_topic(db, &from_topic).await,
+                                nomen_db::get_memory_by_topic(db, &to_topic).await,
+                            ) {
+                                if let (Some(ref from_dt), Some(ref to_dt)) = (from_mem.d_tag, to_mem.d_tag) {
+                                    if let Err(e) = nomen_db::create_references_edge(
+                                        db, from_dt, to_dt, &rel.relation,
+                                        None, rel.detail.as_deref(),
+                                    ).await {
+                                        warn!("Failed to create relationship edge {} -> {}: {e}", rel.from, rel.to);
+                                    }
+                                }
+                            }
+                        }
+
+                        if !extracted_entities.is_empty() || !extracted_relationships.is_empty() {
+                            debug!(
+                                topic = %memory.topic,
+                                entities = extracted_entities.len(),
+                                relationships = extracted_relationships.len(),
+                                "Extracted entities and relationships from consolidated memory"
+                            );
                         }
                     }
                     Err(e) => {

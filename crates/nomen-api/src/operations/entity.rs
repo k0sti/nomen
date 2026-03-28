@@ -1,4 +1,6 @@
 //! Entity domain operations: list, relationships.
+//!
+//! Entities are memories with `type=entity:*`. Relationships are `references` edges.
 
 use serde_json::{json, Value};
 
@@ -17,8 +19,9 @@ pub async fn list(nomen: &dyn NomenBackend, params: &Value) -> Result<Value, Api
         }
     }
 
-    let entity_list = nomen
-        .entities(kind_filter)
+    let type_filter = kind_filter.map(|k| format!("entity:{k}"));
+    let memories = nomen
+        .entity_memories(type_filter.as_deref())
         .await
         .map_err(ApiError::from_anyhow)?;
 
@@ -26,21 +29,27 @@ pub async fn list(nomen: &dyn NomenBackend, params: &Value) -> Result<Value, Api
     let query = params.get("query").and_then(|v| v.as_str());
     let filtered: Vec<_> = if let Some(q) = query {
         let q_lower = q.to_lowercase();
-        entity_list
+        memories
             .iter()
-            .filter(|e| e.name.to_lowercase().contains(&q_lower))
+            .filter(|m| m.topic.to_lowercase().contains(&q_lower) || m.content.to_lowercase().contains(&q_lower))
             .collect()
     } else {
-        entity_list.iter().collect()
+        memories.iter().collect()
     };
 
     let entities: Vec<Value> = filtered
         .iter()
-        .map(|e| {
+        .map(|m| {
+            let kind = m.memory_type.as_deref()
+                .unwrap_or("entity:concept")
+                .strip_prefix("entity:")
+                .unwrap_or("concept");
             json!({
-                "name": e.name,
-                "kind": e.kind,
-                "created_at": e.created_at,
+                "name": m.content,
+                "topic": m.topic,
+                "kind": kind,
+                "d_tag": m.d_tag,
+                "created_at": m.created_at,
             })
         })
         .collect();
@@ -52,27 +61,15 @@ pub async fn list(nomen: &dyn NomenBackend, params: &Value) -> Result<Value, Api
 }
 
 pub async fn relationships(nomen: &dyn NomenBackend, params: &Value) -> Result<Value, ApiError> {
-    let entity_name = params.get("name").and_then(|v| v.as_str());
+    let d_tag = params.get("d_tag").and_then(|v| v.as_str());
 
     let rels = nomen
-        .entity_relationships(entity_name)
+        .entity_relationships(d_tag)
         .await
         .map_err(ApiError::from_anyhow)?;
 
-    let rel_values: Vec<Value> = rels
-        .iter()
-        .map(|r| {
-            json!({
-                "from": r.from_name,
-                "relation": r.relation,
-                "to": r.to_name,
-                "detail": r.detail,
-            })
-        })
-        .collect();
-
     Ok(json!({
-        "count": rel_values.len(),
-        "relationships": rel_values,
+        "count": rels.len(),
+        "relationships": rels,
     }))
 }

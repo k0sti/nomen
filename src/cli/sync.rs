@@ -128,9 +128,10 @@ pub async fn cmd_entities(
     for entity in entities {
         let name = entity["name"].as_str().unwrap_or("");
         let kind = entity["kind"].as_str().unwrap_or("");
+        let topic = entity["topic"].as_str().unwrap_or("");
         let created_at = entity["created_at"].as_str().unwrap_or("");
         println!("\n  {} [{}]", name.bold(), kind.yellow());
-        println!("    Created: {}", created_at.dimmed());
+        println!("    Topic: {}  Created: {}", topic.dimmed(), created_at.dimmed());
     }
 
     println!("\n{}: {} entities", "Total".bold(), entities.len());
@@ -145,22 +146,14 @@ pub async fn cmd_entities(
             let relationships = relationships.unwrap();
             println!("\n{}\n{}", "Relationships".bold(), "═".repeat(60));
             for rel in relationships {
-                let from_name = rel["from_name"].as_str().unwrap_or("");
                 let relation = rel["relation"].as_str().unwrap_or("");
-                let to_name = rel["to_name"].as_str().unwrap_or("");
-                let detail = rel["detail"].as_str().unwrap_or("");
-                let detail_str = if detail.is_empty() {
-                    String::new()
-                } else {
-                    format!(" ({})", detail.dimmed())
-                };
+                let topic = rel["topic"].as_str().unwrap_or("");
+                let content = rel["content"].as_str().unwrap_or("");
                 println!(
-                    "  {} {} {} {}{}",
-                    from_name.bold(),
-                    "→".dimmed(),
-                    relation.cyan(),
-                    to_name.bold(),
-                    detail_str,
+                    "  {} → {} ({})",
+                    relation.bold(),
+                    topic,
+                    content.dimmed(),
                 );
             }
             println!(

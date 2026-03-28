@@ -12,7 +12,7 @@ use surrealdb::Surreal;
 use tracing::debug;
 
 pub mod embed;
-pub mod entity;
+// entity.rs removed — entities are now memories with type=entity:*
 pub mod graph;
 pub mod groups;
 pub mod memory;
@@ -53,15 +53,12 @@ pub use search::{
     MissingEmbeddingRow, SearchDisplayResult, TextSearchResult,
 };
 
-pub use entity::{
-    create_mention_edge, create_typed_edge, list_entities, list_entity_relationships, store_entity,
+pub use graph::{
+    create_consolidated_edge, create_references_edge, delete_references_for,
+    get_graph_neighbors_simple, GraphNeighbor,
 };
 
 pub use embed::store_embedding;
-
-pub use graph::{
-    create_consolidated_edge, create_references_edge, get_graph_neighbors_simple, GraphNeighbor,
-};
 
 pub use meta::{get_meta, set_meta};
 
@@ -213,27 +210,7 @@ impl nomen_core::access::AccessCheckable for MemoryRecord {
 /// using `platform/community/chat/thread/message`. This struct remains only as a
 /// compatibility bridge for older consolidation and migration paths.
 
-/// An entity record from SurrealDB.
-#[derive(Debug, Clone, Serialize, Deserialize, SurrealValue)]
-pub struct EntityRecord {
-    #[serde(default)]
-    pub id: String,
-    pub name: String,
-    pub kind: String,
-    pub attributes: Option<serde_json::Value>,
-    pub created_at: String,
-}
 
-/// A relationship record from SurrealDB.
-#[derive(Debug, Clone, Serialize, Deserialize, SurrealValue)]
-pub struct RelationshipRecord {
-    pub from_name: String,
-    pub to_name: String,
-    pub relation: String,
-    #[serde(default)]
-    pub detail: String,
-    pub created_at: String,
-}
 
 // ── Database initialization ─────────────────────────────────────────
 

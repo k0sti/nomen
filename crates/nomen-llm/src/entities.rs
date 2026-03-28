@@ -4,7 +4,6 @@ use serde::Deserialize;
 use tracing::warn;
 
 pub use nomen_core::entities::EntityKind;
-pub use nomen_db::{EntityRecord, RelationshipRecord};
 
 /// An entity extracted from text.
 #[derive(Debug, Clone)]
@@ -12,6 +11,8 @@ pub struct ExtractedEntity {
     pub name: String,
     pub kind: EntityKind,
     pub relevance: f64,
+    /// Short description (1-2 sentences). None falls back to name.
+    pub description: Option<String>,
 }
 
 /// A typed relationship between two entities.
@@ -110,6 +111,8 @@ struct LlmEntityResponse {
 struct LlmEntity {
     name: String,
     kind: String,
+    #[serde(default)]
+    description: Option<String>,
     #[serde(default)]
     #[allow(dead_code)]
     attributes: Option<serde_json::Value>,
@@ -231,6 +234,7 @@ impl EntityExtractor for LlmEntityExtractor {
                 name: e.name,
                 kind: EntityKind::from_str(&e.kind).unwrap_or(EntityKind::Concept),
                 relevance: 0.8,
+                description: e.description,
             })
             .collect();
 
@@ -354,6 +358,7 @@ pub fn extract_entities_heuristic(
                 name: known.name.clone(),
                 kind: known.kind.clone(),
                 relevance: known.relevance,
+                description: known.description.clone(),
             });
         }
     }
@@ -369,6 +374,7 @@ pub fn extract_entities_heuristic(
                         name: name.to_string(),
                         kind: EntityKind::Person,
                         relevance: 0.9,
+                        description: None,
                     });
                 }
             }
@@ -417,6 +423,7 @@ pub fn extract_entities_heuristic(
                             name: phrase,
                             kind,
                             relevance: 0.6,
+                            description: None,
                         });
                     }
                 }
@@ -522,6 +529,7 @@ mod tests {
             name: "Nomen".to_string(),
             kind: EntityKind::Project,
             relevance: 1.0,
+            description: None,
         }];
         let entities = extract_entities_heuristic("working on nomen today", &known);
         assert!(entities

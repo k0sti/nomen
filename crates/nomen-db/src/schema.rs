@@ -49,17 +49,13 @@ DEFINE FIELD IF NOT EXISTS nostr_group ON nomen_group TYPE option<string>;
 DEFINE FIELD IF NOT EXISTS created_at ON nomen_group TYPE string;
 DEFINE INDEX IF NOT EXISTS group_id   ON nomen_group FIELDS id UNIQUE;
 
-DEFINE TABLE IF NOT EXISTS entity SCHEMAFULL;
-DEFINE FIELD IF NOT EXISTS name       ON entity TYPE string;
-DEFINE FIELD IF NOT EXISTS kind       ON entity TYPE string;
-DEFINE FIELD IF NOT EXISTS attributes ON entity TYPE option<object>;
-DEFINE FIELD IF NOT EXISTS created_at ON entity TYPE string;
-DEFINE INDEX IF NOT EXISTS entity_name ON entity FIELDS name UNIQUE;
+-- Migration: drop old entity/mentions/related_to tables (entities are now memories with type=entity:*)
+REMOVE TABLE IF EXISTS entity;
+REMOVE TABLE IF EXISTS mentions;
+REMOVE TABLE IF EXISTS related_to;
 
-DEFINE TABLE IF NOT EXISTS mentions SCHEMALESS;
 DEFINE TABLE IF NOT EXISTS consolidated_from SCHEMALESS;
 DEFINE TABLE IF NOT EXISTS references SCHEMALESS;
-DEFINE TABLE IF NOT EXISTS related_to SCHEMALESS;
 
 DEFINE TABLE IF NOT EXISTS meta SCHEMAFULL;
 DEFINE FIELD IF NOT EXISTS key        ON meta TYPE string;

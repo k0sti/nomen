@@ -14,8 +14,7 @@ use nomen_core::send::{SendOptions, SendResult};
 use nomen_core::signer::NomenSigner;
 use nomen_core::NewMemory;
 use nomen_db::{
-    CollectedMessageRecord, CollectedSearchResult, EntityRecord, MemoryRecord, PruneReport,
-    RelationshipRecord,
+    CollectedMessageRecord, CollectedSearchResult, MemoryRecord, PruneReport,
 };
 use nomen_llm::cluster::ClusterReport;
 use nomen_llm::consolidate::{BatchExtraction, CommitResult, ConsolidationReport, PrepareResult};
@@ -83,15 +82,15 @@ impl NomenBackend for Nomen {
         self.store_media(data, mime_type).await
     }
 
-    async fn entities(&self, kind: Option<&str>) -> Result<Vec<EntityRecord>> {
-        self.entities(kind).await
+    async fn entity_memories(&self, type_filter: Option<&str>) -> Result<Vec<MemoryRecord>> {
+        self.entity_memories(type_filter).await
     }
 
     async fn entity_relationships(
         &self,
-        entity_name: Option<&str>,
-    ) -> Result<Vec<RelationshipRecord>> {
-        self.entity_relationships(entity_name).await
+        d_tag: Option<&str>,
+    ) -> Result<Vec<serde_json::Value>> {
+        self.entity_relationships(d_tag).await
     }
 
     async fn group_list(&self) -> Result<Vec<Group>> {
@@ -184,7 +183,8 @@ impl NomenBackend for Nomen {
     }
 
     async fn entity_count(&self, kind: Option<&str>) -> Result<usize> {
-        let entities = self.entities(kind).await?;
+        let type_filter = kind.map(|k| format!("entity:{k}"));
+        let entities = self.entity_memories(type_filter.as_deref()).await?;
         Ok(entities.len())
     }
 

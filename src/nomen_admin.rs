@@ -3,7 +3,6 @@
 use anyhow::Result;
 
 use crate::db;
-use crate::entities::{EntityKind, EntityRecord, RelationshipRecord};
 use crate::Nomen;
 
 impl Nomen {
@@ -12,18 +11,49 @@ impl Nomen {
         db::prune_memories(&self.db, days, dry_run).await
     }
 
-    /// List extracted entities, optionally filtered by kind.
-    pub async fn entities(&self, kind: Option<&str>) -> Result<Vec<EntityRecord>> {
-        let kind = kind.and_then(EntityKind::from_str);
-        db::list_entities(&self.db, kind.as_ref()).await
+    /// List entity memories (type=entity:*), optionally filtered by type.
+    pub async fn entity_memories(
+        &self,
+        type_filter: Option<&str>,
+    ) -> Result<Vec<db::MemoryRecord>> {
+        let records: Vec<db::MemoryRecord> = if let Some(exact) = type_filter {
+            self.db
+                .query("SELECT * FROM memory WHERE type = $filter ORDER BY topic ASC")
+                .bind(("filter", exact.to_string()))
+        } else {
+            self.db
+                .query("SELECT * FROM memory WHERE type IS NOT NONE AND string::starts_with(type, 'entity:') ORDER BY topic ASC")
+        }
+            .await?
+            .check()?
+            .take(0)?;
+        Ok(records)
     }
 
-    /// List entity relationships, optionally filtered by entity name.
+    /// List references edges for an entity memory (by d_tag).
     pub async fn entity_relationships(
         &self,
-        entity_name: Option<&str>,
-    ) -> Result<Vec<RelationshipRecord>> {
-        db::list_entity_relationships(&self.db, entity_name).await
+        d_tag: Option<&str>,
+    ) -> Result<Vec<serde_json::Value>> {
+        use serde_json::json;
+        let results: Vec<serde_json::Value> = if let Some(dt) = d_tag {
+            // Get edges from/to this memory
+            let neighbors = db::get_graph_neighbors_simple(&self.db, dt).await?;
+            neighbors
+                .iter()
+                .map(|n| {
+                    json!({
+                        "relation": n.edge_type,
+                        "topic": n.topic,
+                        "d_tag": n.d_tag,
+                        "content": n.content,
+                    })
+                })
+                .collect()
+        } else {
+            vec![]
+        };
+        Ok(results)
     }
 
     /// Create a new group.
