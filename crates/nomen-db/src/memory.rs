@@ -94,7 +94,7 @@ pub async fn store_memory_direct(
          content = $content, tier = $tier, scope = $scope, \
          topic = $topic, source = $source, model = $model, \
          version = $version, nostr_id = $nostr_id, d_tag = $d_tag, \
-         created_at = $created_at, updated_at = $updated_at, ephemeral = $ephemeral",
+         created_at = $created_at, updated_at = $updated_at",
     )
     .bind(("content", record.content))
     .bind(("tier", record.tier))
@@ -107,7 +107,6 @@ pub async fn store_memory_direct(
     .bind(("d_tag", record.d_tag))
     .bind(("created_at", record.created_at))
     .bind(("updated_at", record.updated_at))
-    .bind(("ephemeral", record.ephemeral))
     .await?
     .check()?;
 
@@ -122,7 +121,7 @@ pub async fn list_memories(
 ) -> Result<Vec<MemoryRecord>> {
     let (sql, bind_tier);
     // Exclude embedding from SELECT to avoid SurrealDB HNSW index deserialization issues
-    let fields = "content, tier, scope, topic, source, model, version, nostr_id, d_tag, created_at, updated_at, ephemeral, consolidated_from, consolidated_at, last_accessed, access_count, importance";
+    let fields = "content, tier, scope, topic, source, model, version, nostr_id, d_tag, created_at, updated_at, last_accessed, access_count, importance";
     if let Some(t) = tier {
         sql = format!(
             "SELECT {fields} FROM memory WHERE tier = $tier ORDER BY created_at DESC LIMIT {limit}"
@@ -149,7 +148,7 @@ pub async fn list_memories(
 /// Get a single memory by d-tag (topic).
 pub async fn get_memory_by_dtag(db: &Surreal<Db>, d_tag: &str) -> Result<Option<MemoryRecord>> {
     let mut results: Vec<MemoryRecord> = db
-        .query("SELECT content, tier, scope, topic, source, model, version, nostr_id, d_tag, created_at, updated_at, ephemeral, consolidated_from, consolidated_at, last_accessed, access_count, importance FROM memory WHERE d_tag = $d_tag LIMIT 1")
+        .query("SELECT content, tier, scope, topic, source, model, version, nostr_id, d_tag, created_at, updated_at, last_accessed, access_count, importance FROM memory WHERE d_tag = $d_tag LIMIT 1")
         .bind(("d_tag", d_tag.to_string()))
         .await?
         .check()?
@@ -160,7 +159,7 @@ pub async fn get_memory_by_dtag(db: &Surreal<Db>, d_tag: &str) -> Result<Option<
 /// Get a single memory by topic field (raw topic, not d-tag).
 pub async fn get_memory_by_topic(db: &Surreal<Db>, topic: &str) -> Result<Option<MemoryRecord>> {
     let mut results: Vec<MemoryRecord> = db
-        .query("SELECT content, tier, scope, topic, source, model, version, nostr_id, d_tag, created_at, updated_at, ephemeral, consolidated_from, consolidated_at, last_accessed, access_count, importance FROM memory WHERE topic = $topic LIMIT 1")
+        .query("SELECT content, tier, scope, topic, source, model, version, nostr_id, d_tag, created_at, updated_at, last_accessed, access_count, importance FROM memory WHERE topic = $topic LIMIT 1")
         .bind(("topic", topic.to_string()))
         .await?
         .check()?
@@ -192,24 +191,6 @@ pub async fn delete_memory_by_nostr_id(db: &Surreal<Db>, nostr_id: &str) -> Resu
         .bind(("nostr_id", nostr_id.to_string()))
         .await?
         .check()?;
-    Ok(())
-}
-
-/// Set consolidation provenance tags on a memory record.
-pub async fn set_consolidation_tags(
-    db: &Surreal<Db>,
-    d_tag: &str,
-    consolidated_from: &str,
-    consolidated_at: &str,
-) -> Result<()> {
-    db.query(
-        "UPDATE memory SET consolidated_from = $from, consolidated_at = $at WHERE d_tag = $d_tag",
-    )
-    .bind(("d_tag", d_tag.to_string()))
-    .bind(("from", consolidated_from.to_string()))
-    .bind(("at", consolidated_at.to_string()))
-    .await?
-    .check()?;
     Ok(())
 }
 

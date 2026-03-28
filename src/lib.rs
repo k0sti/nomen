@@ -21,8 +21,7 @@ pub mod search;
 pub mod send;
 pub mod signer;
 
-#[cfg(feature = "migrate")]
-pub mod migrate;
+
 
 // Binary-only modules — not part of the public library API.
 #[doc(hidden)]

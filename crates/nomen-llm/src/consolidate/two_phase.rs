@@ -208,7 +208,6 @@ pub async fn commit(
         .transpose()?
         .unwrap_or_default();
 
-    let now_timestamp = chrono::Utc::now().timestamp();
     let author_hex = config.author_pubkey.as_deref().unwrap_or("");
 
     let mut result = CommitResult {
@@ -264,16 +263,6 @@ pub async fn commit(
             } else {
                 result.memories_created += 1;
             }
-
-            // Consolidation tags
-            nomen_db::set_consolidation_tags(
-                db,
-                &stored_dtag,
-                &batch.message_count.to_string(),
-                &now_timestamp.to_string(),
-            )
-            .await
-            .ok();
 
             // Importance
             nomen_db::set_importance(db, &stored_dtag, memory.importance as i32)

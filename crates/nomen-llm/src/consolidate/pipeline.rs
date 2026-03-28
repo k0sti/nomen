@@ -244,14 +244,6 @@ pub async fn consolidate(
                                                         .await?;
                                                 // Bump version
                                                 bump_memory_version(db, &stored_dtag).await.ok();
-                                                nomen_db::set_consolidation_tags(
-                                                    db,
-                                                    &stored_dtag,
-                                                    &group_msgs.len().to_string(),
-                                                    &now_timestamp.to_string(),
-                                                )
-                                                .await
-                                                .ok();
                                                 report.memories_updated += 1;
                                             }
                                             _ => {}
@@ -295,10 +287,6 @@ pub async fn consolidate(
                 model: Some("nomen/consolidation".to_string()),
             };
 
-            // Build extra tags for provenance
-            let consolidated_from_count = group_msgs.len().to_string();
-            let consolidated_at = now_timestamp.to_string();
-
             let d_tag = crate::store::store_direct(db, embedder, mem).await?;
 
             if is_merge {
@@ -308,16 +296,6 @@ pub async fn consolidate(
             } else {
                 report.memories_created += 1;
             }
-
-            // Update the memory record with consolidation tags
-            nomen_db::set_consolidation_tags(
-                db,
-                &d_tag,
-                &consolidated_from_count,
-                &consolidated_at,
-            )
-            .await
-            .ok();
 
             // Store importance score
             if let Some(imp) = final_importance {
@@ -468,6 +446,8 @@ pub async fn consolidate(
                 let version_str = if is_merge { "2" } else { "1" };
                 // Extract visibility and scope from the d_tag for indexed tags
                 let (vis_tag, scope_tag) = nomen_core::memory::extract_visibility_scope(&d_tag);
+                let consolidated_from_count = group_msgs.len().to_string();
+                let consolidated_at = now_timestamp.to_string();
                 let mut event_tags = vec![
                     Tag::custom(TagKind::Custom("d".into()), vec![d_tag.clone()]),
                     Tag::custom(TagKind::Custom("visibility".into()), vec![vis_tag]),

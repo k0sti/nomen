@@ -31,7 +31,7 @@ pub use memory::{
     count_memories_by_type, delete_collected_before, delete_memories_by_dtags,
     delete_memory_by_dtag, delete_memory_by_nostr_id, delete_memory_by_topic,
     find_prunable_memories, get_memory_by_dtag, get_memory_by_topic, list_memories, prune_memories,
-    set_consolidation_tags, set_importance, store_memory, store_memory_direct,
+    set_importance, store_memory, store_memory_direct,
     update_access_tracking, update_access_tracking_batch, PrunableMemory, PruneReport,
 };
 

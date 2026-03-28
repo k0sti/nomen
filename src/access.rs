@@ -12,7 +12,6 @@ mod tests {
     fn make_memory(tier: &str, scope: &str, source: &str) -> MemoryRecord {
         MemoryRecord {
             content: String::new(),
-            summary: None,
             embedding: None,
             tier: tier.to_string(),
             scope: scope.to_string(),
@@ -24,7 +23,6 @@ mod tests {
             d_tag: None,
             created_at: String::new(),
             updated_at: String::new(),
-            ephemeral: false,
         }
     }
 

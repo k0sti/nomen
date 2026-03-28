@@ -611,6 +611,10 @@ const memoryNomenPlugin = {
             api.logger.warn(
               `memory-nomen: message.store outbound failed: ${resp.error?.message ?? "unknown error"}`,
             );
+          } else {
+            api.logger.info(
+              `memory-nomen: message.store outbound ok platform=${container.platform} chat=${container.chatId} thread=${container.threadId ?? "-"} messageId=${messageId}`,
+            );
           }
         } catch (err) {
           api.logger.warn(
