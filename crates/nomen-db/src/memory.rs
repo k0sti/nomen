@@ -378,31 +378,8 @@ pub async fn prune_memories(db: &Surreal<Db>, days: u64, dry_run: bool) -> Resul
     })
 }
 
-/// Extract scope from d-tag.
-///
-/// Supports both v0.2 (`{visibility}:{context}:{topic}`) and legacy v0.1 formats.
-/// Returns the context segment as scope (e.g., pubkey hex for personal, group id for group).
+/// Extract scope from d-tag (v0.3 format).
 fn extract_scope(d_tag: &str) -> String {
-    // v0.2 format: {visibility}:{context}:{topic}
-    if nomen_core::memory::is_v2_dtag(d_tag) {
-        let mut parts = d_tag.splitn(3, ':');
-        let _visibility = parts.next();
-        let context = parts.next().unwrap_or("");
-        return context.to_string();
-    }
-
-    // v0.1 legacy formats
-    if d_tag.starts_with("snowclaw:memory:npub:") {
-        d_tag
-            .strip_prefix("snowclaw:memory:npub:")
-            .unwrap_or("")
-            .to_string()
-    } else if d_tag.starts_with("snowclaw:memory:group:") {
-        d_tag
-            .strip_prefix("snowclaw:memory:group:")
-            .unwrap_or("")
-            .to_string()
-    } else {
-        String::new()
-    }
+    let (_visibility, scope) = nomen_core::memory::extract_visibility_scope(d_tag);
+    scope
 }

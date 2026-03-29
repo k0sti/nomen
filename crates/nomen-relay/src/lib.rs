@@ -14,9 +14,7 @@ use anyhow::{Context, Result};
 use nostr_sdk::prelude::*;
 use tracing::{debug, info, warn};
 
-use nomen_core::kinds::{
-    COLLECTED_MESSAGE_KIND, LEGACY_APP_DATA_KIND, LEGACY_LESSON_KIND, LESSON_KIND, MEMORY_KIND,
-};
+use nomen_core::kinds::{COLLECTED_MESSAGE_KIND, MEMORY_KIND};
 use nomen_core::signer::NomenSigner;
 
 /// Result of publishing an event to relays.
@@ -106,15 +104,10 @@ impl RelayManager {
         Ok(())
     }
 
-    /// Fetch memory events (kind 31234 + legacy 30078) and agent lessons (kind 31235 + legacy 4129).
+    /// Fetch memory events (kind 31234).
     pub async fn fetch_memories(&self, pubkeys: &[PublicKey]) -> Result<Events> {
         let filter = Filter::new()
-            .kinds(vec![
-                Kind::Custom(MEMORY_KIND),
-                Kind::Custom(LESSON_KIND),
-                Kind::Custom(LEGACY_APP_DATA_KIND),
-                Kind::Custom(LEGACY_LESSON_KIND),
-            ])
+            .kinds(vec![Kind::Custom(MEMORY_KIND)])
             .authors(pubkeys.to_vec());
 
         debug!("Fetching events for {} pubkeys", pubkeys.len());
@@ -261,12 +254,7 @@ impl RelayManager {
         pubkeys: &[PublicKey],
     ) -> Result<tokio::sync::mpsc::Receiver<Event>> {
         let filter = Filter::new()
-            .kinds(vec![
-                Kind::Custom(MEMORY_KIND),
-                Kind::Custom(LESSON_KIND),
-                Kind::Custom(LEGACY_APP_DATA_KIND),
-                Kind::Custom(LEGACY_LESSON_KIND),
-            ])
+            .kinds(vec![Kind::Custom(MEMORY_KIND)])
             .authors(pubkeys.to_vec());
 
         self.client.subscribe(filter, None).await?;

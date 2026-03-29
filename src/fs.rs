@@ -146,20 +146,19 @@ pub fn path_to_dtag(rel_path: &Path) -> Option<String> {
 
     if !matches!(
         visibility,
-        "public" | "group" | "circle" | "personal" | "private" | "internal"
+        "public" | "group" | "circle" | "personal" | "private"
     ) {
         return None;
     }
 
     let rest = components.next().unwrap_or("");
 
-    if visibility == "public" || visibility == "private" || visibility == "internal" {
+    if visibility == "public" || visibility == "private" {
         // Unscoped tiers: {tier}/{topic}
         if rest.is_empty() {
             return None;
         }
-        let vis = memory::normalize_tier_name(visibility);
-        return Some(memory::build_dtag(&vis, "", rest));
+        return Some(memory::build_dtag(visibility, "", rest));
     }
 
     // Scoped tiers (personal, group, circle): {tier}/{scope}/{topic}
@@ -471,7 +470,7 @@ async fn push_inner(dispatch: &DispatchFn, dir: &Path, verbose: bool, debug: boo
             }
         };
 
-        // Extract clean topic from d-tag (handles both v0.2 colon and v0.3 slash formats)
+        // Extract clean topic from d-tag
         let topic = if !d_tag.is_empty() {
             memory::dtag_topic(&d_tag)
                 .unwrap_or(&parsed.frontmatter.topic)
@@ -1267,9 +1266,7 @@ async fn find_orphan_files(dispatch: &DispatchFn, dir: &Path) -> Result<Vec<Path
 
 /// Remove empty directories recursively (bottom-up), excluding the sync root.
 fn clean_empty_dirs(dir: &Path) -> Result<()> {
-    for tier in &[
-        "public", "private", "personal", "internal", "group", "circle",
-    ] {
+    for tier in &["public", "private", "personal", "group", "circle"] {
         let tier_dir = dir.join(tier);
         if tier_dir.is_dir() {
             clean_empty_dirs_recursive(&tier_dir)?;

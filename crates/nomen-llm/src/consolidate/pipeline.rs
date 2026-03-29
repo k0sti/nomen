@@ -87,8 +87,7 @@ pub async fn consolidate(
     // Group messages by sender/container identity + time window + scope.
     // Scope partitioning ensures messages from different groups/tiers
     // are never consolidated together (cross-group guard).
-    // Container identity now prefers canonical chat/thread fields, with
-    // legacy `channel` only as a fallback inside the compatibility record.
+    // Container identity uses canonical chat/thread fields.
     let grouped = group_messages(collected.clone());
     debug!(
         groups = grouped.len(),
@@ -171,7 +170,7 @@ pub async fn consolidate(
                 continue;
             }
 
-            // Build v0.2 d-tag: {visibility}:{context}:{topic}
+            // Build d-tag: {visibility}/{scope}/{topic}
             let author_hex = config.author_pubkey.as_deref().unwrap_or("");
             let d_tag = nomen_core::memory::build_dtag_from_tier(&tier, author_hex, &memory.topic);
 
@@ -429,7 +428,7 @@ pub async fn consolidate(
                     content_str
                 };
 
-                // Build tags (v0.2: visibility + scope indexed tags)
+                // Build tags (visibility + scope indexed tags)
                 let version_str = if is_merge { "2" } else { "1" };
                 // Extract visibility and scope from the d_tag for indexed tags
                 let (vis_tag, scope_tag) = nomen_core::memory::extract_visibility_scope(&d_tag);

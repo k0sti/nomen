@@ -51,7 +51,7 @@ pub struct ConsolidationConfig {
     pub thread_id: Option<Vec<String>>,
     /// Restrict consolidation input to messages created at/after this unix timestamp.
     pub since: Option<i64>,
-    /// Author's hex pubkey, used for v0.2 d-tag context on personal/internal memories.
+    /// Author's hex pubkey, used for d-tag scope on personal memories.
     pub author_pubkey: Option<String>,
 }
 
@@ -83,8 +83,7 @@ pub struct ConsolidationReport {
     pub memories_updated: usize,
     pub events_deleted: usize,
     pub events_published: usize,
-    /// Legacy reporting field name. Values represent the primary conversation
-    /// container used during grouping (typically chat or chat/thread identity).
+    /// Primary conversation containers used during grouping.
     pub channels: Vec<String>,
     pub groups: Vec<GroupSummary>,
     pub dry_run: bool,
@@ -102,8 +101,7 @@ pub struct GroupSummary {
 #[derive(Debug, Clone, Hash, Eq, PartialEq)]
 pub(crate) struct GroupKey {
     /// Sender identity for private batches, or primary conversation container
-    /// identity for group/public batches. Prefer canonical chat/thread
-    /// identity, with legacy `channel` only as a fallback.
+    /// identity for group/public batches.
     pub identity: String,
     /// Time window index (created_at / TIME_WINDOW_SECS)
     pub window: i64,
@@ -134,7 +132,6 @@ pub struct BatchMessage {
     pub id: String,
     pub sender: String,
     pub content: String,
-    /// Legacy compatibility field. Prefer `chat`/`thread` and `container`.
     pub channel: String,
     /// Primary conversation identity used for grouping/reporting.
     pub container: String,

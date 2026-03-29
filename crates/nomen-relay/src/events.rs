@@ -2,18 +2,16 @@
 
 use nostr_sdk::prelude::*;
 
-use nomen_core::memory::{base_tier, normalize_content, parse_d_tag, ParsedMemory};
+use nomen_core::memory::{base_tier, parse_d_tag, ParsedMemory};
 use nomen_core::signer::NomenSigner;
 
 /// Parse tier from event tags.
 ///
 /// Reads `visibility` tag first, then falls back to d-tag prefix.
-/// Normalizes legacy "internal" → "private".
-/// Supports both v0.2 (`:` separator) and v0.3 (`/` separator) d-tag formats.
 pub fn parse_tier(tags: &Tags) -> String {
     // Try visibility tag first (canonical)
     let tier_val = if let Some(vis) = get_tag_value(tags, "visibility") {
-        nomen_core::memory::normalize_tier_name(&vis)
+        vis
     } else {
         // Fall back to d-tag prefix (supports both : and / separators)
         if let Some(d) = get_tag_value(tags, "d") {
@@ -80,7 +78,7 @@ pub fn parse_event(event: &Event, signer: &dyn NomenSigner) -> ParsedMemory {
     let model = get_tag_value(tags, "model").unwrap_or_else(|| "unknown".to_string());
     let importance = get_tag_value(tags, "importance").and_then(|v| v.parse::<i32>().ok());
 
-    let content_str = if tier == "personal" || tier == "private" {
+    let content = if tier == "personal" || tier == "private" {
         match try_decrypt_content(event, signer) {
             Some(decrypted) => decrypted,
             None => event.content.to_string(),
@@ -88,9 +86,6 @@ pub fn parse_event(event: &Event, signer: &dyn NomenSigner) -> ParsedMemory {
     } else {
         event.content.to_string()
     };
-
-    // Normalize: if legacy JSON content, merge summary+detail into plain text
-    let content = normalize_content(&content_str);
 
     // Always normalize d_tag to clean topic for SurrealDB storage
     ParsedMemory {

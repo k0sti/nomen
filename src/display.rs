@@ -11,7 +11,7 @@ pub fn format_timestamp(ts: u64) -> String {
     }
 }
 
-pub fn display_memories(npubs: &[String], memories: &[ParsedMemory], lesson_count: usize) {
+pub fn display_memories(npubs: &[String], memories: &[ParsedMemory]) {
     for npub in npubs {
         println!(
             "\n{}\n{}",
@@ -32,7 +32,7 @@ pub fn display_memories(npubs: &[String], memories: &[ParsedMemory], lesson_coun
     for mem in memories {
         match mem.visibility.as_str() {
             "public" => public_count += 1,
-            "personal" | "private" | "internal" => personal_count += 1,
+            "personal" | "private" => personal_count += 1,
             t if t.starts_with("group") => group_count += 1,
             _ => public_count += 1,
         }
@@ -42,7 +42,7 @@ pub fn display_memories(npubs: &[String], memories: &[ParsedMemory], lesson_coun
         let tier_display = format!("[{}]", mem.visibility);
         let tier_colored = match mem.visibility.as_str() {
             "public" => tier_display.green(),
-            "personal" | "private" | "internal" => tier_display.red(),
+            "personal" | "private" => tier_display.red(),
             _ => tier_display.yellow(),
         };
 
@@ -53,12 +53,11 @@ pub fn display_memories(npubs: &[String], memories: &[ParsedMemory], lesson_coun
     }
 
     println!(
-        "\n{}: {} memories ({} public, {} group, {} personal), {} lessons\n",
+        "\n{}: {} memories ({} public, {} group, {} personal)\n",
         "Total".bold(),
         memories.len(),
         public_count,
         group_count,
         personal_count,
-        lesson_count
     );
 }

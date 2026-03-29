@@ -30,6 +30,26 @@ fn test_nsec() -> String {
     keys.secret_key().to_bech32().unwrap()
 }
 
+/// Build a NIP-98 Authorization header from an nsec and URL.
+fn build_nip98_auth_header(nsec: &str, url: &str) -> String {
+    use base64::engine::{general_purpose, Engine};
+    let keys = Keys::parse(nsec).unwrap();
+    let event = EventBuilder::new(Kind::Custom(27235), "")
+        .tag(Tag::custom(
+            TagKind::Custom("u".into()),
+            vec![url.to_string()],
+        ))
+        .tag(Tag::custom(
+            TagKind::Custom("method".into()),
+            vec!["POST".to_string()],
+        ))
+        .sign_with_keys(&keys)
+        .unwrap();
+    let event_json = serde_json::to_string(&event).unwrap();
+    let token = general_purpose::STANDARD.encode(event_json.as_bytes());
+    format!("Nostr {token}")
+}
+
 // ── Fixture requests ──────────────────────────────────────────────────
 //
 // Reusable `(action, params)` pairs. Each test picks the fixtures it needs
@@ -182,16 +202,33 @@ async fn dispatch_http_unauthed(router: axum::Router, f: &Fixture) -> Value {
     serde_json::from_slice(&bytes).unwrap_or(json!(null))
 }
 
-/// HTTP dispatch via test router with nsec auth header.
+/// HTTP dispatch via test router with NIP-98 auth header.
 async fn dispatch_http(router: axum::Router, f: &Fixture, nsec: &str) -> Value {
+    use base64::engine::{general_purpose, Engine};
     use tower::ServiceExt;
+
+    // Build a NIP-98 auth event (kind 27235)
+    let keys = Keys::parse(nsec).unwrap();
+    let event = EventBuilder::new(Kind::Custom(27235), "")
+        .tag(Tag::custom(
+            TagKind::Custom("u".into()),
+            vec!["http://localhost/memory/api/dispatch".to_string()],
+        ))
+        .tag(Tag::custom(
+            TagKind::Custom("method".into()),
+            vec!["POST".to_string()],
+        ))
+        .sign_with_keys(&keys)
+        .unwrap();
+    let event_json = serde_json::to_string(&event).unwrap();
+    let token = general_purpose::STANDARD.encode(event_json.as_bytes());
 
     let body = json!({ "action": f.action, "params": f.params });
     let req = http::Request::builder()
         .method("POST")
         .uri("/memory/api/dispatch")
         .header("content-type", "application/json")
-        .header("authorization", format!("Nostr {nsec}"))
+        .header("authorization", format!("Nostr {token}"))
         .body(axum::body::Body::from(
             serde_json::to_string(&body).unwrap(),
         ))
@@ -925,7 +962,7 @@ async fn e2e_http_smoke_test() {
     let client = reqwest::Client::new();
     let base = format!("http://{addr}");
     let nsec = test_nsec();
-    let auth_header = format!("Nostr {nsec}");
+    let auth_header = build_nip98_auth_header(&nsec, &format!("{base}/memory/api/dispatch"));
 
     // 1. Health check
     let health_resp = client

@@ -250,9 +250,7 @@ fn group_by_namespace(
 /// Uses the most restrictive tier among members:
 /// private > personal > group > public
 fn derive_cluster_tier(members: &[&ClusterableMemory]) -> String {
-    let has_private = members
-        .iter()
-        .any(|m| m.tier == "private" || m.tier == "internal");
+    let has_private = members.iter().any(|m| m.tier == "private");
     let has_personal = members.iter().any(|m| m.tier == "personal");
     let has_group = members.iter().any(|m| m.tier.starts_with("group"));
 
@@ -466,44 +464,23 @@ pub async fn run_cluster_fusion(
 mod tests {
     use super::*;
 
+    fn mem(topic: &str, d_tag: &str, tier: &str) -> ClusterableMemory {
+        ClusterableMemory {
+            topic: topic.to_string(),
+            d_tag: d_tag.to_string(),
+            detail: "detail".to_string(),
+            tier: tier.to_string(),
+        }
+    }
+
     #[test]
     fn test_group_by_namespace_depth_2() {
         let memories = vec![
-            ClusterableMemory {
-                topic: "user/k0/preferences".to_string(),
-                d_tag: "d1".to_string(),
-                summary: "prefs".to_string(),
-                detail: "detail".to_string(),
-                tier: "public".to_string(),
-            },
-            ClusterableMemory {
-                topic: "user/k0/timezone".to_string(),
-                d_tag: "d2".to_string(),
-                summary: "tz".to_string(),
-                detail: "detail".to_string(),
-                tier: "public".to_string(),
-            },
-            ClusterableMemory {
-                topic: "user/k0/projects".to_string(),
-                d_tag: "d3".to_string(),
-                summary: "projects".to_string(),
-                detail: "detail".to_string(),
-                tier: "public".to_string(),
-            },
-            ClusterableMemory {
-                topic: "project/nomen/architecture".to_string(),
-                d_tag: "d4".to_string(),
-                summary: "arch".to_string(),
-                detail: "detail".to_string(),
-                tier: "public".to_string(),
-            },
-            ClusterableMemory {
-                topic: "shallow".to_string(),
-                d_tag: "d5".to_string(),
-                summary: "shallow".to_string(),
-                detail: "detail".to_string(),
-                tier: "public".to_string(),
-            },
+            mem("user/k0/preferences", "d1", "public"),
+            mem("user/k0/timezone", "d2", "public"),
+            mem("user/k0/projects", "d3", "public"),
+            mem("project/nomen/architecture", "d4", "public"),
+            mem("shallow", "d5", "public"),
         ];
 
         let groups = group_by_namespace(&memories, 2);
@@ -517,27 +494,9 @@ mod tests {
     #[test]
     fn test_group_by_namespace_depth_1() {
         let memories = vec![
-            ClusterableMemory {
-                topic: "user/k0/preferences".to_string(),
-                d_tag: "d1".to_string(),
-                summary: "prefs".to_string(),
-                detail: "detail".to_string(),
-                tier: "public".to_string(),
-            },
-            ClusterableMemory {
-                topic: "user/k0/timezone".to_string(),
-                d_tag: "d2".to_string(),
-                summary: "tz".to_string(),
-                detail: "detail".to_string(),
-                tier: "public".to_string(),
-            },
-            ClusterableMemory {
-                topic: "project/nomen/architecture".to_string(),
-                d_tag: "d3".to_string(),
-                summary: "arch".to_string(),
-                detail: "detail".to_string(),
-                tier: "public".to_string(),
-            },
+            mem("user/k0/preferences", "d1", "public"),
+            mem("user/k0/timezone", "d2", "public"),
+            mem("project/nomen/architecture", "d3", "public"),
         ];
 
         let groups = group_by_namespace(&memories, 1);
@@ -548,13 +507,7 @@ mod tests {
 
     #[test]
     fn test_derive_cluster_tier() {
-        let public = ClusterableMemory {
-            topic: "t".to_string(),
-            d_tag: "d".to_string(),
-            summary: "s".to_string(),
-            detail: "d".to_string(),
-            tier: "public".to_string(),
-        };
+        let public = mem("t", "d", "public");
         let personal = ClusterableMemory {
             tier: "personal".to_string(),
             ..public.clone()

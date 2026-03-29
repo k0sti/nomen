@@ -118,7 +118,7 @@ fn v2_tools_list() -> Value {
                     "type": "object",
                     "properties": {
                         "query": { "type": "string", "description": "Search query" },
-                        "visibility": { "type": "string", "description": "Filter by visibility (public/group/circle/personal/internal)" },
+                        "visibility": { "type": "string", "description": "Filter by visibility (public/group/circle/personal/private)" },
                         "scope": { "type": "string", "description": "Filter by scope" },
                         "limit": { "type": "integer", "description": "Max results (default 10)" },
                         "retrieval": {
@@ -144,7 +144,7 @@ fn v2_tools_list() -> Value {
                     "properties": {
                         "topic": { "type": "string", "description": "Topic/namespace for the memory" },
                         "content": { "type": "string", "description": "Full memory content (plain text/markdown)" },
-                        "visibility": { "type": "string", "description": "Visibility (public/group/circle/personal/internal, default: public)" },
+                        "visibility": { "type": "string", "description": "Visibility (public/group/circle/personal/private, default: public)" },
                         "scope": { "type": "string", "description": "Scope (required for group/circle)" },
                         "type": { "type": "string", "description": "Memory type (e.g. entity:person, entity:project, cluster)" },
                         "importance": { "type": "integer", "description": "Importance score 1-10" },
@@ -603,51 +603,6 @@ impl McpServer {
 
 // ── Stdio event loop ────────────────────────────────────────────────
 
-/// Serve MCP over stdio (legacy reference-based, no session identity support).
-pub async fn serve_stdio(nomen: &dyn NomenBackend) -> Result<()> {
-    info!("Nomen MCP server starting on stdio (legacy ref mode)");
-
-    let stdin = io::stdin();
-    let mut stdout = io::stdout();
-
-    for line in stdin.lock().lines() {
-        let line = match line {
-            Ok(l) => l,
-            Err(e) => {
-                error!("Failed to read stdin: {e}");
-                break;
-            }
-        };
-
-        let line = line.trim();
-        if line.is_empty() {
-            continue;
-        }
-
-        let req: JsonRpcRequest = match serde_json::from_str(line) {
-            Ok(r) => r,
-            Err(e) => {
-                let err_resp =
-                    JsonRpcResponse::error(Value::Null, -32700, format!("Parse error: {e}"));
-                let _ = write_response(&mut stdout, &err_resp);
-                continue;
-            }
-        };
-
-        // Notifications (no id) don't get responses
-        let is_notification = req.id.is_none() || req.method.starts_with("notifications/");
-
-        let response = handle_legacy_request(nomen, &req).await;
-
-        if !is_notification {
-            write_response(&mut stdout, &response)?;
-        }
-    }
-
-    info!("MCP server shutting down");
-    Ok(())
-}
-
 /// Serve MCP over stdio with session identity support.
 pub async fn serve_stdio_arc(nomen: Arc<dyn NomenBackend>) -> Result<()> {
     let mut server = McpServer::new(nomen);
@@ -693,60 +648,6 @@ pub async fn serve_stdio_arc(nomen: Arc<dyn NomenBackend>) -> Result<()> {
 
     info!("MCP server shutting down");
     Ok(())
-}
-
-/// Legacy request handler for backward compat (no session identity).
-async fn handle_legacy_request(nomen: &dyn NomenBackend, req: &JsonRpcRequest) -> JsonRpcResponse {
-    let id = req.id.clone().unwrap_or(Value::Null);
-
-    match req.method.as_str() {
-        "initialize" => JsonRpcResponse::success(id, server_info()),
-        "notifications/initialized" => JsonRpcResponse::success(id, json!({})),
-        "tools/list" => JsonRpcResponse::success(id, v2_tools_list()),
-        "tools/call" => {
-            let tool_name = req
-                .params
-                .get("name")
-                .and_then(|n| n.as_str())
-                .unwrap_or("");
-            let arguments = req.params.get("arguments").cloned().unwrap_or(json!({}));
-
-            debug!(tool = tool_name, "MCP tool call");
-
-            let action = match nomen_api::mcp_tool_to_action(tool_name) {
-                Some(a) => a,
-                None => {
-                    return JsonRpcResponse::success(
-                        id,
-                        json!({
-                            "content": [{
-                                "type": "text",
-                                "text": format!("Unknown tool: {tool_name}")
-                            }],
-                            "isError": true
-                        }),
-                    );
-                }
-            };
-
-            let api_resp = nomen_api::dispatch(nomen, &action, &arguments).await;
-
-            let result_json =
-                serde_json::to_value(&api_resp).unwrap_or_else(|_| json!({"ok": false}));
-
-            JsonRpcResponse::success(
-                id,
-                json!({
-                    "content": [{
-                        "type": "text",
-                        "text": result_json.to_string()
-                    }]
-                }),
-            )
-        }
-        "ping" => JsonRpcResponse::success(id, json!({})),
-        _ => JsonRpcResponse::method_not_found(id, &req.method),
-    }
 }
 
 fn write_response(stdout: &mut io::Stdout, response: &JsonRpcResponse) -> Result<()> {

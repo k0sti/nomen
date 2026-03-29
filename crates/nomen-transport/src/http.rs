@@ -2,8 +2,6 @@
 //!
 //! Supports per-request identity via NIP-98 HTTP Auth:
 //! `Authorization: Nostr <base64-encoded-kind-27235-event>`
-//!
-//! Also supports legacy `Authorization: Nostr nsec1...` for backward compatibility.
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -19,11 +17,10 @@ use serde_json::{json, Value};
 use tokio::sync::RwLock;
 use tower_http::cors::CorsLayer;
 use tower_http::services::ServeDir;
-use tracing::{debug, info, warn};
+use tracing::{debug, info};
 
 use nomen_api::NomenBackend;
 use nomen_core::config::Config;
-use nomen_core::signer::NomenSigner;
 
 // ── Shared state ─────────────────────────────────────────────────
 
@@ -135,7 +132,7 @@ async fn api_dispatch(
             }
             let resp = nomen_core::api::types::ApiResponse::error(
                 nomen_core::api::errors::ApiError::unauthorized(
-                    "Authentication required. Provide Authorization: Nostr nsec1... header",
+                    "Authentication required. Provide Authorization: Nostr <NIP-98 event> header",
                 ),
             )
             .with_request_id(request_id);
@@ -151,34 +148,14 @@ async fn api_dispatch(
 
 /// Extract identity from Authorization header.
 ///
-/// Supports:
-/// 1. NIP-98: `Authorization: Nostr <base64-encoded-kind-27235-event>`
-/// 2. Legacy: `Authorization: Nostr nsec1...` (backward compat, not recommended)
+/// Supports NIP-98: `Authorization: Nostr <base64-encoded-kind-27235-event>`
 fn extract_session_backend(
     state: &AppState,
     headers: &HeaderMap,
 ) -> Option<nomen_api::SessionBackend> {
     let auth = headers.get("authorization")?.to_str().ok()?;
     let token = auth.strip_prefix("Nostr ")?;
-
-    // Try NIP-98 first: base64-encoded signed event
-    if !token.starts_with("nsec1") {
-        return extract_nip98_backend(state, token);
-    }
-
-    // Legacy: raw nsec
-    warn!("HTTP: legacy nsec auth used — consider switching to NIP-98");
-    let keys = match nostr_sdk::Keys::parse(token) {
-        Ok(k) => k,
-        Err(e) => {
-            debug!("HTTP: invalid nsec in Authorization header: {e}");
-            return None;
-        }
-    };
-
-    let signer = Arc::new(nomen_relay::signer::KeysSigner::new(keys));
-    debug!(pubkey = %signer.public_key().to_hex(), "HTTP: legacy nsec identity");
-    Some(nomen_api::SessionBackend::new(state.nomen.clone(), signer))
+    extract_nip98_backend(state, token)
 }
 
 /// Verify a NIP-98 auth token: base64-decode → parse event → verify signature + kind + timestamp.
@@ -282,15 +259,7 @@ fn strip_config_secrets(config: &Config) -> Value {
                 "dry_run": c.dry_run,
             })
         })
-        .or_else(|| {
-            config.consolidation.as_ref().map(|c| {
-                json!({
-                    "enabled": true,
-                    "provider": c.provider,
-                    "model": c.model,
-                })
-            })
-        });
+;
 
     let groups: Vec<Value> = config
         .groups

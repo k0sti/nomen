@@ -160,16 +160,13 @@ pub enum Visibility {
 }
 
 impl Visibility {
-    /// Parse from string, supporting legacy aliases:
-    /// - "internal" -> Private (v0.2 compat)
-    /// - "private" -> Private (v0.3 canonical)
     pub fn parse(s: &str) -> Option<Self> {
         match s {
             "public" => Some(Self::Public),
             "group" => Some(Self::Group),
             "circle" => Some(Self::Circle),
             "personal" => Some(Self::Personal),
-            "private" | "internal" => Some(Self::Private),
+            "private" => Some(Self::Private),
             _ => None,
         }
     }

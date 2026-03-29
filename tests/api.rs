@@ -37,12 +37,6 @@ mod types_tests {
     }
 
     #[test]
-    fn visibility_parse_legacy_internal() {
-        // "internal" is the v0.2 name for "private"
-        assert_eq!(Visibility::parse("internal"), Some(Visibility::Private));
-    }
-
-    #[test]
     fn visibility_parse_unknown() {
         assert_eq!(Visibility::parse("unknown"), None);
         assert_eq!(Visibility::parse(""), None);
@@ -154,15 +148,6 @@ mod types_tests {
     async fn resolve_visibility_scope_group_with_scope() {
         let (nomen, _tmp) = super::test_nomen().await.unwrap();
         let params = json!({"visibility": "group", "scope": "engineering"});
-        let (vis, scope) = resolve_visibility_scope(&params).unwrap();
-        assert_eq!(vis, Some(Visibility::Group));
-        assert_eq!(scope, Some("engineering".to_string()));
-    }
-
-    #[tokio::test]
-    async fn resolve_visibility_scope_legacy_tier() {
-        let (nomen, _tmp) = super::test_nomen().await.unwrap();
-        let params = json!({"tier": "group:engineering"});
         let (vis, scope) = resolve_visibility_scope(&params).unwrap();
         assert_eq!(vis, Some(Visibility::Group));
         assert_eq!(scope, Some("engineering".to_string()));
@@ -453,9 +438,6 @@ mod operations_tests {
         let result = ingest_resp.result.unwrap();
         assert!(result["d_tag"].as_str().is_some());
         assert!(result["stored"].as_bool().unwrap());
-        // `channel` is accepted here as a legacy raw-message/container field;
-        // canonical normalized hierarchy work flows through structured
-        // collected-message tags/fields instead.
 
         let search_resp =
             nomen::api::dispatch(&nomen, "message.search", &json!({"query": "Hello API v2"})).await;

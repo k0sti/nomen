@@ -162,10 +162,9 @@ pub(crate) fn derive_tier_from_messages<T: ConsolidationMessageLike>(messages: &
 /// produce group or public tier memories. Returns the tier, potentially downgraded.
 pub(crate) fn enforce_tier_guard(derived_tier: &str, source_tier: &str) -> String {
     match source_tier {
-        "personal" | "private" | "internal" => {
+        "personal" | "private" => {
             // Personal/private sources can only produce personal memories
-            if derived_tier != "personal" && derived_tier != "private" && derived_tier != "internal"
-            {
+            if derived_tier != "personal" && derived_tier != "private" {
                 warn!(
                     derived = derived_tier,
                     "Cross-group guard: downgrading tier to personal (source is {source_tier})"
@@ -186,11 +185,7 @@ pub(crate) fn enforce_tier_guard(derived_tier: &str, source_tier: &str) -> Strin
     }
 }
 
-/// Extract a forum topic suffix from a sender string.
-///
-/// This is a legacy compatibility path for raw-message ingestion. Canonical
-/// collected-message flows should use structured `thread_id` metadata instead
-/// of parsing topic identity out of sender strings.
+/// Extract a forum topic suffix from a sender string (e.g. Telegram forum topics).
 fn extract_topic_suffix(sender: &str) -> Option<String> {
     // Match ":topic:<id>" anywhere in the sender string
     if let Some(idx) = sender.find(":topic:") {

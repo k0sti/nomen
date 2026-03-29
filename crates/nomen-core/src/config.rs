@@ -34,18 +34,12 @@ pub struct Config {
     /// Owner's npub — the human who owns this Nomen instance.
     #[serde(default)]
     pub owner: Option<String>,
-    /// Default writer identity (deprecated, kept for backward compat)
-    #[serde(default)]
-    pub default_writer: Option<String>,
     /// Embedding provider configuration
     #[serde(default)]
     pub embedding: Option<EmbeddingConfig>,
     /// Group definitions
     #[serde(default)]
     pub groups: Vec<GroupConfig>,
-    /// Consolidation LLM configuration (top-level [consolidation] — backward compat)
-    #[serde(default)]
-    pub consolidation: Option<ConsolidationLlmConfig>,
     /// Memory section with nested consolidation (spec-compliant [memory.consolidation])
     #[serde(default)]
     pub memory: Option<MemorySection>,
@@ -432,33 +426,26 @@ impl Config {
         out
     }
 
-    /// Resolve the effective consolidation LLM config.
-    ///
-    /// Checks [memory.consolidation] first (spec-compliant), falls back to
-    /// top-level [consolidation] (backward compat).
+    /// Resolve the effective consolidation LLM config from [memory.consolidation].
     pub fn consolidation_llm_config(&self) -> Option<ConsolidationLlmConfig> {
-        // Try [memory.consolidation] first
-        if let Some(ref mem) = self.memory {
-            if let Some(ref mc) = mem.consolidation {
-                if mc.provider.is_some() || mc.model.is_some() || mc.api_key_env.is_some() {
-                    return Some(ConsolidationLlmConfig {
-                        provider: mc
-                            .provider
-                            .clone()
-                            .unwrap_or_else(default_consolidation_provider),
-                        model: mc.model.clone().unwrap_or_else(default_consolidation_model),
-                        api_key_env: mc
-                            .api_key_env
-                            .clone()
-                            .unwrap_or_else(default_consolidation_api_key_env),
-                        base_url: mc.base_url.clone(),
-                    });
-                }
-            }
+        let mem = self.memory.as_ref()?;
+        let mc = mem.consolidation.as_ref()?;
+        if mc.provider.is_some() || mc.model.is_some() || mc.api_key_env.is_some() {
+            Some(ConsolidationLlmConfig {
+                provider: mc
+                    .provider
+                    .clone()
+                    .unwrap_or_else(default_consolidation_provider),
+                model: mc.model.clone().unwrap_or_else(default_consolidation_model),
+                api_key_env: mc
+                    .api_key_env
+                    .clone()
+                    .unwrap_or_else(default_consolidation_api_key_env),
+                base_url: mc.base_url.clone(),
+            })
+        } else {
+            None
         }
-
-        // Fall back to top-level [consolidation]
-        self.consolidation.clone()
     }
 
     /// Get the embedding dimensions from config (defaults to 1536).

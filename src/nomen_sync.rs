@@ -26,16 +26,7 @@ impl Nomen {
         let mut errors = 0usize;
 
         for event in events.into_iter() {
-            if event.kind == nostr_sdk::Kind::Custom(crate::kinds::LESSON_KIND)
-                || event.kind == nostr_sdk::Kind::Custom(crate::kinds::LEGACY_LESSON_KIND)
-            {
-                continue;
-            }
             let d_tag = memory::get_tag_value(&event.tags, "d").unwrap_or_default();
-            if d_tag.starts_with("snowclaw:config:") {
-                continue;
-            }
-
             let parsed = memory::parse_event(&event, signer.as_ref());
             match db::store_memory(&self.db, &parsed, &event.id.to_hex()).await {
                 Ok(true) => {

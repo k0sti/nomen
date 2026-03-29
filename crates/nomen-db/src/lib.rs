@@ -180,7 +180,6 @@ pub struct MemoryRecord {
     pub tier: String,
     pub scope: String,
     pub topic: String,
-    /// Legacy field — kept as Option for migration reads, never written.
     #[serde(default)]
     pub source: String,
     pub model: Option<String>,
@@ -202,14 +201,6 @@ impl nomen_core::access::AccessCheckable for MemoryRecord {
         &self.source
     }
 }
-
-/// A raw message as stored in SurrealDB (with DB-assigned id and consolidated flag).
-/// Legacy raw-message compatibility record.
-///
-/// Canonical normalized messaging data now lives in collected-message records
-/// using `platform/community/chat/thread/message`. This struct remains only as a
-/// compatibility bridge for older consolidation and migration paths.
-
 
 
 // ── Database initialization ─────────────────────────────────────────

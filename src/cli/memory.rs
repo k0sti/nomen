@@ -2,19 +2,18 @@
 
 use anyhow::{bail, Result};
 use colored::Colorize;
-use nostr_sdk::prelude::{Kind, ToBech32};
+use nostr_sdk::prelude::ToBech32;
 use serde_json::json;
 use tracing::debug;
 
 use nomen::db;
 use nomen::display::display_memories;
-use nomen::kinds::{LEGACY_LESSON_KIND, LESSON_KIND};
-use nomen::memory::{get_tag_value, parse_event};
+use nomen::memory::parse_event;
 use nomen::Nomen;
 
 use super::helpers::{build_relay_manager, build_signer, cli_dispatch, parse_keys, Backend};
 
-pub async fn cmd_list_relay(relay_url: &str, nsecs: &[String], named: bool) -> Result<()> {
+pub async fn cmd_list_relay(relay_url: &str, nsecs: &[String], _named: bool) -> Result<()> {
     let (all_keys, pubkeys) = parse_keys(nsecs)?;
     debug!("Parsed {} keys", all_keys.len());
 
@@ -24,26 +23,8 @@ pub async fn cmd_list_relay(relay_url: &str, nsecs: &[String], named: bool) -> R
     let events = mgr.fetch_memories(&pubkeys).await?;
 
     let mut memories = Vec::new();
-    let mut lesson_count = 0usize;
 
     for event in events.into_iter() {
-        if event.kind == Kind::Custom(LESSON_KIND) || event.kind == Kind::Custom(LEGACY_LESSON_KIND)
-        {
-            lesson_count += 1;
-            continue;
-        }
-        let d_tag = get_tag_value(&event.tags, "d").unwrap_or_default();
-        if d_tag.starts_with("snowclaw:config:") {
-            continue;
-        }
-
-        if named {
-            let topic = nomen::memory::parse_d_tag(&d_tag);
-            if topic.starts_with("conv:") || topic.starts_with("consolidated/") {
-                continue;
-            }
-        }
-
         memories.push(parse_event(&event, signer.as_ref()));
     }
 
@@ -52,7 +33,7 @@ pub async fn cmd_list_relay(relay_url: &str, nsecs: &[String], named: bool) -> R
         .filter_map(|k| k.public_key().to_bech32().ok())
         .collect();
 
-    display_memories(&npubs, &memories, lesson_count);
+    display_memories(&npubs, &memories);
     mgr.disconnect().await;
     Ok(())
 }
@@ -235,7 +216,7 @@ pub async fn cmd_search(
         let tier_display = format!("[{}]", vis);
         let tier_colored = match vis {
             "public" => tier_display.green(),
-            "personal" | "private" | "internal" => tier_display.red(),
+            "personal" | "private" => tier_display.red(),
             _ => tier_display.yellow(),
         };
 

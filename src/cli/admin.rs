@@ -325,7 +325,6 @@ pub async fn cmd_init(force: bool, non_interactive: bool) -> Result<()> {
         nsec: Some(nomen_nsec.clone()),
         agent_nsecs: Vec::new(),
         owner: None,
-        default_writer: None,
         embedding: Some(EmbeddingConfig {
             provider: emb_provider,
             model: emb_model,
@@ -344,7 +343,6 @@ pub async fn cmd_init(force: bool, non_interactive: bool) -> Result<()> {
             batch_size: 100,
         }),
         groups: Vec::new(),
-        consolidation: None,
         memory: memory_section,
         messaging: None,
         server: server_config,
@@ -410,10 +408,8 @@ async fn cmd_init_non_interactive() -> Result<()> {
         nsec: Some(nsec),
         agent_nsecs: Vec::new(),
         owner: None,
-        default_writer: None,
         embedding: Some(EmbeddingConfig::default()),
         groups: Vec::new(),
-        consolidation: None,
         memory: Some(MemorySection {
             cluster: None,
             consolidation: Some(MemoryConsolidationConfig {
