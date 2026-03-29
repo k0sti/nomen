@@ -10,6 +10,14 @@ use nomen::mcp;
 
 use super::helpers::{build_relay_manager, parse_keys, ResolvedConfig};
 
+/// Resolve static/landing dir: CLI flag > config value.
+fn resolve_dir(cli: Option<PathBuf>, config_val: Option<&str>) -> Option<PathBuf> {
+    if let Some(p) = cli {
+        return Some(p);
+    }
+    config_val.map(PathBuf::from)
+}
+
 pub async fn cmd_serve(
     config: &Config,
     resolved: &ResolvedConfig,
@@ -21,6 +29,43 @@ pub async fn cmd_serve(
     context_vm: bool,
     allowed_npubs: Vec<String>,
 ) -> Result<()> {
+    // ── Resolve effective settings: config first, CLI overrides ──
+
+    let server_cfg = config.server.as_ref();
+
+    // HTTP: CLI --http overrides config; if neither, check config enabled
+    let effective_http = if let Some(addr) = http_addr {
+        Some(addr)
+    } else if server_cfg.map(|s| s.enabled).unwrap_or(false) {
+        Some(server_cfg.unwrap().listen.clone())
+    } else {
+        None
+    };
+
+    // Static/landing dirs: CLI > config
+    let resolved_static = resolve_dir(static_dir, server_cfg.and_then(|s| s.static_dir.as_deref()));
+    let resolved_landing =
+        resolve_dir(landing_dir, server_cfg.and_then(|s| s.landing_dir.as_deref()));
+
+    // Socket: CLI --socket flag overrides config
+    let socket_config = config.socket.as_ref();
+    let socket_enabled = socket || socket_config.map(|c| c.enabled).unwrap_or(false);
+
+    // CVM: CLI --context-vm flag overrides config
+    let cvm_config = config.contextvm.as_ref();
+    let cvm_enabled = context_vm || cvm_config.map(|c| c.enabled).unwrap_or(false);
+
+    // Allowed npubs: CLI overrides config
+    let effective_allowed_npubs = if allowed_npubs.is_empty() {
+        cvm_config
+            .map(|c| c.allowed_npubs.clone())
+            .unwrap_or_default()
+    } else {
+        allowed_npubs
+    };
+
+    // ── Build shared resources ──────────────────────────────────
+
     // Optionally build relay manager if nsecs are available
     let relay_manager = if !resolved.nsecs.is_empty() {
         let (all_keys, _) = parse_keys(&resolved.nsecs)?;
@@ -34,10 +79,6 @@ pub async fn cmd_serve(
     // Open DB once and share across CVM, socket, and HTTP servers
     // SurrealDB 3.x uses exclusive file locks — cannot open the same path twice
     let shared_db = nomen::db::init_db_with_dimensions(config.embedding_dimensions()).await?;
-
-    // Determine if CVM should run: CLI flag or config section
-    let cvm_config = config.contextvm.as_ref();
-    let cvm_enabled = context_vm || cvm_config.map(|c| c.enabled).unwrap_or(false);
 
     // Validate CVM requirements early
     if cvm_enabled && resolved.nsecs.is_empty() {
@@ -58,13 +99,6 @@ pub async fn cmd_serve(
         let cvm_encryption = cvm_config
             .map(|c| c.encryption_mode())
             .unwrap_or(contextvm_sdk::EncryptionMode::Optional);
-        let cvm_allowed = if allowed_npubs.is_empty() {
-            cvm_config
-                .map(|c| c.allowed_npubs.clone())
-                .unwrap_or_default()
-        } else {
-            allowed_npubs
-        };
         let cvm_rate_limit = cvm_config.map(|c| c.rate_limit).unwrap_or(30);
         let cvm_announce = cvm_config.map(|c| c.announce).unwrap_or(true);
 
@@ -76,7 +110,7 @@ pub async fn cmd_serve(
                 cvm_keys,
                 &cvm_relay,
                 cvm_encryption,
-                cvm_allowed,
+                effective_allowed_npubs,
                 cvm_rate_limit,
                 cvm_announce,
             )
@@ -87,9 +121,6 @@ pub async fn cmd_serve(
     };
 
     // ── Build Socket server (if enabled) ────────────────────────
-    let socket_config = config.socket.as_ref();
-    let socket_enabled = socket || socket_config.map(|c| c.enabled).unwrap_or(false);
-
     if socket_enabled {
         let sock_config = socket_config
             .cloned()
@@ -118,39 +149,8 @@ pub async fn cmd_serve(
         });
     }
 
-    // ── Resolve static/landing dirs (used by HTTP mode) ────────
-    let resolved_static = static_dir.or_else(|| {
-        if let Ok(exe) = std::env::current_exe() {
-            let dir = exe.parent()?.join("web/dist");
-            if dir.is_dir() {
-                return Some(dir);
-            }
-        }
-        let cwd = PathBuf::from("web/dist");
-        if cwd.is_dir() {
-            Some(cwd)
-        } else {
-            None
-        }
-    });
-
-    let resolved_landing = landing_dir.or_else(|| {
-        if let Ok(exe) = std::env::current_exe() {
-            let dir = exe.parent()?.join("web/dist-landing");
-            if dir.is_dir() {
-                return Some(dir);
-            }
-        }
-        let cwd = PathBuf::from("web/dist-landing");
-        if cwd.is_dir() {
-            Some(cwd)
-        } else {
-            None
-        }
-    });
-
     // ── Run the selected combination ─────────────────────────────
-    match (http_addr, cvm_server) {
+    match (effective_http, cvm_server) {
         // HTTP (± CVM): build HTTP state, run concurrently if CVM enabled
         (Some(addr), cvm_opt) => {
             let bind_addr = if addr.starts_with(':') {

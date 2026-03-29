@@ -32,6 +32,14 @@ fn run_systemctl(args: &[&str]) -> Result<()> {
     Ok(())
 }
 
+fn resolve_service_config_path(config_path: &Option<PathBuf>) -> Result<PathBuf> {
+    match config_path {
+        Some(path) if path.is_absolute() => Ok(path.clone()),
+        Some(path) => Ok(std::env::current_dir()?.join(path)),
+        None => Ok(Config::path()),
+    }
+}
+
 pub fn cmd_service(action: &super::ServiceAction, config_path: &Option<PathBuf>) -> Result<()> {
     let svc_dir = service_dir()?;
     let service_file = svc_dir.join(format!("{SERVICE_NAME}.service"));
@@ -57,67 +65,7 @@ pub fn cmd_service(action: &super::ServiceAction, config_path: &Option<PathBuf>)
             let exe = std::env::current_exe()?;
             let exe_path = exe.display();
 
-            // Resolve config path
-            let config_arg = if let Some(p) = config_path {
-                format!(" --config {}", p.canonicalize()?.display())
-            } else {
-                let default_paths = [
-                    Config::path(),
-                    dirs::home_dir()
-                        .map(|d| d.join(".config/nomen/config.toml"))
-                        .unwrap_or_default(),
-                ];
-                match default_paths.iter().find(|p| p.exists()) {
-                    Some(p) => format!(" --config {}", p.canonicalize()?.display()),
-                    None => String::new(),
-                }
-            };
-
-            // Resolve static/landing dirs: check relative to binary, then cwd
-            let exe_dir = exe.parent().unwrap_or(std::path::Path::new("."));
-            let static_dir = [exe_dir.join("web/dist"), PathBuf::from("web/dist")]
-                .into_iter()
-                .find(|p| p.is_dir());
-            let landing_dir = [
-                exe_dir.join("web/dist-landing"),
-                PathBuf::from("web/dist-landing"),
-            ]
-            .into_iter()
-            .find(|p| p.is_dir());
-
-            // Read config to determine serve flags
-            let serve_flags = match Config::load() {
-                Ok(cfg) => {
-                    let mut flags = Vec::new();
-                    if let Some(ref server) = cfg.server {
-                        if server.enabled {
-                            flags.push(format!("--http {}", server.listen));
-                        }
-                    }
-                    if let Some(ref dir) = static_dir {
-                        if let Ok(abs) = dir.canonicalize() {
-                            flags.push(format!("--static-dir {}", abs.display()));
-                        }
-                    }
-                    if let Some(ref dir) = landing_dir {
-                        if let Ok(abs) = dir.canonicalize() {
-                            flags.push(format!("--landing-dir {}", abs.display()));
-                        }
-                    }
-                    if cfg.contextvm.as_ref().map(|c| c.enabled).unwrap_or(false) {
-                        flags.push("--context-vm".to_string());
-                    }
-                    if cfg.socket.as_ref().map(|c| c.enabled).unwrap_or(false) {
-                        flags.push("--socket".to_string());
-                    }
-                    if flags.is_empty() {
-                        "--http 127.0.0.1:3000".to_string()
-                    } else {
-                        flags.join(" ")
-                    }
-                }
-                Err(_) => "--http 127.0.0.1:3000".to_string(),
-            };
+            let config_path = resolve_service_config_path(config_path)?;
 
             let unit = format!(
                 r#"[Unit]
@@ -127,7 +75,7 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-ExecStart={exe_path}{config_arg} serve {serve_flags}
+ExecStart={exe_path} --config {config_path} serve
 Restart=always
 RestartSec=5
 Environment=HOME={home}
@@ -137,6 +85,7 @@ Environment=RUST_LOG=nomen=info
 [Install]
 WantedBy=default.target
 "#,
+                config_path = config_path.display(),
                 home = dirs::home_dir()
                     .unwrap_or_else(|| PathBuf::from("/home"))
                     .display(),

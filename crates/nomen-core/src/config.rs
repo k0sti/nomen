@@ -268,6 +268,12 @@ pub struct ServerConfig {
     /// Listen address (e.g. "127.0.0.1:3000")
     #[serde(default = "default_listen")]
     pub listen: String,
+    /// Directory for static web UI files (e.g. web/dist)
+    #[serde(default)]
+    pub static_dir: Option<String>,
+    /// Directory for landing page files (e.g. web/dist-landing)
+    #[serde(default)]
+    pub landing_dir: Option<String>,
 }
 
 fn default_listen() -> String {

@@ -312,6 +312,8 @@ pub async fn cmd_init(force: bool, non_interactive: bool) -> Result<()> {
         Some(ServerConfig {
             enabled: true,
             listen,
+            static_dir: None,
+            landing_dir: None,
         })
     } else {
         None
@@ -435,6 +437,8 @@ async fn cmd_init_non_interactive() -> Result<()> {
         server: Some(ServerConfig {
             enabled: true,
             listen: "127.0.0.1:3000".to_string(),
+            static_dir: None,
+            landing_dir: None,
         }),
         entities: None,
         contextvm: None,
