@@ -5,6 +5,7 @@ use std::path::PathBuf;
 use anyhow::Result;
 use colored::Colorize;
 
+use nomen::config::Config;
 use nomen::fs;
 
 use super::helpers::{dispatch_http, Backend};
@@ -25,10 +26,6 @@ fn build_dispatch(backend: &Backend) -> fs::DispatchFn {
             })
         }
         Backend::Direct => {
-            // For direct backend, we still go through HTTP dispatch since fs sync
-            // is designed around the dispatch API pattern. The user should have
-            // `nomen serve` running, or use --http mode.
-            // Fall back to an error message if no HTTP backend.
             Box::new(move |_action, _params| {
                 Box::pin(async move {
                     anyhow::bail!(
@@ -41,19 +38,40 @@ fn build_dispatch(backend: &Backend) -> fs::DispatchFn {
     }
 }
 
-pub async fn cmd_fs(backend: &Backend, action: FsAction) -> Result<()> {
+/// Resolve the sync directory: explicit --dir flag > config fs.sync_dir > current directory.
+fn resolve_dir(explicit: Option<PathBuf>, config: &Config) -> PathBuf {
+    if let Some(dir) = explicit {
+        return dir;
+    }
+    if let Some(ref fs_cfg) = config.fs {
+        if let Some(ref sync_dir) = fs_cfg.sync_dir {
+            return PathBuf::from(sync_dir);
+        }
+    }
+    PathBuf::from(".")
+}
+
+pub async fn cmd_fs(backend: &Backend, config: &Config, action: FsAction) -> Result<()> {
     match action {
         FsAction::Init { dir } => {
             let dir = dir.unwrap_or_else(|| PathBuf::from("."));
             fs::init_sync_dir(&dir)?;
+
+            // Canonicalize and persist to config
+            let abs_dir = dir
+                .canonicalize()
+                .unwrap_or_else(|_| std::path::absolute(&dir).unwrap_or(dir.clone()));
+            Config::set_value("fs.sync_dir", &abs_dir.to_string_lossy())?;
+
             println!(
                 "{} Initialized sync directory: {}",
                 "Done".green().bold(),
-                dir.display()
+                abs_dir.display()
             );
+            println!("Saved to config: {}", Config::path().display());
         }
         FsAction::Pull { dir } => {
-            let dir = dir.unwrap_or_else(|| PathBuf::from("."));
+            let dir = resolve_dir(dir, config);
             let dispatch = build_dispatch(backend);
             let count = fs::pull(&dispatch, &dir).await?;
             println!(
@@ -63,7 +81,7 @@ pub async fn cmd_fs(backend: &Backend, action: FsAction) -> Result<()> {
             );
         }
         FsAction::Push { dir } => {
-            let dir = dir.unwrap_or_else(|| PathBuf::from("."));
+            let dir = resolve_dir(dir, config);
             let dispatch = build_dispatch(backend);
             let count = fs::push(&dispatch, &dir).await?;
             println!(
@@ -73,7 +91,7 @@ pub async fn cmd_fs(backend: &Backend, action: FsAction) -> Result<()> {
             );
         }
         FsAction::Status { dir } => {
-            let dir = dir.unwrap_or_else(|| PathBuf::from("."));
+            let dir = resolve_dir(dir, config);
             let dispatch = build_dispatch(backend);
             fs::status(&dispatch, &dir).await?;
         }
@@ -81,14 +99,20 @@ pub async fn cmd_fs(backend: &Backend, action: FsAction) -> Result<()> {
             dir,
             poll_secs,
             verbose,
+            debug,
             clean,
         } => {
-            let dir = dir.unwrap_or_else(|| PathBuf::from("."));
+            let dir = resolve_dir(dir, config);
+            if debug {
+                if let Backend::Http(base_url, _) = backend {
+                    println!("[debug] HTTP backend: {base_url}");
+                }
+            }
             let dispatch = build_dispatch(backend);
-            fs::start(&dispatch, &dir, poll_secs, verbose, clean).await?;
+            fs::start(&dispatch, &dir, poll_secs, verbose, debug, clean).await?;
         }
         FsAction::Stop { dir } => {
-            let dir = dir.unwrap_or_else(|| PathBuf::from("."));
+            let dir = resolve_dir(dir, config);
             fs::stop(&dir)?;
         }
     }

@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
 
 /// Group configuration entry from config.toml [[groups]] section.
@@ -64,6 +64,9 @@ pub struct Config {
     /// Socket server configuration
     #[serde(default)]
     pub socket: Option<SocketConfig>,
+    /// Filesystem sync configuration
+    #[serde(default)]
+    pub fs: Option<FsConfig>,
 }
 
 /// The [memory] config section, per spec.
@@ -365,6 +368,14 @@ fn default_max_connections() -> usize {
     32
 }
 
+/// Filesystem sync configuration [fs] section.
+#[derive(Deserialize, Serialize, Clone, Default)]
+pub struct FsConfig {
+    /// Default sync directory. Set automatically by `nomen fs init`.
+    #[serde(default)]
+    pub sync_dir: Option<String>,
+}
+
 fn default_max_frame_size() -> usize {
     16 * 1024 * 1024
 }
@@ -450,5 +461,41 @@ impl Config {
             .as_ref()
             .map(|e| e.dimensions)
             .unwrap_or(1536)
+    }
+
+    /// Set a value in the config file, preserving existing content.
+    /// Uses toml_edit for surgical edits.
+    pub fn set_value(key: &str, value: &str) -> Result<()> {
+        let path = Self::path();
+        let text = if path.exists() {
+            std::fs::read_to_string(&path)?
+        } else {
+            String::new()
+        };
+
+        let mut doc: toml_edit::DocumentMut = text
+            .parse()
+            .with_context(|| format!("Failed to parse config at {}", path.display()))?;
+
+        // Support dotted keys like "fs.sync_dir"
+        let parts: Vec<&str> = key.split('.').collect();
+        match parts.len() {
+            1 => {
+                doc[parts[0]] = toml_edit::value(value);
+            }
+            2 => {
+                if doc.get(parts[0]).is_none() {
+                    doc[parts[0]] = toml_edit::table();
+                }
+                doc[parts[0]][parts[1]] = toml_edit::value(value);
+            }
+            _ => bail!("Config key nesting beyond 2 levels not supported"),
+        }
+
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::write(&path, doc.to_string())?;
+        Ok(())
     }
 }

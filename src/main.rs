@@ -75,8 +75,8 @@ async fn main() -> Result<()> {
                 cli::memory::cmd_list_relay(&resolved.relay, &resolved.nsecs, named).await?;
             }
         }
-        Command::Config => {
-            cli::admin::cmd_config(&resolved.relay, &resolved.nsecs);
+        Command::Config { action } => {
+            cli::admin::cmd_config(&config, &resolved.relay, &resolved.nsecs, action);
         }
         Command::Sync => {
             let nomen = if matches!(backend, Backend::Direct) {
@@ -323,7 +323,7 @@ async fn main() -> Result<()> {
             .await?;
         }
         Command::Fs { action } => {
-            cli::fs::cmd_fs(&backend, action).await?;
+            cli::fs::cmd_fs(&backend, &config, action).await?;
         }
         Command::Init { .. } | Command::Doctor | Command::Service { .. } => {
             unreachable!("handled above")

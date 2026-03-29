@@ -16,20 +16,82 @@ use super::helpers::{
     check_service, cli_dispatch, resolve_http_url, test_relay_connection, Backend,
 };
 
-pub fn cmd_config(relay: &str, nsecs: &[String]) {
-    let path = Config::path();
-    println!("{}: {}", "Config path".bold(), path.display());
-    println!(
-        "{}: {}",
-        "Exists".bold(),
-        if path.exists() {
-            "yes".green()
-        } else {
-            "no".red()
+pub fn cmd_config(
+    config: &Config,
+    relay: &str,
+    nsecs: &[String],
+    action: Option<super::ConfigAction>,
+) {
+    match action {
+        None => {
+            // Show overview (original behavior)
+            let path = Config::path();
+            println!("{}: {}", "Config path".bold(), path.display());
+            println!(
+                "{}: {}",
+                "Exists".bold(),
+                if path.exists() {
+                    "yes".green()
+                } else {
+                    "no".red()
+                }
+            );
+            println!("{}: {}", "Relay".bold(), relay);
+            println!("{}: {}", "Keys configured".bold(), nsecs.len());
+            if let Some(ref fs_cfg) = config.fs {
+                if let Some(ref dir) = fs_cfg.sync_dir {
+                    println!("{}: {}", "Sync dir".bold(), dir);
+                }
+            }
         }
-    );
-    println!("{}: {}", "Relay".bold(), relay);
-    println!("{}: {}", "Keys configured".bold(), nsecs.len());
+        Some(super::ConfigAction::Get { key }) => {
+            let value = config_get(config, &key);
+            match value {
+                Some(v) => println!("{v}"),
+                None => {
+                    eprintln!("{}: key '{}' not set", "Error".red().bold(), key);
+                    std::process::exit(1);
+                }
+            }
+        }
+        Some(super::ConfigAction::Set { key, value }) => {
+            if let Err(e) = Config::set_value(&key, &value) {
+                eprintln!("{}: {e}", "Error".red().bold());
+                std::process::exit(1);
+            }
+            println!("{} {key} = {value}", "Set".green().bold());
+        }
+    }
+}
+
+/// Read a config value by dotted key.
+fn config_get(config: &Config, key: &str) -> Option<String> {
+    match key {
+        "relay" => config.relay.clone(),
+        "nsec" => config.nsec.clone(),
+        "owner" => config.owner.clone(),
+        "fs.sync_dir" => config.fs.as_ref().and_then(|f| f.sync_dir.clone()),
+        "server.listen" => config.server.as_ref().map(|s| s.listen.clone()),
+        "server.enabled" => config.server.as_ref().map(|s| s.enabled.to_string()),
+        _ => {
+            // Fall back to reading raw TOML for arbitrary keys
+            let path = Config::path();
+            let text = std::fs::read_to_string(path).ok()?;
+            let doc: toml_edit::DocumentMut = text.parse().ok()?;
+            let parts: Vec<&str> = key.split('.').collect();
+            let item = match parts.len() {
+                1 => doc.get(parts[0]),
+                2 => doc.get(parts[0]).and_then(|t| t.get(parts[1])),
+                3 => doc
+                    .get(parts[0])
+                    .and_then(|t| t.get(parts[1]))
+                    .and_then(|t| t.get(parts[2])),
+                _ => None,
+            };
+            item.and_then(|i| i.as_value())
+                .map(|v| v.to_string().trim_matches('"').to_string())
+        }
+    }
 }
 
 pub async fn cmd_prune(
@@ -287,6 +349,7 @@ pub async fn cmd_init(force: bool, non_interactive: bool) -> Result<()> {
         entities: None,
         contextvm: None,
         socket: None,
+        fs: None,
     };
 
     // Write config
@@ -376,6 +439,7 @@ async fn cmd_init_non_interactive() -> Result<()> {
         entities: None,
         contextvm: None,
         socket: None,
+        fs: None,
     };
 
     let config_path = Config::path();

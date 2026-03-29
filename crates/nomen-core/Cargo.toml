@@ -11,5 +11,6 @@ nostr-sdk = { version = "0.43", features = ["nip44"] }
 async-trait = "0.1"
 chrono = "0.4"
 toml = "0.8"
+toml_edit = "0.22"
 dirs = "5"
 tracing = "0.1"

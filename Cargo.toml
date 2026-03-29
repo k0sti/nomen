@@ -57,6 +57,7 @@ notify = "7"
 
 # Config
 toml = "0.8"
+toml_edit = "0.22"
 dirs = "5"
 
 # Database

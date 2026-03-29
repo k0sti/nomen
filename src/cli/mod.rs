@@ -49,8 +49,11 @@ pub enum Command {
         #[arg(long)]
         stats: bool,
     },
-    /// Show config file path and status
-    Config,
+    /// Show or edit configuration
+    Config {
+        #[command(subcommand)]
+        action: Option<ConfigAction>,
+    },
     /// Sync memory events from relay to local SurrealDB
     Sync,
     /// Store a new memory
@@ -275,6 +278,22 @@ pub enum Command {
 }
 
 #[derive(Subcommand)]
+pub enum ConfigAction {
+    /// Get a config value by dotted key (e.g. relay, fs.sync_dir)
+    Get {
+        /// Config key (e.g. relay, fs.sync_dir)
+        key: String,
+    },
+    /// Set a config value by dotted key
+    Set {
+        /// Config key (e.g. relay, fs.sync_dir)
+        key: String,
+        /// Value to set
+        value: String,
+    },
+}
+
+#[derive(Subcommand)]
 pub enum FsAction {
     /// Initialize a sync directory
     Init {
@@ -308,9 +327,12 @@ pub enum FsAction {
         /// DB poll interval in seconds
         #[arg(long, default_value = "30")]
         poll_secs: u64,
-        /// Verbose output
+        /// Print a line per file change pushed/pulled
         #[arg(long)]
         verbose: bool,
+        /// Detailed diagnostic output (cwd, poll interval, watcher events, etc.)
+        #[arg(long)]
+        debug: bool,
         /// Remove local files not in memory DB
         #[arg(long)]
         clean: bool,

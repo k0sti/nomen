@@ -277,6 +277,19 @@ fn content_hash(content: &str) -> String {
     format!("{hash:016x}")
 }
 
+// ── Init check ───────────────────────────────────────────────────────
+
+/// Bail if the sync meta directory doesn't exist in the target dir.
+pub fn ensure_initialized(dir: &Path) -> Result<()> {
+    if !dir.join(SYNC_META_DIR).exists() {
+        bail!(
+            "Sync directory not initialized at '{}'. Run `nomen fs init` first.",
+            dir.display()
+        );
+    }
+    Ok(())
+}
+
 // ── Init ─────────────────────────────────────────────────────────────
 
 /// Initialize a filesystem sync directory.
@@ -306,6 +319,11 @@ pub fn init_sync_dir(dir: &Path) -> Result<()> {
 
 /// Pull all memories from DB to filesystem via API dispatch. Returns count of files written.
 pub async fn pull(dispatch: &DispatchFn, dir: &Path) -> Result<usize> {
+    pull_inner(dispatch, dir, false, false).await
+}
+
+async fn pull_inner(dispatch: &DispatchFn, dir: &Path, verbose: bool, debug: bool) -> Result<usize> {
+    ensure_initialized(dir)?;
     let result = dispatch(
         "memory.list".to_string(),
         serde_json::json!({"limit": 10000}),
@@ -351,6 +369,9 @@ pub async fn pull(dispatch: &DispatchFn, dir: &Path) -> Result<usize> {
             .with_context(|| format!("Failed to write {}", abs_path.display()))?;
 
         let rel_key = rel_path.to_str().unwrap_or("").to_string();
+        if verbose || debug {
+            println!("\u{2190} pulled: {rel_key}");
+        }
         state.files.insert(
             rel_key,
             SyncEntry {
@@ -383,6 +404,9 @@ pub async fn pull(dispatch: &DispatchFn, dir: &Path) -> Result<usize> {
         if abs_path.exists() {
             std::fs::remove_file(&abs_path)?;
             info!(path = %rel_key, "Deleted (memory removed from DB)");
+            if verbose || debug {
+                println!("\u{2190} deleted: {rel_key}");
+            }
         }
         state.files.remove(rel_key);
         count += 1;
@@ -397,6 +421,11 @@ pub async fn pull(dispatch: &DispatchFn, dir: &Path) -> Result<usize> {
 
 /// Push changed files back to Nomen via API dispatch. Returns count of memories updated.
 pub async fn push(dispatch: &DispatchFn, dir: &Path) -> Result<usize> {
+    push_inner(dispatch, dir, false, false).await
+}
+
+async fn push_inner(dispatch: &DispatchFn, dir: &Path, verbose: bool, debug: bool) -> Result<usize> {
+    ensure_initialized(dir)?;
     let mut state = SyncState::load(dir)?;
     let mut count = 0;
 
@@ -473,6 +502,9 @@ pub async fn push(dispatch: &DispatchFn, dir: &Path) -> Result<usize> {
             Ok(result) => {
                 let stored_dtag = result["d_tag"].as_str().unwrap_or(&d_tag).to_string();
                 info!(d_tag = %stored_dtag, "Pushed from file");
+                if verbose || debug {
+                    println!("\u{2192} pushed: {rel_key}");
+                }
 
                 state.files.insert(
                     rel_key,
@@ -500,11 +532,7 @@ pub async fn push(dispatch: &DispatchFn, dir: &Path) -> Result<usize> {
 
 /// Show sync status for a directory.
 pub async fn status(dispatch: &DispatchFn, dir: &Path) -> Result<()> {
-    if !dir.join(SYNC_META_DIR).exists() {
-        println!("Not a nomen-fs directory: {}", dir.display());
-        println!("Run: nomen fs init --dir {}", dir.display());
-        return Ok(());
-    }
+    ensure_initialized(dir)?;
 
     let state = SyncState::load(dir)?;
 
@@ -577,10 +605,22 @@ pub async fn start(
     dir: &Path,
     poll_secs: u64,
     verbose: bool,
+    debug: bool,
     clean: bool,
 ) -> Result<()> {
     use notify::{EventKind, RecursiveMode, Watcher};
     use std::time::{Duration, Instant};
+
+    ensure_initialized(dir)?;
+
+    if debug {
+        let cwd = std::env::current_dir()
+            .map(|p| p.display().to_string())
+            .unwrap_or_else(|_| "(unknown)".to_string());
+        println!("[debug] cwd: {cwd}");
+        println!("[debug] sync dir: {}", dir.display());
+        println!("[debug] poll interval: {poll_secs}s");
+    }
 
     let pid_path = dir.join(SYNC_META_DIR).join(PID_FILE);
 
@@ -605,11 +645,11 @@ pub async fn start(
     std::fs::write(&pid_path, std::process::id().to_string())?;
 
     // Initial sync: push local changes first, then pull remote
-    let pushed = push(dispatch, dir).await?;
+    let pushed = push_inner(dispatch, dir, verbose, debug).await?;
     if pushed > 0 {
         println!("Initial push: {pushed} files");
     }
-    let pulled = pull(dispatch, dir).await?;
+    let pulled = pull_inner(dispatch, dir, verbose, debug).await?;
     if pulled > 0 {
         println!("Initial pull: {pulled} files");
     }
@@ -617,7 +657,7 @@ pub async fn start(
     // Detect orphan local files (not tracked in any memory)
     let orphans = find_orphan_files(dispatch, dir).await?;
     if !orphans.is_empty() {
-        if verbose || clean {
+        if debug || clean {
             println!("\n{} orphan file(s) not in memory:", orphans.len());
             for f in &orphans {
                 let rel = f.strip_prefix(dir).unwrap_or(f);
@@ -628,7 +668,7 @@ pub async fn start(
             for f in &orphans {
                 if let Err(e) = std::fs::remove_file(f) {
                     warn!(path = %f.display(), "Failed to remove orphan: {e}");
-                } else if verbose {
+                } else if debug {
                     let rel = f.strip_prefix(dir).unwrap_or(f);
                     println!("[clean] removed {}", rel.display());
                 }
@@ -636,7 +676,7 @@ pub async fn start(
             // Clean up empty directories
             clean_empty_dirs(dir)?;
             println!("Cleaned {} orphan file(s)", orphans.len());
-        } else if verbose {
+        } else if debug {
             println!("  (use --clean to remove)");
         }
     }
@@ -702,7 +742,7 @@ pub async fn start(
                     .map(|t| t.elapsed() < Duration::from_millis(WRITE_SUPPRESS_MS))
                     .unwrap_or(false);
                 if !suppressed {
-                    if verbose {
+                    if debug {
                         let rel = path.strip_prefix(dir).unwrap_or(&path);
                         println!("[watch] {} ({label})", rel.display());
                     }
@@ -715,9 +755,9 @@ pub async fn start(
                             if let Some((old_path, ts)) = rename_from.take() {
                                 // Pair found within 500ms — handle as rename
                                 if ts.elapsed() < Duration::from_millis(500) {
-                                    match handle_rename(dispatch, dir, &old_path, &path, verbose).await {
+                                    match handle_rename(dispatch, dir, &old_path, &path, verbose, debug).await {
                                         Ok(()) => {
-                                            if verbose {
+                                            if debug {
                                                 let old_rel = old_path.strip_prefix(dir).unwrap_or(&old_path);
                                                 let new_rel = path.strip_prefix(dir).unwrap_or(&path);
                                                 println!("[rename] {} -> {}", old_rel.display(), new_rel.display());
@@ -753,9 +793,9 @@ pub async fn start(
                     for p in &ready {
                         pending.remove(p);
                     }
-                    match push_changed_files(dispatch, dir, &ready, verbose).await {
+                    match push_changed_files(dispatch, dir, &ready, verbose, debug).await {
                         Ok(n) if n > 0 => {
-                            if verbose {
+                            if debug {
                                 println!("[push] {n} file(s) synced to DB");
                             }
                         }
@@ -770,7 +810,7 @@ pub async fn start(
                 // Expire stale rename-from (no matching rename-to within 500ms = file deleted)
                 if let Some((ref old_path, ts)) = rename_from {
                     if ts.elapsed() >= Duration::from_millis(500) {
-                        if verbose {
+                        if debug {
                             let rel = old_path.strip_prefix(dir).unwrap_or(old_path);
                             println!("[watch] rename-from expired (file deleted?): {}", rel.display());
                         }
@@ -780,9 +820,9 @@ pub async fn start(
             }
             // DB poll: check for remote changes
             _ = poll_interval.tick() => {
-                match pull_incremental(dispatch, dir, &mut recently_written, verbose).await {
+                match pull_incremental(dispatch, dir, &mut recently_written, verbose, debug).await {
                     Ok(n) if n > 0 => {
-                        if verbose {
+                        if debug {
                             println!("[pull] {n} file(s) updated from DB");
                         }
                     }
@@ -806,6 +846,7 @@ pub async fn start(
 
 /// Stop a running sync daemon by PID file.
 pub fn stop(dir: &Path) -> Result<()> {
+    ensure_initialized(dir)?;
     let pid_path = dir.join(SYNC_META_DIR).join(PID_FILE);
     if !pid_path.exists() {
         bail!(
@@ -842,6 +883,7 @@ async fn pull_incremental(
     dir: &Path,
     recently_written: &mut HashMap<PathBuf, std::time::Instant>,
     verbose: bool,
+    debug: bool,
 ) -> Result<usize> {
     let result = dispatch(
         "memory.list".to_string(),
@@ -895,7 +937,7 @@ async fn pull_incremental(
                             path = %rel_key,
                             "Conflict: local and remote both changed. Local saved to conflicts/"
                         );
-                        if verbose {
+                        if debug {
                             println!("[conflict] {} (local saved to conflicts/)", rel_key);
                         }
                     } else {
@@ -930,8 +972,8 @@ async fn pull_incremental(
         std::fs::write(&abs_path, &markdown)
             .with_context(|| format!("Failed to write {}", abs_path.display()))?;
 
-        if verbose {
-            println!("[pull] {}", rel_key);
+        if verbose || debug {
+            println!("\u{2190} pulled: {}", rel_key);
         }
 
         // Suppress watcher echo for this write
@@ -968,8 +1010,8 @@ async fn pull_incremental(
         let abs_path = dir.join(rel_key);
         if abs_path.exists() {
             std::fs::remove_file(&abs_path)?;
-            if verbose {
-                println!("[delete] {} (memory removed from DB)", rel_key);
+            if verbose || debug {
+                println!("\u{2190} deleted: {}", rel_key);
             }
         }
         state.files.remove(rel_key);
@@ -990,6 +1032,7 @@ async fn handle_rename(
     old_path: &Path,
     new_path: &Path,
     verbose: bool,
+    debug: bool,
 ) -> Result<()> {
     let mut state = SyncState::load(dir)?;
 
@@ -1007,7 +1050,7 @@ async fn handle_rename(
         match dispatch("memory.delete".to_string(), params).await {
             Ok(_) => {
                 info!(d_tag = %old_entry.d_tag, "Deleted old memory after rename");
-                if verbose {
+                if debug {
                     println!("[rename] deleted old: {}", old_entry.d_tag);
                 }
             }
@@ -1019,7 +1062,7 @@ async fn handle_rename(
     }
 
     // Push the new file (will create memory with new path-derived d_tag)
-    push_changed_files(dispatch, dir, &[new_path.to_path_buf()], verbose).await?;
+    push_changed_files(dispatch, dir, &[new_path.to_path_buf()], verbose, debug).await?;
 
     Ok(())
 }
@@ -1029,6 +1072,7 @@ async fn push_changed_files(
     dir: &Path,
     paths: &[PathBuf],
     verbose: bool,
+    debug: bool,
 ) -> Result<usize> {
     let mut state = SyncState::load(dir)?;
     let mut count = 0;
@@ -1107,8 +1151,11 @@ async fn push_changed_files(
             Ok(result) => {
                 let stored_dtag = result["d_tag"].as_str().unwrap_or(&d_tag).to_string();
                 info!(d_tag = %stored_dtag, path = %rel_key, "Pushed file change");
-                if verbose {
-                    println!("[push] {} -> {}", rel_key, stored_dtag);
+                if verbose || debug {
+                    println!("\u{2192} pushed: {}", rel_key);
+                }
+                if debug {
+                    println!("  d_tag: {}", stored_dtag);
                 }
 
                 state.files.insert(
