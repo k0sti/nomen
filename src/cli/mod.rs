@@ -403,12 +403,14 @@ pub enum ServiceAction {
     Restart,
     /// Show service status
     Status,
-    /// Follow service logs
+    /// Show service logs
     Logs {
         /// Follow log output
         #[arg(short, long)]
         follow: bool,
     },
+    /// Follow service logs (shortcut for `logs -f`)
+    Follow,
     /// Uninstall the service
     Uninstall,
 }

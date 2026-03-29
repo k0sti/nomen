@@ -176,9 +176,10 @@ WantedBy=default.target
             let _ = run_systemctl(&["status", SERVICE_NAME]);
         }
 
-        super::ServiceAction::Logs { follow } => {
-            let mut args = vec!["--user", "-u", SERVICE_NAME];
-            if *follow {
+        super::ServiceAction::Logs { .. } | super::ServiceAction::Follow => {
+            let follow = matches!(action, super::ServiceAction::Follow | super::ServiceAction::Logs { follow: true });
+            let mut args = vec!["-o", "cat", "--user", "-u", SERVICE_NAME, "--no-pager"];
+            if follow {
                 args.push("-f");
             }
             let status = std::process::Command::new("journalctl")

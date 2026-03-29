@@ -10,6 +10,33 @@ use cli::helpers::{
 };
 use cli::{Cli, Command};
 
+/// Compact timestamp: `MM-DD HH:MM:SS`
+struct CompactTimer;
+impl tracing_subscriber::fmt::time::FormatTime for CompactTimer {
+    fn format_time(&self, w: &mut tracing_subscriber::fmt::format::Writer<'_>) -> std::fmt::Result {
+        use std::time::SystemTime;
+        let now = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        // Civil time from epoch (UTC)
+        let secs_in_day = now % 86400;
+        let hour = secs_in_day / 3600;
+        let min = (secs_in_day % 3600) / 60;
+        let sec = secs_in_day % 60;
+        let days = (now / 86400) as i64 + 719468; // days since 0000-03-01
+        let era = days.div_euclid(146097);
+        let doe = days.rem_euclid(146097);
+        let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+        let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+        let mp = (5 * doy + 2) / 153;
+        let day = doy - (153 * mp + 2) / 5 + 1;
+        let month = if mp < 10 { mp + 3 } else { mp - 9 };
+        let _year = yoe + era * 400 + if month <= 2 { 1 } else { 0 };
+        write!(w, "{month:02}-{day:02} {hour:02}:{min:02}:{sec:02}")
+    }
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     // SurrealDB 3.x requires a rustls CryptoProvider
@@ -28,6 +55,7 @@ async fn main() -> Result<()> {
             tracing_subscriber::EnvFilter::from_default_env()
                 .add_directive(default_level.parse().unwrap()),
         )
+        .with_timer(CompactTimer)
         .init();
 
     // Handle init, doctor, and service before resolve_config (config may not exist yet)
