@@ -1,3 +1,4 @@
 target/
 obsidian
 .claude/worktrees/
+.direnv/
